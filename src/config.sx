@@ -1,0 +1,423 @@
+/// INI configuration for Blood.
+///
+/// Loaded from `$XDG_CONFIG_HOME/blood/blood.ini`, or
+/// `~/.config/blood/blood.ini` when XDG_CONFIG_HOME is unset.
+
+val u = use("util.sx")
+
+pub type Config = {
+    path: mut ref u8
+    theme: mut ref u8
+
+    show_username: mut i64
+    show_hostname: mut i64
+    show_directory: mut i64
+    show_git: mut i64
+    show_time: mut i64
+    show_exit_status: mut i64
+    show_duration: mut i64
+    show_jobs: mut i64
+    show_mode: mut i64
+    two_line: mut i64
+    directory_style: mut ref u8
+    prompt_symbol: mut ref u8
+    prompt_char: mut ref u8
+    separator: mut ref u8
+
+    color_primary: mut ref u8
+    color_secondary: mut ref u8
+    color_success: mut ref u8
+    color_error: mut ref u8
+    color_directory: mut ref u8
+    color_git_clean: mut ref u8
+    color_git_dirty: mut ref u8
+    color_muted: mut ref u8
+    color_warning: mut ref u8
+    color_accent: mut ref u8
+
+    history_enabled: mut i64
+    history_file: mut ref u8
+    history_max: mut i64
+    history_ignore_dups: mut i64
+
+    completion_enabled: mut i64
+    completion_case_sensitive: mut i64
+
+    shell_editor: mut ref u8
+    login_message: mut i64
+    startup_file: mut ref u8
+
+    alias_defs: mut ref u.Vec
+    env_defs: mut ref u.Vec
+}
+
+fn bool_key(key: ref u8) bool = trust {
+    if u.s_eq(key, c"show_username") || u.s_eq(key, c"show_hostname") || u.s_eq(key, c"show_directory") || u.s_eq(key, c"show_git") || u.s_eq(key, c"show_time") || u.s_eq(key, c"show_exit_status") || u.s_eq(key, c"show_duration") || u.s_eq(key, c"show_jobs") || u.s_eq(key, c"show_mode") || u.s_eq(key, c"two_line") || u.s_eq(key, c"enabled") || u.s_eq(key, c"ignore_duplicates") || u.s_eq(key, c"case_sensitive") || u.s_eq(key, c"login_message") || u.s_eq(key, c"git_status") {
+        return true
+    }
+    return false
+}
+
+fn cfg_bool(v: ref u8) i64 = trust {
+    if u.s_eq(v, c"true") || u.s_eq(v, c"yes") || u.s_eq(v, c"on") || u.s_eq(v, c"1") {
+        return 1
+    }
+    if u.s_eq(v, c"false") || u.s_eq(v, c"no") || u.s_eq(v, c"off") || u.s_eq(v, c"0") {
+        return 0
+    }
+    u.stderr_s(u.s_cat3(c"blood: config: invalid boolean '", v, c"'\n"))
+    return 0
+}
+
+fn color_ansi(name: ref u8) ref u8 = trust {
+    if name == none {
+        return c""
+    }
+    if u.s_eq(name, c"default") {
+        return c"\x1b[39m"
+    }
+    if u.s_eq(name, c"black") {
+        return c"\x1b[30m"
+    }
+    if u.s_eq(name, c"red") {
+        return c"\x1b[31m"
+    }
+    if u.s_eq(name, c"green") {
+        return c"\x1b[32m"
+    }
+    if u.s_eq(name, c"yellow") {
+        return c"\x1b[33m"
+    }
+    if u.s_eq(name, c"blue") {
+        return c"\x1b[34m"
+    }
+    if u.s_eq(name, c"magenta") {
+        return c"\x1b[35m"
+    }
+    if u.s_eq(name, c"cyan") {
+        return c"\x1b[36m"
+    }
+    if u.s_eq(name, c"white") {
+        return c"\x1b[37m"
+    }
+    if u.s_eq(name, c"bright_black") || u.s_eq(name, c"gray") || u.s_eq(name, c"grey") {
+        return c"\x1b[90m"
+    }
+    if u.s_eq(name, c"bright_red") {
+        return c"\x1b[91m"
+    }
+    if u.s_eq(name, c"bright_green") {
+        return c"\x1b[92m"
+    }
+    if u.s_eq(name, c"bright_yellow") {
+        return c"\x1b[93m"
+    }
+    if u.s_eq(name, c"bright_blue") {
+        return c"\x1b[94m"
+    }
+    if u.s_eq(name, c"bright_magenta") {
+        return c"\x1b[95m"
+    }
+    if u.s_eq(name, c"bright_cyan") {
+        return c"\x1b[96m"
+    }
+    if u.s_eq(name, c"bright_white") {
+        return c"\x1b[97m"
+    }
+    if u.s_len(name) > 0 && @load8(name) == 35 {
+        val hex: ref u8 = @ptradd(name, 1)
+        val r: i64 = parse_hex2(hex, 0)
+        val g: i64 = parse_hex2(hex, 2)
+        val b: i64 = parse_hex2(hex, 4)
+        return @fmtalloc("\x1b[38;2;{d};{d};{d}m", {r, g, b})
+    }
+    val n: i64 = u.s_len(name)
+    val i: mut i64 = 0
+    val all_digits: mut bool = n > 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(name, i))
+        if c < 48 || c > 57 {
+            all_digits = false
+            break
+        }
+        i++
+    }
+    if all_digits {
+        match u.parse_int(name) {
+            some idx => {
+                return @fmtalloc("\x1b[38;5;{d}m", {idx})
+            }
+            none => {
+                return c""
+            }
+        }
+    }
+    return c""
+}
+
+fn parse_hex2(s: ref u8, off: i64) i64 = trust {
+    if u.s_len(s) < off + 2 {
+        return 0
+    }
+    val a: u8 = @load8(@ptradd(s, off))
+    val b: u8 = @load8(@ptradd(s, off + 1))
+    return (hexval(a) * 16 + hexval(b)) as i64
+}
+
+fn hexval(c: u8) i64 = trust {
+    if c >= 48 && c <= 57 {
+        return (c - 48) as i64
+    }
+    if c >= 97 && c <= 102 {
+        return (c - 87) as i64
+    }
+    if c >= 65 && c <= 70 {
+        return (c - 55) as i64
+    }
+    return 0
+}
+
+pub fn config_path() ref u8 = trust {
+    val xdg: ref u8 = u.env_get(c"XDG_CONFIG_HOME")
+    if xdg != none && u.s_len(xdg) > 0 {
+        return u.path_join(u.path_join(xdg, c"blood"), c"blood.ini")
+    }
+    return u.path_join(u.path_join(u.home_dir(), c".config/blood"), c"blood.ini")
+}
+
+pub fn default_config() ref Config = trust {
+    val c: mut ref Config = @alloc(@sizeof(Config)) as ref Config
+    c.path = config_path()
+    c.theme = c"default"
+    c.show_username = 1
+    c.show_hostname = 1
+    c.show_directory = 1
+    c.show_git = 1
+    c.show_time = 0
+    c.show_exit_status = 1
+    c.show_duration = 1
+    c.show_jobs = 1
+    c.show_mode = 0
+    c.two_line = 1
+    c.directory_style = c"full"
+    c.prompt_symbol = c"❯"
+    c.prompt_char = c"❯"
+    c.separator = c"─"
+    c.color_primary = c"\x1b[36m"
+    c.color_secondary = c"\x1b[35m"
+    c.color_success = c"\x1b[32m"
+    c.color_error = c"\x1b[31m"
+    c.color_directory = c"\x1b[34m"
+    c.color_git_clean = c"\x1b[32m"
+    c.color_git_dirty = c"\x1b[33m"
+    c.color_muted = c"\x1b[90m"
+    c.color_warning = c"\x1b[33m"
+    c.color_accent = c"\x1b[96m"
+    c.history_enabled = 1
+    c.history_file = u.path_join(u.path_join(u.home_dir(), c".local/share/blood"), c"history")
+    c.history_max = 10000
+    c.history_ignore_dups = 1
+    c.completion_enabled = 1
+    c.completion_case_sensitive = 0
+    c.shell_editor = c"nano"
+    c.login_message = 1
+    c.startup_file = c""
+    c.alias_defs = u.vec_new()
+    c.env_defs = u.vec_new()
+    return c
+}
+
+fn set_bool_field(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8) void = trust {
+    if !bool_key(key) {
+        return
+    }
+    val b: i64 = cfg_bool(value)
+    if u.s_eq(key, c"show_username") {
+        c.show_username = b
+    } elif u.s_eq(key, c"show_hostname") {
+        c.show_hostname = b
+    } elif u.s_eq(key, c"show_directory") {
+        c.show_directory = b
+    } elif u.s_eq(key, c"show_git") {
+        c.show_git = b
+    } elif u.s_eq(key, c"show_time") {
+        c.show_time = b
+    } elif u.s_eq(key, c"show_exit_status") {
+        c.show_exit_status = b
+    } elif u.s_eq(key, c"show_duration") {
+        c.show_duration = b
+    } elif u.s_eq(key, c"show_jobs") {
+        c.show_jobs = b
+    } elif u.s_eq(key, c"show_mode") {
+        c.show_mode = b
+    } elif u.s_eq(key, c"two_line") {
+        c.two_line = b
+    } elif u.s_eq(key, c"enabled") {
+        if u.s_eq(section, c"completion") {
+            c.completion_enabled = b
+        } else {
+            c.history_enabled = b
+        }
+    } elif u.s_eq(key, c"ignore_duplicates") {
+        c.history_ignore_dups = b
+    } elif u.s_eq(key, c"case_sensitive") {
+        c.completion_case_sensitive = b
+    } elif u.s_eq(key, c"login_message") {
+        c.login_message = b
+    } elif u.s_eq(key, c"git_status") {
+        c.show_git = b
+    }
+}
+
+fn set_string_field(c: mut ref Config, key: ref u8, value: ref u8) void = trust {
+    if u.s_eq(key, c"theme") {
+        c.theme = u.s_dup(value)
+    } elif u.s_eq(key, c"symbol") {
+        c.prompt_symbol = u.s_dup(value)
+        c.prompt_char = u.s_dup(value)
+    } elif u.s_eq(key, c"prompt_symbol") {
+        c.prompt_symbol = u.s_dup(value)
+        c.prompt_char = u.s_dup(value)
+    } elif u.s_eq(key, c"prompt_char") {
+        c.prompt_char = u.s_dup(value)
+    } elif u.s_eq(key, c"separator") {
+        c.separator = u.s_dup(value)
+    } elif u.s_eq(key, c"directory_style") {
+        c.directory_style = u.s_dup(value)
+    } elif u.s_eq(key, c"file") {
+        c.history_file = u.expand_tilde(value)
+    } elif u.s_eq(key, c"history_file") {
+        c.history_file = u.expand_tilde(value)
+    } elif u.s_eq(key, c"default_editor") || u.s_eq(key, c"editor") {
+        c.shell_editor = u.s_dup(value)
+    } elif u.s_eq(key, c"startup_file") {
+        c.startup_file = u.expand_tilde(value)
+    } elif u.s_eq(key, c"primary") {
+        c.color_primary = color_ansi(value)
+    } elif u.s_eq(key, c"secondary") {
+        c.color_secondary = color_ansi(value)
+    } elif u.s_eq(key, c"success") {
+        c.color_success = color_ansi(value)
+    } elif u.s_eq(key, c"error") {
+        c.color_error = color_ansi(value)
+    } elif u.s_eq(key, c"directory") {
+        c.color_directory = color_ansi(value)
+    } elif u.s_eq(key, c"git_clean") {
+        c.color_git_clean = color_ansi(value)
+    } elif u.s_eq(key, c"git_dirty") {
+        c.color_git_dirty = color_ansi(value)
+    } elif u.s_eq(key, c"muted") {
+        c.color_muted = color_ansi(value)
+    } elif u.s_eq(key, c"warning") {
+        c.color_warning = color_ansi(value)
+    } elif u.s_eq(key, c"accent") {
+        c.color_accent = color_ansi(value)
+    }
+}
+
+fn set_int_field(c: mut ref Config, key: ref u8, value: ref u8) void = trust {
+    if !(u.s_eq(key, c"max_entries") || u.s_eq(key, c"history_max")) {
+        return
+    }
+    match u.parse_int(value) {
+        some n => {
+            c.history_max = n
+        }
+        none => {
+            u.stderr_s(u.s_cat3(c"blood: config: invalid integer for ", key, c"\n"))
+        }
+    }
+}
+
+fn apply(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8) void = trust {
+    if u.s_eq(section, c"aliases") {
+        u.vec_pushp(c.alias_defs, u.s_cat3(key, c"=", value) as ref void)
+        return
+    }
+    if u.s_eq(section, c"env") {
+        u.vec_pushp(c.env_defs, u.s_cat3(key, c"=", value) as ref void)
+        return
+    }
+    set_bool_field(c, section, key, value)
+    set_string_field(c, key, value)
+    set_int_field(c, key, value)
+}
+
+pub fn load_config() ref Config = trust {
+    val c: mut ref Config = default_config()
+    val data: ref u8 = u.read_file(c.path)
+    if data == none {
+        return c
+    }
+    val section: mut ref u8 = u.s_dup(c"prompt")
+    val line: mut ref u8 = u.s_dup(c"")
+    val lineno: mut i64 = 1
+    val i: mut i64 = 0
+    val n: i64 = u.s_len(data)
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(data, i)) == 10 {
+            val piece: ref u8 = u.s_ndup(line, u.s_len(line))
+            val t: ref u8 = u.s_trim(piece)
+            if u.s_len(t) > 0 && @load8(t) != 35 && @load8(t) != 59 {
+                if @load8(t) == 91 {
+                    val close: i64 = u.s_index_of_char(t, 93, 0)
+                    if close > 0 {
+                        section = u.s_substr(t, 1, close)
+                    }
+                } else {
+                    val eq: i64 = u.s_index_of_char(t, 61, 0)
+                    if eq > 0 {
+                        val key: ref u8 = u.s_trim(u.s_substr(t, 0, eq))
+                        val value: ref u8 = u.s_trim(u.s_substr(t, eq + 1, u.s_len(t)))
+                        val vv: ref u8 = strip_quotes(value)
+                        apply(c, section, key, vv)
+                    } else {
+                        u.stderr_s(u.s_cat3(c"blood: config: ", c.path, c"\n"))
+                        u.stderr_s(u.s_cat3(c"  line ", u.s_int(lineno), c": expected key = value\n"))
+                    }
+                }
+            }
+            line = u.s_dup(c"")
+            lineno++
+        } else {
+            val ch: u8 = @load8(@ptradd(data, i))
+            if ch != 13 {
+                val cbuf: mut u8 = ch
+                line = u.s_cat(line, u.s_ndup(@addr(cbuf), 1))
+            }
+        }
+        i++
+    }
+    if c.history_max < 0 {
+        c.history_max = 0
+    }
+    return c
+}
+
+fn strip_quotes(v: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(v)
+    if n >= 2 {
+        val a: u8 = @load8(v)
+        val b: u8 = @load8(@ptradd(v, n - 1))
+        if (a == 34 && b == 34) || (a == 39 && b == 39) {
+            return u.s_substr(v, 1, n - 1)
+        }
+    }
+    return v
+}
+
+pub fn init_config_file(path: ref u8) bool = trust {
+    val dir: ref u8 = u.path_dir(path)
+    u.mkdir_p(dir)
+    if u.file_exists(path) {
+        return true
+    }
+    val text: ref u8 = c"# Blood shell configuration\n# See `blood help config` for the available keys.\n\n[prompt]\ntheme = default\nshow_username = true\nshow_hostname = true\nshow_directory = true\nshow_git = true\nshow_time = false\nshow_exit_status = true\nshow_duration = true\ntwo_line = true\n\n[colors]\nprimary = cyan\nsecondary = magenta\nsuccess = green\nerror = red\ndirectory = blue\ngit_clean = green\ngit_dirty = yellow\nmuted = bright_black\n\n[history]\nenabled = true\nfile = ~/.local/share/blood/history\nmax_entries = 10000\nignore_duplicates = true\n\n[completion]\nenabled = true\ncase_sensitive = false\n\n[shell]\ndefault_editor = nano\nlogin_message = true\n"
+    return u.write_file(path, text)
+}

@@ -1,0 +1,2144 @@
+/// Interpreter for the Blood scripting language.
+
+val u = use("util.sx")
+val lang = use("lang.sx")
+val term = use("terminal.sx")
+
+extern (C, header) fn c_usleep(usec: u32) i32 = "usleep"
+
+pub type Value = {
+    tag: mut i64
+    i: mut i64
+    p: mut ref void
+}
+
+pub type Env = {
+    vars: mut ref u.Map
+    parent: mut ref Env
+}
+
+pub type Func = {
+    name: mut ref u8
+    params: mut ref u.Vec
+    body: mut ref lang.Node
+    native: mut i64
+}
+
+val g_env: mut ref Env = none
+val g_error: mut ref u8 = none
+val g_err_line: mut i64 = 0
+val g_err_col: mut i64 = 0
+val g_flow: mut i64 = 0
+val g_return: mut ref Value = none
+val g_interactive: mut i64 = 1
+val g_depth: mut i64 = 0
+val g_args: mut ref u.Vec = none
+
+fn v_new(tag: i64) ref Value = trust {
+    val v: mut ref Value = u.xalloc(@sizeof(Value) as i64) as ref Value
+    v.tag = tag
+    v.i = 0
+    v.p = none
+    return v
+}
+
+pub fn v_nil() ref Value = trust {
+    return v_new(0)
+}
+
+pub fn v_bool(b: bool) ref Value = trust {
+    val v: mut ref Value = v_new(1)
+    if b {
+        v.i = 1
+    }
+    return v
+}
+
+pub fn v_int(n: i64) ref Value = trust {
+    val v: mut ref Value = v_new(2)
+    v.i = n
+    return v
+}
+
+pub fn v_float(f: f64) ref Value = trust {
+    val v: mut ref Value = v_new(3)
+    v.i = @bitcast(f, i64)
+    return v
+}
+
+pub fn v_str(s: ref u8) ref Value = trust {
+    val v: mut ref Value = v_new(4)
+    v.p = s as ref void
+    return v
+}
+
+fn v_list(vec: ref u.Vec) ref Value = trust {
+    val v: mut ref Value = v_new(5)
+    v.p = vec as ref void
+    return v
+}
+
+fn v_dict(m: ref u.Map) ref Value = trust {
+    val v: mut ref Value = v_new(6)
+    v.p = m as ref void
+    return v
+}
+
+fn v_func(f: ref Func) ref Value = trust {
+    val v: mut ref Value = v_new(7)
+    v.p = f as ref void
+    return v
+}
+
+fn is_nil(v: ref Value) bool = trust {
+    return v == none || v.tag == 0
+}
+
+pub fn truthy(v: ref Value) bool = trust {
+    if is_nil(v) {
+        return false
+    }
+    if v.tag == 1 {
+        return v.i != 0
+    }
+    if v.tag == 2 {
+        return v.i != 0
+    }
+    if v.tag == 3 {
+        return @bitcast(v.i, f64) != 0.0
+    }
+    if v.tag == 4 {
+        return u.s_len(v.p as ref u8) > 0
+    }
+    if v.tag == 5 {
+        val vec: ref u.Vec = v.p as ref u.Vec
+        return vec.len > 0
+    }
+    if v.tag == 6 {
+        val m: ref u.Map = v.p as ref u.Map
+        return m.len > 0
+    }
+    return true
+}
+
+fn num_f(v: ref Value) f64 = trust {
+    if v == none {
+        return 0.0
+    }
+    if v.tag == 2 {
+        return v.i as f64
+    }
+    if v.tag == 3 {
+        return @bitcast(v.i, f64)
+    }
+    if v.tag == 1 {
+        if v.i != 0 {
+            return 1.0
+        }
+        return 0.0
+    }
+    if v.tag == 4 {
+        match u.parse_float(v.p as ref u8) {
+            some f => {
+                return f
+            }
+            none => {
+                return 0.0
+            }
+        }
+    }
+    return 0.0
+}
+
+fn num_i(v: ref Value) i64 = trust {
+    if v == none {
+        return 0
+    }
+    if v.tag == 2 {
+        return v.i
+    }
+    if v.tag == 3 {
+        return @bitcast(v.i, f64) as i64
+    }
+    if v.tag == 1 {
+        return v.i
+    }
+    if v.tag == 4 {
+        match u.parse_int(v.p as ref u8) {
+            some n => {
+                return n
+            }
+            none => {
+                return 0
+            }
+        }
+    }
+    return 0
+}
+
+fn is_float_val(v: ref Value) bool = trust {
+    return v != none && v.tag == 3
+}
+
+fn v_to_str(v: ref Value) ref u8 = trust {
+    if is_nil(v) {
+        return u.s_dup(c"null")
+    }
+    if v.tag == 1 {
+        if v.i != 0 {
+            return u.s_dup(c"true")
+        }
+        return u.s_dup(c"false")
+    }
+    if v.tag == 2 {
+        return u.s_int(v.i)
+    }
+    if v.tag == 3 {
+        return u.s_float(@bitcast(v.i, f64))
+    }
+    if v.tag == 4 {
+        return v.p as ref u8
+    }
+    if v.tag == 7 {
+        val f: ref Func = v.p as ref Func
+        return u.s_cat3(c"<fn ", f.name, c">")
+    }
+    if v.tag == 5 {
+        val vec: ref u.Vec = v.p as ref u.Vec
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_ch(b, 91)
+        val i: mut i64 = 0
+        for {
+            if i >= vec.len {
+                break
+            }
+            if i > 0 {
+                u.buf_add(b, c", ")
+            }
+            u.buf_add(b, v_to_str(u.vec_p(vec, i) as ref Value))
+            i++
+        }
+        u.buf_ch(b, 93)
+        return u.buf_take(b)
+    }
+    if v.tag == 6 {
+        val m: ref u.Map = v.p as ref u.Map
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_ch(b, 123)
+        val i: mut i64 = 0
+        val first: mut bool = true
+        for {
+            if i >= m.cap {
+                break
+            }
+            if u.map_used_at(m, i) {
+                if !first {
+                    u.buf_add(b, c", ")
+                }
+                first = false
+                u.buf_add(b, u.map_key_at(m, i))
+                u.buf_add(b, c": ")
+                u.buf_add(b, v_to_str(@bitcast(u.map_val_at(m, i), ref Value)))
+            }
+            i++
+        }
+        u.buf_ch(b, 125)
+        return u.buf_take(b)
+    }
+    return u.s_dup(c"")
+}
+
+fn key_of(v: ref Value) ref u8 = trust {
+    if v != none && v.tag == 4 {
+        return v.p as ref u8
+    }
+    return v_to_str(v)
+}
+
+fn type_name(v: ref Value) ref u8 = trust {
+    if is_nil(v) {
+        return u.s_dup(c"null")
+    }
+    if v.tag == 1 {
+        return u.s_dup(c"bool")
+    }
+    if v.tag == 2 {
+        return u.s_dup(c"int")
+    }
+    if v.tag == 3 {
+        return u.s_dup(c"float")
+    }
+    if v.tag == 4 {
+        return u.s_dup(c"string")
+    }
+    if v.tag == 5 {
+        return u.s_dup(c"list")
+    }
+    if v.tag == 6 {
+        return u.s_dup(c"dict")
+    }
+    if v.tag == 7 {
+        return u.s_dup(c"function")
+    }
+    return u.s_dup(c"unknown")
+}
+
+fn set_error(msg: ref u8, line: i64, col: i64) void = trust {
+    if g_error == none {
+        g_error = u.s_dup(msg)
+        g_err_line = line
+        g_err_col = col
+    }
+    g_flow = 4
+}
+
+fn env_new(parent: ref Env) ref Env = trust {
+    val e: mut ref Env = u.xalloc(@sizeof(Env) as i64) as ref Env
+    e.vars = u.map_new()
+    e.parent = parent
+    return e
+}
+
+fn env_define(e: mut ref Env, name: ref u8, v: ref Value) void = trust {
+    u.map_put(e.vars, name, @bitcast(v, i64))
+}
+
+fn env_lookup(e: ref Env, name: ref u8) ref Value = trust {
+    val chain: mut ref Env = e
+    for {
+        if chain == none {
+            break
+        }
+        val raw: i64 = u.map_get(chain.vars, name)
+        if raw != 0 {
+            return @bitcast(raw, ref Value)
+        }
+        chain = chain.parent
+    }
+    return none
+}
+
+fn env_assign(e: mut ref Env, name: ref u8, v: ref Value) void = trust {
+    val chain: mut ref Env = e
+    for {
+        if chain == none {
+            break
+        }
+        if u.map_has(chain.vars, name) {
+            u.map_put(chain.vars, name, @bitcast(v, i64))
+            return
+        }
+        chain = chain.parent
+    }
+    env_define(e, name, v)
+}
+
+fn set_status(status: i64) void = trust {
+    if g_env == none {
+        return
+    }
+    env_assign(g_env, c"status", v_int(status))
+}
+
+fn list_new() ref u.Vec = trust {
+    return u.vec_new()
+}
+
+fn dict_new() ref u.Map = trust {
+    return u.map_new()
+}
+
+fn bin_numeric(op: i64, a: ref Value, b: ref Value) ref Value = trust {
+    if op == 3 {
+        if !is_float_val(a) && !is_float_val(b) {
+            val bi: i64 = num_i(b)
+            if bi == 0 {
+                set_error(c"division by zero", 0, 0)
+                return v_nil()
+            }
+            return v_int(num_i(a) / bi)
+        }
+        return v_float(num_f(a) / num_f(b))
+    }
+    if op == 4 {
+        val bi: i64 = num_i(b)
+        if bi == 0 {
+            set_error(c"division by zero", 0, 0)
+            return v_nil()
+        }
+        return v_int(num_i(a) % bi)
+    }
+    if is_float_val(a) || is_float_val(b) {
+        if op == 0 {
+            return v_float(num_f(a) + num_f(b))
+        }
+        if op == 1 {
+            return v_float(num_f(a) - num_f(b))
+        }
+        if op == 2 {
+            return v_float(num_f(a) * num_f(b))
+        }
+    }
+    if op == 0 {
+        return v_int(num_i(a) + num_i(b))
+    }
+    if op == 1 {
+        return v_int(num_i(a) - num_i(b))
+    }
+    if op == 2 {
+        return v_int(num_i(a) * num_i(b))
+    }
+    return v_nil()
+}
+
+fn list_contains(vec: ref u.Vec, v: ref Value) bool = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= vec.len {
+            break
+        }
+        if values_equal(u.vec_p(vec, i) as ref Value, v) {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn values_equal(a: ref Value, b: ref Value) bool = trust {
+    if is_nil(a) || is_nil(b) {
+        return is_nil(a) && is_nil(b)
+    }
+    if (a.tag == 2 || a.tag == 3 || a.tag == 1) && (b.tag == 2 || b.tag == 3 || b.tag == 1) {
+        if is_float_val(a) || is_float_val(b) {
+            return num_f(a) == num_f(b)
+        }
+        return num_i(a) == num_i(b)
+    }
+    if a.tag != b.tag {
+        return false
+    }
+    if a.tag == 4 {
+        return u.s_eq(a.p as ref u8, b.p as ref u8)
+    }
+    if a.tag == 5 {
+        val va: ref u.Vec = a.p as ref u.Vec
+        val vb: ref u.Vec = b.p as ref u.Vec
+        if va.len != vb.len {
+            return false
+        }
+        val i: mut i64 = 0
+        for {
+            if i >= va.len {
+                break
+            }
+            if !values_equal(u.vec_p(va, i) as ref Value, u.vec_p(vb, i) as ref Value) {
+                return false
+            }
+            i++
+        }
+        return true
+    }
+    return a.i == b.i && a.p == b.p
+}
+
+fn bin_op(op: i64, a: ref Value, b: ref Value) ref Value = trust {
+    if op == 0 {
+        if (a != none && a.tag == 4) || (b != none && b.tag == 4) {
+            return v_str(u.s_cat(v_to_str(a), v_to_str(b)))
+        }
+        if a != none && b != none && a.tag == 5 && b.tag == 5 {
+            val va: ref u.Vec = a.p as ref u.Vec
+            val vb: ref u.Vec = b.p as ref u.Vec
+            val out: mut ref u.Vec = list_new()
+            val i: mut i64 = 0
+            for {
+                if i >= va.len {
+                    break
+                }
+                u.vec_pushp(out, u.vec_p(va, i))
+                i++
+            }
+            val j: mut i64 = 0
+            for {
+                if j >= vb.len {
+                    break
+                }
+                u.vec_pushp(out, u.vec_p(vb, j))
+                j++
+            }
+            return v_list(out)
+        }
+        return bin_numeric(op, a, b)
+    }
+    if op == 1 || op == 2 || op == 3 || op == 4 {
+        return bin_numeric(op, a, b)
+    }
+    if op == 5 {
+        return v_bool(values_equal(a, b))
+    }
+    if op == 6 {
+        return v_bool(!values_equal(a, b))
+    }
+    if op == 7 || op == 8 || op == 9 || op == 10 {
+        if a != none && b != none && (a.tag == 4 || b.tag == 4) {
+            val c: i64 = u.s_cmp(v_to_str(a), v_to_str(b))
+            if op == 7 {
+                return v_bool(c < 0)
+            }
+            if op == 8 {
+                return v_bool(c > 0)
+            }
+            if op == 9 {
+                return v_bool(c <= 0)
+            }
+            return v_bool(c >= 0)
+        }
+        val x: f64 = num_f(a)
+        val y: f64 = num_f(b)
+        if op == 7 {
+            return v_bool(x < y)
+        }
+        if op == 8 {
+            return v_bool(x > y)
+        }
+        if op == 9 {
+            return v_bool(x <= y)
+        }
+        return v_bool(x >= y)
+    }
+    return v_nil()
+}
+
+fn in_op(a: ref Value, b: ref Value, negate: bool) ref Value = trust {
+    val found: mut bool = false
+    if b != none && b.tag == 5 {
+        found = list_contains(b.p as ref u.Vec, a)
+    } elif b != none && b.tag == 6 {
+        found = u.map_has(b.p as ref u.Map, key_of(a))
+    } elif b != none && b.tag == 4 {
+        found = u.s_contains(b.p as ref u8, v_to_str(a))
+    }
+    if negate {
+        return v_bool(!found)
+    }
+    return v_bool(found)
+}
+
+fn interp(raw: ref u8, env: mut ref Env) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(raw)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(raw, i))
+        if c == 123 {
+            if i + 1 < n && @load8(@ptradd(raw, i + 1)) == 123 {
+                u.buf_ch(b, 123)
+                i = i + 2
+                continue
+            }
+            val depth: mut i64 = 1
+            val start: i64 = i + 1
+            val j: mut i64 = i + 1
+            val quote: mut u8 = 0
+            for {
+                if j >= n {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(raw, j))
+                if quote != 0 {
+                    if d == 92 {
+                        j = j + 2
+                        continue
+                    }
+                    if d == quote {
+                        quote = 0
+                    }
+                    j++
+                    continue
+                }
+                if d == 34 || d == 39 {
+                    quote = d
+                    j++
+                    continue
+                }
+                if d == 123 {
+                    depth++
+                } elif d == 125 {
+                    depth--
+                    if depth == 0 {
+                        break
+                    }
+                }
+                j++
+            }
+            if j < n {
+                val expr: ref u8 = u.s_substr(raw, start, j)
+                val node: ref lang.Node = lang.parse_expr_text(expr)
+                if lang.last_error() != none {
+                    u.buf_add(b, c"{")
+                } else {
+                    val fv: ref Value = eval(node, env)
+                    u.buf_add(b, v_to_str(fv))
+                }
+                i = j + 1
+                continue
+            }
+            u.buf_ch(b, 123)
+            i++
+            continue
+        }
+        if c == 125 && i + 1 < n && @load8(@ptradd(raw, i + 1)) == 125 {
+            u.buf_ch(b, 125)
+            i = i + 2
+            continue
+        }
+        u.buf_ch(b, c)
+        i++
+    }
+    return u.buf_take(b)
+}
+
+fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
+    if n == none || g_flow != 0 {
+        return v_nil()
+    }
+    if n.kind == lang.NodeKind.IntLit {
+        return v_int(n.a)
+    }
+    if n.kind == lang.NodeKind.FloatLit {
+        return v_float(@bitcast(n.a, f64))
+    }
+    if n.kind == lang.NodeKind.StrLit {
+        return v_str(interp(n.s, env))
+    }
+    if n.kind == lang.NodeKind.BoolLit {
+        return v_bool(n.a != 0)
+    }
+    if n.kind == lang.NodeKind.NullLit {
+        return v_nil()
+    }
+    if n.kind == lang.NodeKind.Var {
+        val v: ref Value = env_lookup(env, n.s)
+        if v == none {
+            set_error(u.s_cat3(c"undefined variable '", n.s, c"'"), n.line, n.col)
+            return v_nil()
+        }
+        return v
+    }
+    if n.kind == lang.NodeKind.ListLit {
+        val vec: mut ref u.Vec = list_new()
+        val i: mut i64 = 0
+        for {
+            if i >= n.kids.len {
+                break
+            }
+            u.vec_pushp(vec, eval(u.vec_p(n.kids, i) as ref lang.Node, env) as ref void)
+            i++
+        }
+        return v_list(vec)
+    }
+    if n.kind == lang.NodeKind.DictLit {
+        val m: mut ref u.Map = dict_new()
+        val i: mut i64 = 0
+        for {
+            if i + 1 >= n.kids.len {
+                break
+            }
+            val k: ref u8 = key_of(eval(u.vec_p(n.kids, i) as ref lang.Node, env))
+            val v: ref Value = eval(u.vec_p(n.kids, i + 1) as ref lang.Node, env)
+            u.map_put(m, k, @bitcast(v, i64))
+            i = i + 2
+        }
+        return v_dict(m)
+    }
+    if n.kind == lang.NodeKind.Unary {
+        val v: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        if n.a == lang.UnOp.Not as i64 {
+            return v_bool(!truthy(v))
+        }
+        if is_float_val(v) {
+            return v_float(0.0 - num_f(v))
+        }
+        return v_int(0 - num_i(v))
+    }
+    if n.kind == lang.NodeKind.Binary {
+        if n.a == 100 {
+            val l: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+            if truthy(l) {
+                return l
+            }
+            return eval(u.vec_p(n.kids, 1) as ref lang.Node, env)
+        }
+        if n.a == 101 {
+            val l: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+            if !truthy(l) {
+                return l
+            }
+            return eval(u.vec_p(n.kids, 1) as ref lang.Node, env)
+        }
+        val l: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        val r: ref Value = eval(u.vec_p(n.kids, 1) as ref lang.Node, env)
+        if g_flow != 0 {
+            return v_nil()
+        }
+        if n.a == lang.BinOp.In as i64 {
+            return in_op(l, r, false)
+        }
+        if n.a == lang.BinOp.NotIn as i64 {
+            return in_op(l, r, true)
+        }
+        return bin_op(n.a, l, r)
+    }
+    if n.kind == lang.NodeKind.Index {
+        val obj: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        val idx: ref Value = eval(u.vec_p(n.kids, 1) as ref lang.Node, env)
+        return do_index(obj, idx, n)
+    }
+    if n.kind == lang.NodeKind.Attr {
+        val obj: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        if obj != none && obj.tag == 6 {
+            val m: mut ref u.Map = obj.p as ref u.Map
+            val raw: i64 = u.map_get(m, n.s)
+            if raw != 0 {
+                return @bitcast(raw, ref Value)
+            }
+        }
+        return v_nil()
+    }
+    if n.kind == lang.NodeKind.CmdSubst {
+        if u.hooks_ready == 0 {
+            return v_str(u.s_dup(c""))
+        }
+        val hook: fn(ref u8) ref u8 = u.run_capture_hook
+        val out: ref u8 = hook(n.s)
+        set_status(u.hook_status)
+        if out == none {
+            return v_str(u.s_dup(c""))
+        }
+        val m: mut i64 = u.s_len(out)
+        for {
+            if m <= 0 {
+                break
+            }
+            val c: u8 = @load8(@ptradd(out, m - 1))
+            if c != 10 && c != 13 {
+                break
+            }
+            m--
+        }
+        return v_str(u.s_substr(out, 0, m))
+    }
+    if n.kind == lang.NodeKind.Call {
+        val callee: ref lang.Node = u.vec_p(n.kids, 0) as ref lang.Node
+        if callee.kind == lang.NodeKind.Attr {
+            val obj: ref Value = eval(u.vec_p(callee.kids, 0) as ref lang.Node, env)
+            val args: ref u.Vec = eval_args(n, 1, env)
+            return call_method(obj, callee.s, args, n)
+        }
+        val fnval: ref Value = eval(callee, env)
+        if g_flow != 0 {
+            return v_nil()
+        }
+        if fnval == none || fnval.tag != 7 {
+            set_error(c"attempt to call a non-function value", n.line, n.col)
+            return v_nil()
+        }
+        val args: ref u.Vec = eval_args(n, 1, env)
+        return call_func(fnval.p as ref Func, args, n)
+    }
+    return v_nil()
+}
+
+fn eval_args(n: ref lang.Node, from: i64, env: mut ref Env) ref u.Vec = trust {
+    val args: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = from
+    for {
+        if i >= n.kids.len {
+            break
+        }
+        val v: ref Value = eval(u.vec_p(n.kids, i) as ref lang.Node, env)
+        u.vec_pushp(args, v as ref void)
+        i++
+    }
+    return args
+}
+
+fn do_index(obj: ref Value, idx: ref Value, n: ref lang.Node) ref Value = trust {
+    if obj == none {
+        set_error(c"cannot index a null value", n.line, n.col)
+        return v_nil()
+    }
+    if obj.tag == 5 {
+        val vec: mut ref u.Vec = obj.p as ref u.Vec
+        val i: mut i64 = num_i(idx)
+        if i < 0 {
+            i = vec.len + i
+        }
+        if i < 0 || i >= vec.len {
+            set_error(c"list index out of range", n.line, n.col)
+            return v_nil()
+        }
+        return u.vec_p(vec, i) as ref Value
+    }
+    if obj.tag == 6 {
+        val m: mut ref u.Map = obj.p as ref u.Map
+        val raw: i64 = u.map_get(m, key_of(idx))
+        if raw == 0 {
+            return v_nil()
+        }
+        return @bitcast(raw, ref Value)
+    }
+    if obj.tag == 4 {
+        val s: ref u8 = obj.p as ref u8
+        val i: mut i64 = num_i(idx)
+        val len: i64 = u.s_len(s)
+        if i < 0 {
+            i = len + i
+        }
+        if i < 0 || i >= len {
+            set_error(c"string index out of range", n.line, n.col)
+            return v_nil()
+        }
+        val e: i64 = u.utf8_next(s, i, len)
+        return v_str(u.s_substr(s, i, e))
+    }
+    set_error(c"value is not indexable", n.line, n.col)
+    return v_nil()
+}
+
+fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
+    if f.native != 0 {
+        return call_native(f.native, args, n)
+    }
+    if g_depth > 200 {
+        set_error(c"recursion limit exceeded", n.line, n.col)
+        return v_nil()
+    }
+    g_depth++
+    val callenv: mut ref Env = env_new(g_env)
+    val i: mut i64 = 0
+    for {
+        if i >= f.params.len {
+            break
+        }
+        val pname: ref u8 = u.vec_p(f.params, i) as ref u8
+        val arg: ref Value = v_nil()
+        if i < args.len {
+            env_define(callenv, pname, u.vec_p(args, i) as ref Value)
+        } else {
+            env_define(callenv, pname, arg)
+        }
+        i++
+    }
+    val saved_flow: i64 = g_flow
+    val saved_return: ref Value = g_return
+    g_flow = 0
+    g_return = none
+    exec_block(f.body, callenv, false)
+    val result: mut ref Value = v_nil()
+    if g_flow == 3 {
+        if g_return != none {
+            result = g_return
+        }
+    }
+    if g_flow == 4 || g_flow == 5 {
+        // propagate error/exit
+    } else {
+        g_flow = saved_flow
+    }
+    g_return = saved_return
+    g_depth--
+    return result
+}
+
+fn native_id(name: ref u8) i64 = trust {
+    if u.s_eq(name, c"len") {
+        return 1
+    }
+    if u.s_eq(name, c"str") {
+        return 2
+    }
+    if u.s_eq(name, c"int") {
+        return 3
+    }
+    if u.s_eq(name, c"float") {
+        return 4
+    }
+    if u.s_eq(name, c"bool") {
+        return 5
+    }
+    if u.s_eq(name, c"range") {
+        return 6
+    }
+    if u.s_eq(name, c"print") {
+        return 7
+    }
+    if u.s_eq(name, c"input") {
+        return 8
+    }
+    if u.s_eq(name, c"sleep") {
+        return 9
+    }
+    if u.s_eq(name, c"exit") {
+        return 10
+    }
+    if u.s_eq(name, c"shell") {
+        return 11
+    }
+    if u.s_eq(name, c"capture") {
+        return 12
+    }
+    if u.s_eq(name, c"abs") {
+        return 13
+    }
+    if u.s_eq(name, c"min") {
+        return 14
+    }
+    if u.s_eq(name, c"max") {
+        return 15
+    }
+    if u.s_eq(name, c"sum") {
+        return 16
+    }
+    if u.s_eq(name, c"type") {
+        return 17
+    }
+    if u.s_eq(name, c"keys") {
+        return 18
+    }
+    if u.s_eq(name, c"values") {
+        return 19
+    }
+    if u.s_eq(name, c"read_file") {
+        return 20
+    }
+    if u.s_eq(name, c"write_file") {
+        return 21
+    }
+    if u.s_eq(name, c"append_file") {
+        return 22
+    }
+    if u.s_eq(name, c"env") {
+        return 23
+    }
+    if u.s_eq(name, c"clock") {
+        return 24
+    }
+    if u.s_eq(name, c"chr") {
+        return 25
+    }
+    if u.s_eq(name, c"ord") {
+        return 26
+    }
+    if u.s_eq(name, c"items") {
+        return 27
+    }
+    if u.s_eq(name, c"source") {
+        return 28
+    }
+    return 0
+}
+
+fn arg(args: ref u.Vec, i: i64) ref Value = trust {
+    if i >= args.len {
+        return v_nil()
+    }
+    return u.vec_p(args, i) as ref Value
+}
+
+fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
+    if id == 1 {
+        val v: ref Value = arg(args, 0)
+        if v != none && v.tag == 5 {
+            return v_int((v.p as ref u.Vec).len)
+        }
+        if v != none && v.tag == 6 {
+            return v_int((v.p as ref u.Map).len)
+        }
+        if v != none && v.tag == 4 {
+            return v_int(u.s_len(v.p as ref u8))
+        }
+        return v_int(u.s_len(v_to_str(v)))
+    }
+    if id == 2 {
+        return v_str(v_to_str(arg(args, 0)))
+    }
+    if id == 3 {
+        return v_int(num_i(arg(args, 0)))
+    }
+    if id == 4 {
+        return v_float(num_f(arg(args, 0)))
+    }
+    if id == 5 {
+        return v_bool(truthy(arg(args, 0)))
+    }
+    if id == 6 {
+        val a: i64 = num_i(arg(args, 0))
+        val b: mut i64 = 0
+        if args.len > 1 {
+            b = num_i(arg(args, 1))
+        } else {
+            b = a
+        }
+        val start: mut i64 = 0
+        if args.len > 1 {
+            start = a
+        }
+        val vec: mut ref u.Vec = list_new()
+        val i: mut i64 = start
+        for {
+            if i >= b {
+                break
+            }
+            u.vec_pushp(vec, v_int(i) as ref void)
+            i++
+        }
+        return v_list(vec)
+    }
+    if id == 7 {
+        val b: mut ref u.Buf = u.buf_new()
+        val i: mut i64 = 0
+        for {
+            if i >= args.len {
+                break
+            }
+            if i > 0 {
+                u.buf_ch(b, 32)
+            }
+            u.buf_add(b, v_to_str(arg(args, i)))
+            i++
+        }
+        u.buf_ch(b, 10)
+        u.stdout_s(u.buf_take(b))
+        return v_nil()
+    }
+    if id == 8 {
+        if args.len > 0 {
+            u.stdout_s(v_to_str(arg(args, 0)))
+        }
+        val line: ref u8 = term.read_plain()
+        if line == none {
+            return v_nil()
+        }
+        return v_str(line)
+    }
+    if id == 9 {
+        val ms: i64 = num_i(arg(args, 0))
+        if ms > 0 {
+            c_usleep((ms * 1000) as u32)
+        }
+        return v_nil()
+    }
+    if id == 10 {
+        val code: i64 = num_i(arg(args, 0))
+        u.script_exit_code = code
+        g_flow = 5
+        return v_nil()
+    }
+    if id == 11 {
+        if u.hooks_ready == 0 {
+            return v_int(127)
+        }
+        val hook: fn(ref u8) i32 = u.run_shell_hook
+        return v_int(hook(v_to_str(arg(args, 0))) as i64)
+    }
+    if id == 12 {
+        if u.hooks_ready == 0 {
+            return v_str(u.s_dup(c""))
+        }
+        val hook: fn(ref u8) ref u8 = u.run_capture_hook
+        val out: ref u8 = hook(v_to_str(arg(args, 0)))
+        if out == none {
+            return v_str(u.s_dup(c""))
+        }
+        return v_str(out)
+    }
+    if id == 13 {
+        val f: f64 = num_f(arg(args, 0))
+        if f < 0.0 {
+            return v_float(0.0 - f)
+        }
+        return v_float(f)
+    }
+    if id == 14 || id == 15 {
+        if args.len == 0 {
+            return v_nil()
+        }
+        val first: ref Value = arg(args, 0)
+        if first != none && first.tag == 5 {
+            val vec: ref u.Vec = first.p as ref u.Vec
+            if vec.len == 0 {
+                return v_nil()
+            }
+            val best: mut ref Value = u.vec_p(vec, 0) as ref Value
+            val i: mut i64 = 1
+            for {
+                if i >= vec.len {
+                    break
+                }
+                val cur: ref Value = u.vec_p(vec, i) as ref Value
+                val cmp: f64 = num_f(cur)
+                val bc: f64 = num_f(best)
+                if (id == 14 && cmp < bc) || (id == 15 && cmp > bc) {
+                    best = cur
+                }
+                i++
+            }
+            return best
+        }
+        val a: f64 = num_f(arg(args, 0))
+        val b: f64 = num_f(arg(args, 1))
+        if id == 14 {
+            if a < b {
+                return v_float(a)
+            }
+            return v_float(b)
+        }
+        if a > b {
+            return v_float(a)
+        }
+        return v_float(b)
+    }
+    if id == 16 {
+        val v: ref Value = arg(args, 0)
+        val total: mut f64 = 0.0
+        if v != none && v.tag == 5 {
+            val vec: ref u.Vec = v.p as ref u.Vec
+            val i: mut i64 = 0
+            for {
+                if i >= vec.len {
+                    break
+                }
+                total = total + num_f(u.vec_p(vec, i) as ref Value)
+                i++
+            }
+        }
+        return v_float(total)
+    }
+    if id == 17 {
+        return v_str(type_name(arg(args, 0)))
+    }
+    if id == 18 {
+        val v: ref Value = arg(args, 0)
+        val out: mut ref u.Vec = list_new()
+        if v != none && v.tag == 6 {
+            val m: ref u.Map = v.p as ref u.Map
+            val i: mut i64 = 0
+            for {
+                if i >= m.cap {
+                    break
+                }
+                if u.map_used_at(m, i) {
+                    u.vec_pushp(out, v_str(u.s_dup(u.map_key_at(m, i))) as ref void)
+                }
+                i++
+            }
+        }
+        return v_list(out)
+    }
+    if id == 19 {
+        val v: ref Value = arg(args, 0)
+        val out: mut ref u.Vec = list_new()
+        if v != none && v.tag == 6 {
+            val m: ref u.Map = v.p as ref u.Map
+            val i: mut i64 = 0
+            for {
+                if i >= m.cap {
+                    break
+                }
+                if u.map_used_at(m, i) {
+                    u.vec_pushp(out, @bitcast(u.map_val_at(m, i), ref void))
+                }
+                i++
+            }
+        }
+        return v_list(out)
+    }
+    if id == 20 {
+        val path: ref u8 = v_to_str(arg(args, 0))
+        val data: ref u8 = u.read_file(u.expand_tilde(path))
+        if data == none {
+            return v_nil()
+        }
+        return v_str(data)
+    }
+    if id == 21 || id == 22 {
+        val path: ref u8 = u.expand_tilde(v_to_str(arg(args, 0)))
+        val data: ref u8 = v_to_str(arg(args, 1))
+        if id == 21 {
+            return v_bool(u.write_file(path, data))
+        }
+        return v_bool(u.append_file(path, data))
+    }
+    if id == 23 {
+        val name: ref u8 = v_to_str(arg(args, 0))
+        val v: ref u8 = u.env_get(name)
+        if v == none {
+            return v_nil()
+        }
+        return v_str(u.s_dup(v))
+    }
+    if id == 24 {
+        return v_int(u.now_ms())
+    }
+    if id == 25 {
+        val code: i64 = num_i(arg(args, 0))
+        val c: mut u8 = code as u8
+        return v_str(u.s_ndup(@addr(c), 1))
+    }
+    if id == 26 {
+        val s: ref u8 = v_to_str(arg(args, 0))
+        if u.s_len(s) == 0 {
+            return v_int(0)
+        }
+        return v_int(@load8(s) as i64)
+    }
+    if id == 28 {
+        if u.hooks_ready == 0 {
+            return v_int(1)
+        }
+        val hook: fn(ref u8) i32 = u.run_script_file_hook
+        return v_int(hook(u.expand_tilde(v_to_str(arg(args, 0)))) as i64)
+    }
+    if id == 27 {
+        val v: ref Value = arg(args, 0)
+        val out: mut ref u.Vec = list_new()
+        if v != none && v.tag == 6 {
+            val m: ref u.Map = v.p as ref u.Map
+            val i: mut i64 = 0
+            for {
+                if i >= m.cap {
+                    break
+                }
+                if u.map_used_at(m, i) {
+                    val pair: mut ref u.Vec = list_new()
+                    u.vec_pushp(pair, v_str(u.s_dup(u.map_key_at(m, i))) as ref void)
+                    u.vec_pushp(pair, @bitcast(u.map_val_at(m, i), ref void))
+                    u.vec_pushp(out, v_list(pair) as ref void)
+                }
+                i++
+            }
+        }
+        return v_list(out)
+    }
+    if id == 99 {
+        return v_nil()
+    }
+    set_error(u.s_cat3(c"unknown native function", c"", c""), n.line, n.col)
+    return v_nil()
+}
+
+fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
+    if obj == none {
+        set_error(c"method call on null", n.line, n.col)
+        return v_nil()
+    }
+    if obj.tag == 5 {
+        val vec: mut ref u.Vec = obj.p as ref u.Vec
+        if u.s_eq(name, c"append") {
+            u.vec_pushp(vec, arg(args, 0) as ref void)
+            return v_nil()
+        }
+        if u.s_eq(name, c"pop") {
+            if vec.len == 0 {
+                return v_nil()
+            }
+            val v: ref Value = u.vec_p(vec, vec.len - 1) as ref Value
+            vec.len--
+            return v
+        }
+        if u.s_eq(name, c"len") {
+            return v_int(vec.len)
+        }
+        if u.s_eq(name, c"insert") {
+            u.vec_insert(vec, num_i(arg(args, 0)), @bitcast(arg(args, 1), i64))
+            return v_nil()
+        }
+        if u.s_eq(name, c"remove") {
+            val i: i64 = num_i(arg(args, 0))
+            if i >= 0 && i < vec.len {
+                u.vec_remove(vec, i)
+            }
+            return v_nil()
+        }
+        if u.s_eq(name, c"contains") {
+            return v_bool(list_contains(vec, arg(args, 0)))
+        }
+        if u.s_eq(name, c"join") {
+            val b: mut ref u.Buf = u.buf_new()
+            val sep: ref u8 = v_to_str(arg(args, 0))
+            val i: mut i64 = 0
+            for {
+                if i >= vec.len {
+                    break
+                }
+                if i > 0 {
+                    u.buf_add(b, sep)
+                }
+                u.buf_add(b, v_to_str(u.vec_p(vec, i) as ref Value))
+                i++
+            }
+            return v_str(u.buf_take(b))
+        }
+        if u.s_eq(name, c"sort") {
+            sort_values(vec)
+            return v_nil()
+        }
+    }
+    if obj.tag == 6 {
+        val m: mut ref u.Map = obj.p as ref u.Map
+        if u.s_eq(name, c"get") {
+            val raw: i64 = u.map_get(m, key_of(arg(args, 0)))
+            if raw != 0 {
+                return @bitcast(raw, ref Value)
+            }
+            return arg(args, 1)
+        }
+        if u.s_eq(name, c"set") {
+            u.map_put(m, key_of(arg(args, 0)), @bitcast(arg(args, 1), i64))
+            return v_nil()
+        }
+        if u.s_eq(name, c"contains") {
+            return v_bool(u.map_has(m, key_of(arg(args, 0))))
+        }
+        if u.s_eq(name, c"keys") {
+            return call_native(18, args_for(obj), n)
+        }
+        if u.s_eq(name, c"values") {
+            return call_native(19, args_for(obj), n)
+        }
+        if u.s_eq(name, c"items") {
+            return call_native(27, args_for(obj), n)
+        }
+        if u.s_eq(name, c"len") {
+            return v_int(m.len)
+        }
+        if u.s_eq(name, c"remove") {
+            u.map_del(m, key_of(arg(args, 0)))
+            return v_nil()
+        }
+        u.map_put(m, name, @bitcast(arg(args, 0), i64))
+        return v_nil()
+    }
+    if obj.tag == 4 {
+        val s: ref u8 = obj.p as ref u8
+        if u.s_eq(name, c"upper") || u.s_eq(name, c"lower") {
+            val b: mut ref u.Buf = u.buf_new()
+            val len: i64 = u.s_len(s)
+            val i: mut i64 = 0
+            for {
+                if i >= len {
+                    break
+                }
+                val c: u8 = @load8(@ptradd(s, i))
+                if u.s_eq(name, c"upper") && c >= 97 && c <= 122 {
+                    u.buf_ch(b, c - 32)
+                } elif u.s_eq(name, c"lower") && c >= 65 && c <= 90 {
+                    u.buf_ch(b, c + 32)
+                } else {
+                    u.buf_ch(b, c)
+                }
+                i++
+            }
+            return v_str(u.buf_take(b))
+        }
+        if u.s_eq(name, c"strip") {
+            return v_str(u.s_trim(s))
+        }
+        if u.s_eq(name, c"split") {
+            return v_str_split(s, v_to_str(arg(args, 0)))
+        }
+        if u.s_eq(name, c"startswith") {
+            return v_bool(u.s_starts(s, v_to_str(arg(args, 0))))
+        }
+        if u.s_eq(name, c"endswith") {
+            val suffix: ref u8 = v_to_str(arg(args, 0))
+            val sl: i64 = u.s_len(s)
+            val pl: i64 = u.s_len(suffix)
+            if pl > sl {
+                return v_bool(false)
+            }
+            return v_bool(u.s_eq(u.s_substr(s, sl - pl, sl), suffix))
+        }
+        if u.s_eq(name, c"contains") {
+            return v_bool(u.s_contains(s, v_to_str(arg(args, 0))))
+        }
+        if u.s_eq(name, c"replace") {
+            return v_str(do_replace(s, v_to_str(arg(args, 0)), v_to_str(arg(args, 1))))
+        }
+        if u.s_eq(name, c"len") {
+            return v_int(u.s_len(s))
+        }
+        if u.s_eq(name, c"chars") {
+            val vec: mut ref u.Vec = list_new()
+            val len: i64 = u.s_len(s)
+            val i: mut i64 = 0
+            for {
+                if i >= len {
+                    break
+                }
+                val j: i64 = u.utf8_next(s, i, len)
+                u.vec_pushp(vec, v_str(u.s_substr(s, i, j)) as ref void)
+                i = j
+            }
+            return v_list(vec)
+        }
+        if u.s_eq(name, c"join") {
+            val v: ref Value = arg(args, 0)
+            if v != none && v.tag == 5 {
+                val vec: ref u.Vec = v.p as ref u.Vec
+                val b: mut ref u.Buf = u.buf_new()
+                val i: mut i64 = 0
+                for {
+                    if i >= vec.len {
+                        break
+                    }
+                    if i > 0 {
+                        u.buf_add(b, s)
+                    }
+                    u.buf_add(b, v_to_str(u.vec_p(vec, i) as ref Value))
+                    i++
+                }
+                return v_str(u.buf_take(b))
+            }
+            return v_str(u.s_dup(c""))
+        }
+    }
+    if obj.tag == 2 || obj.tag == 3 {
+        if u.s_eq(name, c"abs") {
+            return call_native(13, args_for(obj), n)
+        }
+    }
+    set_error(u.s_cat3(c"unknown method '", name, c"'"), n.line, n.col)
+    return v_nil()
+}
+
+fn args_for(v: ref Value) ref u.Vec = trust {
+    val a: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(a, v as ref void)
+    return a
+}
+
+fn sort_values(vec: mut ref u.Vec) void = trust {
+    val i: mut i64 = 1
+    for {
+        if i >= vec.len {
+            break
+        }
+        val key: ref Value = u.vec_p(vec, i) as ref Value
+        val j: mut i64 = i - 1
+        for {
+            if j < 0 {
+                break
+            }
+            val cur: ref Value = u.vec_p(vec, j) as ref Value
+            if u.s_cmp(v_to_str(cur), v_to_str(key)) <= 0 {
+                break
+            }
+            u.vec_setp(vec, j + 1, cur as ref void)
+            j--
+        }
+        u.vec_setp(vec, j + 1, key as ref void)
+        i++
+    }
+}
+
+fn v_str_split(s: ref u8, sep: ref u8) ref Value = trust {
+    val vec: mut ref u.Vec = list_new()
+    if u.s_len(sep) == 0 {
+        val n: i64 = u.s_len(s)
+        val i: mut i64 = 0
+        for {
+            if i >= n {
+                break
+            }
+            val j: i64 = u.utf8_next(s, i, n)
+            u.vec_pushp(vec, v_str(u.s_substr(s, i, j)) as ref void)
+            i = j
+        }
+        return v_list(vec)
+    }
+    val n: i64 = u.s_len(s)
+    val start: mut i64 = 0
+    for {
+        val found: i64 = u.s_find(@ptradd(s, start), sep)
+        if found < 0 {
+            u.vec_pushp(vec, v_str(u.s_substr(s, start, n)) as ref void)
+            break
+        }
+        val at: i64 = start + found
+        u.vec_pushp(vec, v_str(u.s_substr(s, start, at)) as ref void)
+        start = at + u.s_len(sep)
+        if start > n {
+            break
+        }
+    }
+    return v_list(vec)
+}
+
+fn do_replace(s: ref u8, from: ref u8, to: ref u8) ref u8 = trust {
+    if u.s_len(from) == 0 {
+        return u.s_dup(s)
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(s)
+    val start: mut i64 = 0
+    for {
+        val found: i64 = u.s_find(@ptradd(s, start), from)
+        if found < 0 {
+            u.buf_addn(b, @ptradd(s, start), n - start)
+            break
+        }
+        val at: i64 = start + found
+        u.buf_addn(b, @ptradd(s, start), at - start)
+        u.buf_add(b, to)
+        start = at + u.s_len(from)
+        if start > n {
+            break
+        }
+    }
+    return u.buf_take(b)
+}
+
+fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: i64) void = trust {
+    if target.kind == lang.NodeKind.Var {
+        val final: mut ref Value = value
+        if op > 1 {
+            val cur: ref Value = env_lookup(env, target.s)
+            if cur == none {
+                set_error(u.s_cat3(c"undefined variable '", target.s, c"'"), target.line, target.col)
+                return
+            }
+            final = bin_op(op - 2, cur, value)
+        }
+        env_assign(env, target.s, final)
+        return
+    }
+    if target.kind == lang.NodeKind.Attr {
+        val obj: ref Value = eval(u.vec_p(target.kids, 0) as ref lang.Node, env)
+        if g_flow != 0 {
+            return
+        }
+        val final: mut ref Value = value
+        if op > 1 {
+            val cur: mut ref Value = v_nil()
+            if obj != none && obj.tag == 6 {
+                val m0: ref u.Map = obj.p as ref u.Map
+                val raw: i64 = u.map_get(m0, target.s)
+                if raw != 0 {
+                    cur = @bitcast(raw, ref Value)
+                }
+            }
+            final = bin_op(op - 2, cur, value)
+        }
+        if obj != none && obj.tag == 6 {
+            val m: mut ref u.Map = obj.p as ref u.Map
+            u.map_put(m, target.s, @bitcast(final, i64))
+            return
+        }
+        set_error(c"value does not support attribute assignment", target.line, target.col)
+        return
+    }
+    if target.kind == lang.NodeKind.Index {
+        val obj: ref Value = eval(u.vec_p(target.kids, 0) as ref lang.Node, env)
+        val idx: ref Value = eval(u.vec_p(target.kids, 1) as ref lang.Node, env)
+        val final: mut ref Value = value
+        if op > 1 {
+            val cur: ref Value = do_index(obj, idx, target)
+            final = bin_op(op - 2, cur, value)
+        }
+        if obj != none && obj.tag == 5 {
+            val vec: mut ref u.Vec = obj.p as ref u.Vec
+            val i: mut i64 = num_i(idx)
+            if i < 0 {
+                i = vec.len + i
+            }
+            if i >= 0 && i < vec.len {
+                u.vec_setp(vec, i, final as ref void)
+            } else {
+                set_error(c"list index out of range", target.line, target.col)
+            }
+            return
+        }
+        if obj != none && obj.tag == 6 {
+            val m: mut ref u.Map = obj.p as ref u.Map
+            u.map_put(m, key_of(idx), @bitcast(final, i64))
+            return
+        }
+        set_error(c"value is not assignable by index", target.line, target.col)
+        return
+    }
+    set_error(c"invalid assignment target", target.line, target.col)
+}
+
+fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
+    if n == none || g_flow != 0 {
+        return
+    }
+    if n.kind == lang.NodeKind.Program {
+        val i: mut i64 = 0
+        for {
+            if i >= n.kids.len {
+                break
+            }
+            exec_stmt(u.vec_p(n.kids, i) as ref lang.Node, env, true)
+            if g_flow != 0 {
+                break
+            }
+            i++
+        }
+        return
+    }
+    if n.kind == lang.NodeKind.Block {
+        exec_block(n, env, false)
+        return
+    }
+    if n.kind == lang.NodeKind.Say {
+        val b: mut ref u.Buf = u.buf_new()
+        val i: mut i64 = 0
+        for {
+            if i >= n.kids.len {
+                break
+            }
+            val v: ref Value = eval(u.vec_p(n.kids, i) as ref lang.Node, env)
+            if g_flow != 0 {
+                return
+            }
+            if i > 0 {
+                u.buf_ch(b, 32)
+            }
+            u.buf_add(b, v_to_str(v))
+            i++
+        }
+        u.buf_ch(b, 10)
+        u.stdout_s(u.buf_take(b))
+        return
+    }
+    if n.kind == lang.NodeKind.ExprStmt {
+        val v: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        if toplevel && g_interactive != 0 && g_flow == 0 && !is_nil(v) {
+            u.stdout_s(u.s_cat(v_to_str(v), c"\n"))
+        }
+        return
+    }
+    if n.kind == lang.NodeKind.Assign {
+        val value: ref Value = eval(u.vec_p(n.kids, 1) as ref lang.Node, env)
+        if g_flow != 0 {
+            return
+        }
+        assign_target(u.vec_p(n.kids, 0) as ref lang.Node, value, env, n.a)
+        return
+    }
+    if n.kind == lang.NodeKind.If {
+        val pairs: i64 = n.a
+        val i: mut i64 = 0
+        for {
+            if i >= pairs {
+                break
+            }
+            val cond: ref Value = eval(u.vec_p(n.kids, i * 2) as ref lang.Node, env)
+            if g_flow != 0 {
+                return
+            }
+            if truthy(cond) {
+                exec_block(u.vec_p(n.kids, i * 2 + 1) as ref lang.Node, env, false)
+                return
+            }
+            i++
+        }
+        if n.b != 0 && pairs * 2 < n.kids.len {
+            exec_block(u.vec_p(n.kids, pairs * 2) as ref lang.Node, env, false)
+        }
+        return
+    }
+    if n.kind == lang.NodeKind.While {
+        for {
+            if u.interrupt_flag != 0 {
+                u.interrupt_flag = 0
+                set_error(c"interrupted", n.line, n.col)
+                break
+            }
+            if g_flow == 1 || g_flow == 2 {
+                g_flow = 0
+            }
+            if g_flow != 0 {
+                break
+            }
+            val cond: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+            if g_flow != 0 {
+                break
+            }
+            if !truthy(cond) {
+                break
+            }
+            exec_block(u.vec_p(n.kids, 1) as ref lang.Node, env, false)
+            if g_flow == 1 {
+                g_flow = 0
+                break
+            }
+            if g_flow == 2 {
+                g_flow = 0
+                continue
+            }
+            if g_flow != 0 {
+                break
+            }
+        }
+        return
+    }
+    if n.kind == lang.NodeKind.For {
+        val iterable: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        if g_flow != 0 || iterable == none {
+            return
+        }
+        if iterable.tag == 5 {
+            val vec: ref u.Vec = iterable.p as ref u.Vec
+            val i: mut i64 = 0
+            for {
+                if u.interrupt_flag != 0 {
+                    u.interrupt_flag = 0
+                    set_error(c"interrupted", n.line, n.col)
+                    break
+                }
+                if i >= vec.len {
+                    break
+                }
+                env_assign(env, n.s, u.vec_p(vec, i) as ref Value)
+                exec_block(u.vec_p(n.kids, 1) as ref lang.Node, env, false)
+                if g_flow == 1 {
+                    g_flow = 0
+                    break
+                }
+                if g_flow == 2 {
+                    g_flow = 0
+                    i++
+                    continue
+                }
+                if g_flow != 0 {
+                    break
+                }
+                i++
+            }
+        } elif iterable.tag == 4 {
+            val s: ref u8 = iterable.p as ref u8
+            val len: i64 = u.s_len(s)
+            val i: mut i64 = 0
+            for {
+                if i >= len {
+                    break
+                }
+                val j: i64 = u.utf8_next(s, i, len)
+                env_assign(env, n.s, v_str(u.s_substr(s, i, j)))
+                exec_block(u.vec_p(n.kids, 1) as ref lang.Node, env, false)
+                if g_flow == 1 {
+                    g_flow = 0
+                    break
+                }
+                if g_flow == 2 {
+                    g_flow = 0
+                    i = j
+                    continue
+                }
+                if g_flow != 0 {
+                    break
+                }
+                i = j
+            }
+        } elif iterable.tag == 6 {
+            val m: ref u.Map = iterable.p as ref u.Map
+            val i: mut i64 = 0
+            for {
+                if i >= m.cap {
+                    break
+                }
+                if u.map_used_at(m, i) {
+                    env_assign(env, n.s, v_str(u.s_dup(u.map_key_at(m, i))))
+                    exec_block(u.vec_p(n.kids, 1) as ref lang.Node, env, false)
+                    if g_flow == 1 {
+                        g_flow = 0
+                        break
+                    }
+                    if g_flow == 2 {
+                        g_flow = 0
+                    } elif g_flow != 0 {
+                        break
+                    }
+                }
+                i++
+            }
+        }
+        return
+    }
+    if n.kind == lang.NodeKind.FnDef {
+        val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
+        f.name = n.s
+        f.params = n.params
+        f.body = u.vec_p(n.kids, 0) as ref lang.Node
+        f.native = 0
+        env_assign(env, n.s, v_func(f))
+        return
+    }
+    if n.kind == lang.NodeKind.Return {
+        val v: mut ref Value = v_nil()
+        if n.kids.len > 0 {
+            v = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        }
+        if g_flow != 0 {
+            return
+        }
+        g_return = v
+        g_flow = 3
+        return
+    }
+    if n.kind == lang.NodeKind.Break {
+        g_flow = 1
+        return
+    }
+    if n.kind == lang.NodeKind.Continue {
+        g_flow = 2
+        return
+    }
+    if n.kind == lang.NodeKind.Pass {
+        return
+    }
+    if n.kind == lang.NodeKind.Try {
+        exec_block(u.vec_p(n.kids, 0) as ref lang.Node, env, false)
+        if g_flow == 4 {
+            val msg: mut ref u8 = g_error
+            if msg == none {
+                msg = u.s_dup(c"error")
+            }
+            g_error = none
+            g_flow = 0
+            if n.s != none {
+                env_assign(env, n.s, v_str(msg))
+            }
+            if n.kids.len > 1 {
+                exec_block(u.vec_p(n.kids, 1) as ref lang.Node, env, false)
+            }
+        }
+        return
+    }
+    if n.kind == lang.NodeKind.Raise {
+        val v: mut ref Value = v_nil()
+        if n.kids.len > 0 {
+            v = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        }
+        if g_flow != 0 {
+            return
+        }
+        set_error(v_to_str(v), n.line, n.col)
+        return
+    }
+    if n.kind == lang.NodeKind.ShellCmd {
+        if u.hooks_ready == 0 {
+            return
+        }
+        val hook: fn(ref u8) i32 = u.run_shell_hook
+        val st: i32 = hook(n.s)
+        set_status(st as i64)
+        if u.interrupt_flag != 0 {
+            u.interrupt_flag = 0
+            set_error(c"interrupted", n.line, n.col)
+        }
+        return
+    }
+    // Remaining expression statements.
+    val v: ref Value = eval(n, env)
+    if toplevel && g_interactive != 0 && g_flow == 0 && !is_nil(v) {
+        u.stdout_s(u.s_cat(v_to_str(v), c"\n"))
+    }
+}
+
+fn exec_block(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
+    if n == none {
+        return
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= n.kids.len {
+            break
+        }
+        exec_stmt(u.vec_p(n.kids, i) as ref lang.Node, env, toplevel)
+        if g_flow != 0 {
+            break
+        }
+        i++
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Builtin bindings and entry points
+// ---------------------------------------------------------------------------
+
+fn define_native(env: mut ref Env, name: ref u8) void = trust {
+    val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
+    f.name = name
+    f.params = u.vec_new()
+    f.body = none
+    f.native = native_id(name)
+    env_define(env, name, v_func(f))
+}
+
+pub fn script_init() void = trust {
+    g_env = env_new(none)
+    g_error = none
+    g_flow = 0
+    g_return = none
+    g_depth = 0
+    g_interactive = 1
+    g_args = u.vec_new()
+    define_native(g_env, c"len")
+    define_native(g_env, c"str")
+    define_native(g_env, c"int")
+    define_native(g_env, c"float")
+    define_native(g_env, c"bool")
+    define_native(g_env, c"range")
+    define_native(g_env, c"print")
+    define_native(g_env, c"input")
+    define_native(g_env, c"sleep")
+    define_native(g_env, c"exit")
+    define_native(g_env, c"shell")
+    define_native(g_env, c"capture")
+    define_native(g_env, c"abs")
+    define_native(g_env, c"min")
+    define_native(g_env, c"max")
+    define_native(g_env, c"sum")
+    define_native(g_env, c"type")
+    define_native(g_env, c"keys")
+    define_native(g_env, c"values")
+    define_native(g_env, c"items")
+    define_native(g_env, c"read_file")
+    define_native(g_env, c"write_file")
+    define_native(g_env, c"append_file")
+    define_native(g_env, c"env")
+    define_native(g_env, c"clock")
+    define_native(g_env, c"chr")
+    define_native(g_env, c"ord")
+    define_native(g_env, c"source")
+    env_define(g_env, c"status", v_int(0))
+    env_define(g_env, c"null", v_nil())
+    env_define(g_env, c"true", v_bool(true))
+    env_define(g_env, c"false", v_bool(false))
+    env_define(g_env, c"args", v_list(g_args))
+}
+
+pub fn set_args(args: ref u.Vec) void = trust {
+    g_args = u.vec_new()
+    val i: mut i64 = 0
+    for {
+        if i >= args.len {
+            break
+        }
+        u.vec_pushp(g_args, v_str(u.vec_p(args, i) as ref u8) as ref void)
+        i++
+    }
+    if g_env != none {
+        env_define(g_env, c"args", v_list(g_args))
+    }
+}
+
+fn report_error(label: ref u8, line: i64, col: i64, msg: ref u8) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"blood: ")
+    if label != none && u.s_len(label) > 0 {
+        u.buf_add(b, label)
+        u.buf_add(b, c":")
+    }
+    u.buf_add(b, u.s_int(line))
+    u.buf_add(b, c":")
+    u.buf_add(b, u.s_int(col))
+    u.buf_add(b, c": ")
+    u.buf_add(b, msg)
+    u.buf_ch(b, 10)
+    u.write_fd(2, u.buf_take(b))
+}
+
+pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
+    if g_env == none {
+        script_init()
+    }
+    u.script_exit_code = -1
+    g_error = none
+    g_flow = 0
+    g_return = none
+    g_interactive = 0
+    if interactive {
+        g_interactive = 1
+    }
+    val program: ref lang.Node = lang.parse(src)
+    if lang.last_error() != none {
+        report_error(label, lang.last_error_line(), lang.last_error_col(), lang.last_error())
+        return 2
+    }
+    exec_stmt(program, g_env, true)
+    if g_flow == 5 {
+        g_flow = 0
+        return u.script_exit_code as i32
+    }
+    if g_flow == 4 {
+        val msg: mut ref u8 = g_error
+        if msg == none {
+            msg = u.s_dup(c"evaluation error")
+        }
+        if u.s_eq(msg, c"interrupted") && g_interactive != 0 {
+            g_error = none
+            g_flow = 0
+            return 130
+        }
+        report_error(label, g_err_line, g_err_col, msg)
+        g_error = none
+        g_flow = 0
+        return 1
+    }
+    g_flow = 0
+    return 0
+}
+
+pub fn run_file(path: ref u8) i32 = trust {
+    val src: ref u8 = u.read_file(path)
+    if src == none {
+        u.write_fd(2, u.s_cat3(c"blood: ", path, c": cannot read script\n"))
+        return 1
+    }
+    if g_env == none {
+        script_init()
+    }
+    env_define(g_env, c"__file__", v_str(u.s_dup(path)))
+    return run_text(src, false, path)
+}
+
+pub fn run_interactive(src: ref u8) i32 = trust {
+    return run_text(src, true, c"")
+}
+
+pub fn set_external_status(st: i64) void = trust {
+    if g_env == none {
+        script_init()
+    }
+    set_status(st)
+}
+
+pub fn status_value() i64 = trust {
+    if g_env == none {
+        return 0
+    }
+    val v: ref Value = env_lookup(g_env, c"status")
+    if v == none {
+        return 0
+    }
+    return num_i(v)
+}
+
+pub fn has_error() bool = trust {
+    return g_error != none
+}
+
+pub fn looks_like_script(line: ref u8) bool = trust {
+    val t: ref u8 = u.s_trim(line)
+    if u.s_len(t) == 0 {
+        return false
+    }
+    if @load8(t) == 35 {
+        return true
+    }
+    if u.s_starts(t, c"say ") || u.s_eq(t, c"say") || u.s_starts(t, c"if ") || u.s_starts(t, c"elif ") || u.s_starts(t, c"else") || u.s_starts(t, c"while ") || u.s_starts(t, c"for ") || u.s_starts(t, c"fn ") || u.s_starts(t, c"def ") || u.s_starts(t, c"return") || u.s_starts(t, c"break") || u.s_starts(t, c"continue") || u.s_starts(t, c"pass") || u.s_starts(t, c"try") || u.s_starts(t, c"catch") || u.s_starts(t, c"except") || u.s_starts(t, c"raise ") || u.s_starts(t, c"throw ") {
+        return true
+    }
+    if @load8(t) == 91 || @load8(t) == 123 {
+        return true
+    }
+    // Assignment with whitespace before '=' is script syntax.
+    val n: i64 = u.s_len(t)
+    val first: u8 = @load8(t)
+    if (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95 {
+        val i: mut i64 = 1
+        for {
+            if i >= n {
+                break
+            }
+            val c: u8 = @load8(@ptradd(t, i))
+            if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95 {
+                i++
+                continue
+            }
+            break
+        }
+        if i < n {
+            val c: u8 = @load8(@ptradd(t, i))
+            if c == 40 || c == 91 || c == 46 {
+                return true
+            }
+            if c == 32 || c == 9 {
+                val j: mut i64 = i
+                for {
+                    if j >= n {
+                        break
+                    }
+                    val d: u8 = @load8(@ptradd(t, j))
+                    if d != 32 && d != 9 {
+                        break
+                    }
+                    j++
+                }
+                if j < n {
+                    val d: u8 = @load8(@ptradd(t, j))
+                    if d == 61 && !(j + 1 < n && @load8(@ptradd(t, j + 1)) == 61) {
+                        return true
+                    }
+                    if (d == 43 || d == 45 || d == 42 || d == 47) && j + 1 < n && @load8(@ptradd(t, j + 1)) == 61 {
+                        return true
+                    }
+                }
+            }
+        }
+    }
+    return false
+}
+
+pub fn needs_continuation(line: ref u8) bool = trust {
+    val t: ref u8 = u.s_trim(line)
+    val n: i64 = u.s_len(t)
+    if n > 0 && @load8(@ptradd(t, n - 1)) == 92 {
+        return true
+    }
+    if n > 0 && @load8(@ptradd(t, n - 1)) == 58 && looks_like_script(t) {
+        return true
+    }
+    // Unbalanced quotes or brackets.
+    val quote: mut u8 = 0
+    val depth: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(t, i))
+        if quote != 0 {
+            if c == 92 {
+                i = i + 2
+                continue
+            }
+            if c == quote {
+                quote = 0
+            }
+            i++
+            continue
+        }
+        if c == 39 || c == 34 {
+            quote = c
+        } elif c == 40 || c == 91 || c == 123 {
+            depth++
+        } elif c == 41 || c == 93 || c == 125 {
+            if depth > 0 {
+                depth--
+            }
+        }
+        i++
+    }
+    return quote != 0 || depth > 0
+}

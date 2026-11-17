@@ -1,0 +1,466 @@
+/// Tab completion for commands, paths, directories, and variables.
+
+val u = use("util.sx")
+val cfgmod = use("config.sx")
+
+pub type CompResult = {
+    start: mut i64
+    end: mut i64
+    items: mut ref u.Vec
+}
+
+val path_cache: mut ref u.Vec = none
+val builtin_names: mut ref u.Vec = none
+
+fn add_builtin(names: mut ref u.Vec, name: ref u8) void = trust {
+    u.vec_pushp(names, u.s_dup(name) as ref void)
+}
+
+pub fn builtin_list() ref u.Vec = trust {
+    if builtin_names != none {
+        return builtin_names
+    }
+    val v: mut ref u.Vec = u.vec_new()
+    add_builtin(v, c"cd")
+    add_builtin(v, c"pwd")
+    add_builtin(v, c"exit")
+    add_builtin(v, c"quit")
+    add_builtin(v, c"history")
+    add_builtin(v, c"clear")
+    add_builtin(v, c"export")
+    add_builtin(v, c"unset")
+    add_builtin(v, c"alias")
+    add_builtin(v, c"unalias")
+    add_builtin(v, c"help")
+    add_builtin(v, c"source")
+    add_builtin(v, c"say")
+    add_builtin(v, c"echo")
+    add_builtin(v, c"set")
+    add_builtin(v, c"type")
+    add_builtin(v, c"which")
+    add_builtin(v, c"jobs")
+    add_builtin(v, c"wait")
+    builtin_names = v as ref u.Vec
+    return builtin_names
+}
+
+fn is_executable_dir(path: ref u8) bool = trust {
+    return u.is_dir(path)
+}
+
+fn scan_path() ref u.Vec = trust {
+    val v: mut ref u.Vec = u.vec_new()
+    val path: ref u8 = u.env_get(c"PATH")
+    if path == none || u.s_len(path) == 0 {
+        add_builtin(v, c"/bin")
+        scan_dir_into(v, c"/bin")
+        add_builtin(v, c"/usr/bin")
+        scan_dir_into(v, c"/usr/bin")
+        return v
+    }
+    val n: i64 = u.s_len(path)
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(path, i)) == 58 {
+            val dir: ref u8 = u.s_ndup(@ptradd(path, start), i - start)
+            if u.s_len(dir) > 0 && is_executable_dir(dir) {
+                scan_dir_into(v, dir)
+            } else {
+                scan_dir_into(v, c".")
+            }
+            start = i + 1
+        }
+        i++
+    }
+    return v
+}
+
+fn scan_dir_into(v: mut ref u.Vec, dir: ref u8) void = trust {
+    val d: ref void = u.dir_open(dir)
+    if d == none {
+        return
+    }
+    for {
+        val name: ref u8 = u.dir_next(d)
+        if name == none {
+            break
+        }
+        if u.s_len(name) == 0 || @load8(name) == 46 {
+            continue
+        }
+        val full: ref u8 = u.path_join(dir, name)
+        if !u.is_dir(full) && u.is_executable(full) {
+            val namecopy: ref u8 = u.s_dup(name)
+            if !vec_has(v, namecopy) {
+                u.vec_pushp(v, namecopy as ref void)
+            }
+        }
+    }
+    u.dir_close(d)
+}
+
+fn vec_has(v: ref u.Vec, s: ref u8) bool = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= v.len {
+            break
+        }
+        if u.s_eq(u.vec_p(v, i) as ref u8, s) {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+pub fn warm() void = trust {
+    if path_cache == none {
+        path_cache = scan_path()
+        sort_strings(path_cache)
+    }
+}
+
+fn sort_strings(v: mut ref u.Vec) void = trust {
+    val i: mut i64 = 1
+    for {
+        if i >= v.len {
+            break
+        }
+        val key: ref u8 = u.vec_p(v, i) as ref u8
+        val j: mut i64 = i - 1
+        for {
+            if j < 0 {
+                break
+            }
+            val cur: ref u8 = u.vec_p(v, j) as ref u8
+            if u.s_cmp(cur, key) <= 0 {
+                break
+            }
+            u.vec_setp(v, j + 1, cur)
+            j--
+        }
+        u.vec_setp(v, j + 1, key)
+        i++
+    }
+}
+
+fn lower(c: u8) u8 = trust {
+    if c >= 65 && c <= 90 {
+        return c + 32
+    }
+    return c
+}
+
+fn match_prefix(word: ref u8, cand: ref u8, case_sensitive: bool) bool = trust {
+    val wn: i64 = u.s_len(word)
+    if u.s_len(cand) < wn {
+        return false
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= wn {
+            break
+        }
+        val a: u8 = @load8(@ptradd(word, i))
+        val b: u8 = @load8(@ptradd(cand, i))
+        if case_sensitive {
+            if a != b {
+                return false
+            }
+        } else {
+            if lower(a) != lower(b) {
+                return false
+            }
+        }
+        i++
+    }
+    return true
+}
+
+fn token_start(line: ref u8, cursor: i64) i64 = trust {
+    val i: mut i64 = cursor - 1
+    for {
+        if i < 0 {
+            return 0
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c == 32 || c == 9 || c == 124 || c == 38 || c == 59 || c == 60 || c == 62 {
+            return i + 1
+        }
+        if c == 40 || c == 41 {
+            return i + 1
+        }
+        i--
+    }
+    return 0
+}
+
+fn token_end(line: ref u8, cursor: i64) i64 = trust {
+    val n: i64 = u.s_len(line)
+    val i: mut i64 = cursor
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c == 32 || c == 9 || c == 124 || c == 38 || c == 59 || c == 60 || c == 62 || c == 40 || c == 41 {
+            break
+        }
+        i++
+    }
+    return i
+}
+
+fn segment_start(line: ref u8, start: i64) i64 = trust {
+    val i: mut i64 = start - 1
+    for {
+        if i < 0 {
+            return 0
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c == 124 || c == 38 || c == 59 {
+            return i + 1
+        }
+        i--
+    }
+    return 0
+}
+
+fn has_previous_word(line: ref u8, start: i64) bool = trust {
+    val seg: i64 = segment_start(line, start)
+    val i: mut i64 = seg
+    for {
+        if i >= start {
+            break
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c != 32 && c != 9 {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn first_word(line: ref u8, end: i64) ref u8 = trust {
+    val leading: mut i64 = 0
+    for {
+        if leading >= end {
+            break
+        }
+        val c: u8 = @load8(@ptradd(line, leading))
+        if c != 32 && c != 9 {
+            break
+        }
+        leading++
+    }
+    val i: mut i64 = leading
+    for {
+        if i >= end {
+            break
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c == 32 || c == 9 {
+            break
+        }
+        i++
+    }
+    return u.s_substr(line, leading, i)
+}
+
+
+
+fn add_candidate(res: mut ref CompResult, s: ref u8) void = trust {
+    if !vec_has(res.items, s) {
+        u.vec_pushp(res.items, s as ref void)
+    }
+}
+
+fn complete_commands(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, aliases: ref u.Map) void = trust {
+    val names: ref u.Vec = builtin_list()
+    val i: mut i64 = 0
+    for {
+        if i >= names.len {
+            break
+        }
+        val cand: ref u8 = u.vec_p(names, i) as ref u8
+        if match_prefix(word, cand, c.completion_case_sensitive != 0) {
+            add_candidate(res, u.s_dup(cand))
+        }
+        i++
+    }
+    if aliases != none {
+        val j: mut i64 = 0
+        for {
+            if j >= aliases.cap {
+                break
+            }
+            if u.map_used_at(aliases, j) {
+                val cand: ref u8 = u.map_key_at(aliases, j)
+                if match_prefix(word, cand, c.completion_case_sensitive != 0) {
+                    add_candidate(res, u.s_dup(cand))
+                }
+            }
+            j++
+        }
+    }
+    warm()
+    val k: mut i64 = 0
+    for {
+        if k >= path_cache.len {
+            break
+        }
+        val cand: ref u8 = u.vec_p(path_cache, k) as ref u8
+        if match_prefix(word, cand, c.completion_case_sensitive != 0) {
+            add_candidate(res, u.s_dup(cand))
+        }
+        k++
+    }
+    sort_strings(res.items)
+}
+
+fn complete_dirs(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config) void = trust {
+    complete_files(res, word, c, true)
+}
+
+fn complete_env(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, vars: ref u.Map) void = trust {
+    if vars == none {
+        return
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= vars.cap {
+            break
+        }
+        if u.map_used_at(vars, i) {
+            val cand: ref u8 = u.map_key_at(vars, i)
+            if match_prefix(word, cand, c.completion_case_sensitive != 0) {
+                add_candidate(res, u.s_dup(cand))
+            }
+        }
+        i++
+    }
+    sort_strings(res.items)
+}
+
+fn complete_files(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, dirs_only: bool) void = trust {
+    val slash: i64 = last_slash(word)
+    val listing: mut ref u8 = u.s_dup(c"")
+    val base: mut ref u8 = u.s_dup(word)
+    if slash >= 0 {
+        listing = u.s_substr(word, 0, slash + 1)
+        base = u.s_substr(word, slash + 1, u.s_len(word))
+    }
+    val real_dir: ref u8 = expand_for_listing(listing)
+    val d: ref void = u.dir_open(real_dir)
+    if d == none {
+        return
+    }
+    for {
+        val name: ref u8 = u.dir_next(d)
+        if name == none {
+            break
+        }
+        if u.s_len(name) == 0 {
+            continue
+        }
+        if @load8(name) == 46 && !(u.s_len(base) > 0 && @load8(base) == 46) {
+            continue
+        }
+        if !match_prefix(base, name, c.completion_case_sensitive != 0) {
+            continue
+        }
+        val full_child: ref u8 = u.path_join(real_dir, name)
+        val isdir: bool = u.is_dir(full_child)
+        if dirs_only && !isdir {
+            continue
+        }
+        val cand: ref u8 = u.s_cat(listing, name)
+        if isdir {
+            add_candidate(res, u.s_cat(cand, c"/"))
+        } else {
+            add_candidate(res, cand)
+        }
+    }
+    u.dir_close(d)
+    sort_strings(res.items)
+}
+
+fn last_slash(s: ref u8) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = n - 1
+    for {
+        if i < 0 {
+            break
+        }
+        if @load8(@ptradd(s, i)) == 47 {
+            return i
+        }
+        i--
+    }
+    return -1
+}
+
+fn expand_for_listing(prefix: ref u8) ref u8 = trust {
+    if u.s_len(prefix) == 0 {
+        return u.s_dup(c".")
+    }
+    if @load8(prefix) == 126 {
+        return u.expand_tilde(prefix)
+    }
+    return u.s_dup(prefix)
+}
+
+pub fn complete(
+    c: ref cfgmod.Config,
+    line: ref u8,
+    cursor: i64,
+    vars: ref u.Map,
+    aliases: ref u.Map
+) CompResult = trust {
+    val start: i64 = token_start(line, cursor)
+    val end: i64 = token_end(line, cursor)
+    val res: mut ref CompResult = @alloc(@sizeof(CompResult)) as ref CompResult
+    res.start = start
+    res.end = end
+    res.items = u.vec_new()
+    if c.completion_enabled == 0 {
+        return res
+    }
+    if cursor > 0 {
+        val prev: u8 = @load8(@ptradd(line, cursor - 1))
+        if prev == 34 || prev == 39 {
+            return res
+        }
+    }
+    val word: ref u8 = u.s_substr(line, start, end)
+    if u.s_len(word) == 0 && start > 0 {
+        val before: u8 = @load8(@ptradd(line, start - 1))
+        if before == 32 || before == 9 {
+            // still offer files/commands depending on position
+        }
+    }
+    if !has_previous_word(line, start) {
+        complete_commands(res, word, c, aliases)
+        return res
+    }
+    val cmd: ref u8 = first_word(line, start)
+    if u.s_eq(cmd, c"cd") || u.s_eq(cmd, c"pushd") || u.s_eq(cmd, c"popd") {
+        complete_dirs(res, word, c)
+        return res
+    }
+    if u.s_eq(cmd, c"export") || u.s_eq(cmd, c"unset") || u.s_eq(cmd, c"set") {
+        complete_env(res, word, c, vars)
+        return res
+    }
+    complete_files(res, word, c, false)
+    return res
+}
+
+pub fn free_result(res: mut ref CompResult) void = trust {
+    u.vec_free(res.items)
+}

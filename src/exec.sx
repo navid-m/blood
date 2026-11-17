@@ -1,0 +1,237 @@
+/// Process execution primitives: fork, pipes, exec, wait, capture.
+
+val u = use("util.sx")
+
+extern (C, header) fn c_fork() i32 = "fork"
+extern (C, header) fn c_pipe(fds: ref i32) i32 = "pipe"
+extern (C, header) fn c_dup2(oldfd: i32, newfd: i32) i32 = "dup2"
+extern (C, header) fn c_dup(fd: i32) i32 = "dup"
+extern (C, header) fn c_execvp(file: ref u8, argv: ref ref u8) i32 = "execvp"
+extern (C, header) fn c_waitpid(pid: i32, status: ref i32, options: i32) i32 = "waitpid"
+extern (C, header) fn c__exit(code: i32) void = "_exit"
+extern (C, header) fn c_close(fd: i32) i32 = "close"
+extern (C, header) fn c_open(path: ref u8, flags: i32, mode: i32) i32 = "open"
+extern (C, header) fn c_read(fd: i32, buf: ref void, n: usize) i64 = "read"
+extern (C, header) fn c_write(fd: i32, buf: ref void, n: usize) i64 = "write"
+extern (C, header) fn c_getpid() i32 = "getpid"
+extern (C, header) fn c_kill(pid: i32, sig: i32) i32 = "kill"
+extern (C, header) fn c_signal(sig: i32, handler: i64) i64 = "signal"
+
+pub fn getpid() i32 = trust {
+    return c_getpid()
+}
+
+pub fn signal_default(sig: i32) void = trust {
+    c_signal(sig, 0)
+}
+
+pub fn signal_ignore(sig: i32) void = trust {
+    c_signal(sig, 1)
+}
+
+pub fn signal_handler(sig: i32, handler: fn(i32) void) void = trust {
+    c_signal(sig, @bitcast(handler, i64))
+}
+
+pub fn fd_close(fd: i32) void = trust {
+    c_close(fd)
+}
+
+pub fn fd_dup(fd: i32) i32 = trust {
+    return c_dup(fd)
+}
+
+pub fn fd_dup2(oldfd: i32, newfd: i32) i32 = trust {
+    return c_dup2(oldfd, newfd)
+}
+
+pub fn fd_read(fd: i32, buf: ref u8, n: i64) i64 = trust {
+    return c_read(fd, buf as ref void, n as usize)
+}
+
+pub fn fd_write(fd: i32, buf: ref u8, n: i64) i64 = trust {
+    return c_write(fd, buf as ref void, n as usize)
+}
+
+pub fn open_write(path: ref u8, append: bool) i32 = trust {
+    val flags: mut i32 = 1 | 64 | 512
+    if append {
+        flags = 1 | 64 | 1024
+    }
+    return c_open(path, flags, 438)
+}
+
+pub fn open_read(path: ref u8) i32 = trust {
+    return c_open(path, 0, 0)
+}
+
+pub fn p_fork() i32 = trust {
+    return c_fork()
+}
+
+pub fn p_exit(code: i32) void = trust {
+    c__exit(code)
+}
+
+pub fn p_kill(pid: i32, sig: i32) i32 = trust {
+    return c_kill(pid, sig)
+}
+
+pub type Pipe = {
+    read_fd: i32
+    write_fd: i32
+}
+
+pub fn make_pipe() Pipe = trust {
+    val fds: mut [2]i32 = [0, 0]
+    c_pipe(@addr(fds) as ref i32)
+    return Pipe{read_fd: @load32(@addr(fds)), write_fd: @load32(@ptradd(@addr(fds), 4))}
+}
+
+pub fn status_code(status: i32) i32 = trust {
+    if (status & 127) == 0 {
+        return (status >> 8) & 255
+    }
+    return 128 + (status & 127)
+}
+
+pub fn wait_pid(pid: i32) i32 = trust {
+    val status: mut i32 = 0
+    val got: mut i32 = -1
+    val fails: mut i64 = 0
+    for {
+        got = c_waitpid(pid, @addr(status), 0)
+        if got >= 0 {
+            break
+        }
+        fails++
+        if fails > 1000 {
+            return 127
+        }
+    }
+    return status_code(status)
+}
+
+pub fn wait_nohang(pid: i32) i32 = trust {
+    val status: mut i32 = 0
+    val r: i32 = c_waitpid(pid, @addr(status), 1)
+    if r <= 0 {
+        return -1
+    }
+    return status_code(status)
+}
+
+pub fn reap() void = trust {
+    val status: mut i32 = 0
+    for {
+        val r: i32 = c_waitpid(-1, @addr(status), 1)
+        if r <= 0 {
+            break
+        }
+    }
+}
+
+pub fn build_argv(items: ref u.Vec) ref ref u8 = trust {
+    val n: i64 = items.len
+    val raw: ref void = u.xalloc(((n + 1) * 8) as usize)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        @store64(@ptradd(raw, i * 8), @bitcast(u.vec_p(items, i), i64))
+        i++
+    }
+    @store64(@ptradd(raw, n * 8), 0)
+    return raw as ref ref u8
+}
+
+pub fn child_reset() void = trust {
+    signal_default(2)
+    signal_default(3)
+    signal_default(15)
+    signal_default(20)
+    signal_default(21)
+    signal_default(22)
+}
+
+/// Exec in the current (child) process. Never returns on success.
+pub fn child_exec(argv: ref u.Vec) void = trust {
+    if argv.len == 0 {
+        p_exit(127)
+    }
+    val name: ref u8 = u.vec_p(argv, 0) as ref u8
+    val av: ref ref u8 = build_argv(argv)
+    c_execvp(name, av)
+    val msg: ref u8 = u.s_cat3(c"blood: ", name, c": command not found\n")
+    u.write_fd(2, msg)
+    p_exit(127)
+}
+
+pub fn run_argv(argv: ref u.Vec) i32 = trust {
+    if argv.len == 0 {
+        return 0
+    }
+    val pid: i32 = c_fork()
+    if pid == 0 {
+        child_reset()
+        child_exec(argv)
+        p_exit(127)
+    }
+    if pid < 0 {
+        u.write_fd(2, c"blood: fork failed\n")
+        return 127
+    }
+    return wait_pid(pid)
+}
+
+pub fn spawn_argv(argv: ref u.Vec) i32 = trust {
+    val pid: i32 = c_fork()
+    if pid == 0 {
+        child_reset()
+        child_exec(argv)
+        p_exit(127)
+    }
+    return pid
+}
+
+pub fn capture_argv(argv: ref u.Vec, quiet_err: bool) ref u8 = trust {
+    if argv.len == 0 {
+        return u.s_dup(c"")
+    }
+    val p: Pipe = make_pipe()
+    val pid: i32 = c_fork()
+    if pid == 0 {
+        child_reset()
+        fd_close(p.read_fd)
+        fd_dup2(p.write_fd, 1)
+        if quiet_err {
+            val nullfd: i32 = c_open(c"/dev/null", 1, 438)
+            if nullfd >= 0 {
+                fd_dup2(nullfd, 2)
+                fd_close(nullfd)
+            }
+        }
+        fd_close(p.write_fd)
+        child_exec(argv)
+        p_exit(127)
+    }
+    fd_close(p.write_fd)
+    if pid < 0 {
+        fd_close(p.read_fd)
+        return u.s_dup(c"")
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
+    for {
+        val n: i64 = fd_read(p.read_fd, chunk, 4096)
+        if n <= 0 {
+            break
+        }
+        u.buf_addn(b, chunk, n)
+    }
+    u.xfree(chunk as ref void)
+    fd_close(p.read_fd)
+    wait_pid(pid)
+    return u.buf_take(b)
+}

@@ -1,0 +1,2035 @@
+/// Shell command scanning, parsing, pipelines, redirections and builtins.
+
+val u = use("util.sx")
+val cfgmod = use("config.sx")
+val histmod = use("history.sx")
+val ex = use("exec.sx")
+
+pub type STok = {
+    kind: mut i64
+    text: mut ref u8
+    quoted: mut i64
+    fd: mut i64
+}
+
+pub type Redir = {
+    kind: mut i64
+    fd: mut i64
+    target: mut ref u8
+    dupfd: mut i64
+}
+
+pub type Command = {
+    argv: mut ref u.Vec
+    assigns: mut ref u.Vec
+    redirs: mut ref u.Vec
+}
+
+pub type Pipeline = {
+    cmds: mut ref u.Vec
+}
+
+pub type Segment = {
+    text: mut ref u8
+    conn: mut i64
+}
+
+val sh_cfg: mut ref cfgmod.Config = none
+val sh_vars: mut ref u.Map = none
+val sh_aliases: mut ref u.Map = none
+val sh_hist: mut ref histmod.History = none
+val sh_jobs: mut ref u.Vec = none
+val sh_last_status: mut i64 = 0
+val sh_last_pid: mut i64 = 0
+val sh_interactive: mut i64 = 0
+val sh_exit_requested: mut i64 = 0
+val sh_exit_code: mut i64 = 0
+val sh_error: mut ref u8 = none
+val sh_alias_depth: mut i64 = 0
+val sh_prog: mut ref u8 = c"blood"
+val sh_args: mut ref u.Vec = none
+val sh_oldpwd: mut ref u8 = none
+
+pub fn shell_init(c: ref cfgmod.Config, h: ref histmod.History, interactive: bool) void = trust {
+    sh_cfg = c
+    sh_hist = h
+    sh_vars = u.map_new()
+    sh_aliases = u.map_new()
+    sh_jobs = u.vec_new()
+    sh_args = u.vec_new()
+    sh_interactive = 0
+    if interactive {
+        sh_interactive = 1
+    }
+    sh_last_status = 0
+    sh_last_pid = 0
+    sh_exit_requested = 0
+    sh_exit_code = 0
+    sh_error = none
+    sh_oldpwd = u.cwd()
+    seed_aliases(c)
+    seed_env()
+    u.map_put(sh_vars, c"PWD", @bitcast(u.cwd(), i64))
+    u.map_put(sh_vars, c"OLDPWD", @bitcast(sh_oldpwd, i64))
+}
+
+fn seed_aliases(c: ref cfgmod.Config) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= c.alias_defs.len {
+            break
+        }
+        val def: ref u8 = u.vec_p(c.alias_defs, i) as ref u8
+        val eq: i64 = u.s_index_of_char(def, 61, 0)
+        if eq > 0 {
+            u.map_put(sh_aliases, u.s_substr(def, 0, eq), @bitcast(u.s_substr(def, eq + 1, u.s_len(def)), i64))
+        }
+        i++
+    }
+    val j: mut i64 = 0
+    for {
+        if j >= c.env_defs.len {
+            break
+        }
+        val def: ref u8 = u.vec_p(c.env_defs, j) as ref u8
+        val eq: i64 = u.s_index_of_char(def, 61, 0)
+        if eq > 0 {
+            util_env_set(u.s_substr(def, 0, eq), u.s_substr(def, eq + 1, u.s_len(def)))
+        }
+        j++
+    }
+}
+
+fn util_env_set(name: ref u8, value: ref u8) void = trust {
+    u.env_set(name, value)
+}
+
+pub fn seed_env() void = trust {
+    val p: ref u8 = u.env_get(c"PATH")
+    if p != none {
+        u.map_put(sh_vars, c"PATH", @bitcast(u.s_dup(p), i64))
+    }
+    val h: ref u8 = u.env_get(c"HOME")
+    if h != none {
+        u.map_put(sh_vars, c"HOME", @bitcast(u.s_dup(h), i64))
+    }
+    val s: ref u8 = u.env_get(c"SHELL")
+    if s != none {
+        u.map_put(sh_vars, c"SHELL", @bitcast(u.s_dup(s), i64))
+    }
+}
+
+pub fn set_prog(name: ref u8) void = trust {
+    sh_prog = name
+}
+
+pub fn set_args(args: ref u.Vec) void = trust {
+    sh_args = args
+}
+
+pub fn last_status() i32 = trust {
+    return sh_last_status as i32
+}
+
+pub fn interactive() bool = trust {
+    return sh_interactive != 0
+}
+
+pub fn exit_requested() bool = trust {
+    return sh_exit_requested != 0
+}
+
+pub fn exit_code() i32 = trust {
+    return sh_exit_code as i32
+}
+
+pub fn config() ref cfgmod.Config = trust {
+    return sh_cfg
+}
+
+pub fn vars() ref u.Map = trust {
+    return sh_vars
+}
+
+pub fn aliases() ref u.Map = trust {
+    return sh_aliases
+}
+
+pub fn hist() ref histmod.History = trust {
+    return sh_hist
+}
+
+pub fn set_last_status(s: i32) void = trust {
+    sh_last_status = s as i64
+}
+
+fn error(msg: ref u8) void = trust {
+    if sh_error == none {
+        sh_error = u.s_dup(msg)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Top-level segment splitting
+// ---------------------------------------------------------------------------
+
+fn is_space(c: u8) bool = trust {
+    return c == 32 || c == 9
+}
+
+fn is_sep(c: u8) bool = trust {
+    return c == 124 || c == 38 || c == 59 || c == 60 || c == 62
+}
+
+fn skip_single(src: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(src)
+    val j: mut i64 = i + 1
+    for {
+        if j >= n {
+            return n
+        }
+        if @load8(@ptradd(src, j)) == 39 {
+            return j + 1
+        }
+        j++
+    }
+    return n
+}
+
+fn skip_double(src: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(src)
+    val j: mut i64 = i + 1
+    for {
+        if j >= n {
+            return n
+        }
+        val c: u8 = @load8(@ptradd(src, j))
+        if c == 92 && j + 1 < n {
+            j = j + 2
+            continue
+        }
+        if c == 34 {
+            return j + 1
+        }
+        j++
+    }
+    return n
+}
+
+fn skip_dollar_paren(src: ref u8, start: i64) i64 = trust {
+    val n: i64 = u.s_len(src)
+    val depth: mut i64 = 1
+    val i: mut i64 = start
+    for {
+        if i >= n {
+            return n
+        }
+        val c: u8 = @load8(@ptradd(src, i))
+        if c == 39 {
+            i = skip_single(src, i)
+            continue
+        }
+        if c == 34 {
+            i = skip_double(src, i)
+            continue
+        }
+        if c == 92 {
+            i = i + 2
+            continue
+        }
+        if c == 40 {
+            depth++
+        } elif c == 41 {
+            depth--
+            if depth == 0 {
+                return i + 1
+            }
+        }
+        i++
+    }
+    return n
+}
+
+fn skip_backtick(src: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(src)
+    val j: mut i64 = i + 1
+    for {
+        if j >= n {
+            return n
+        }
+        val c: u8 = @load8(@ptradd(src, j))
+        if c == 92 {
+            j = j + 2
+            continue
+        }
+        if c == 96 {
+            return j + 1
+        }
+        j++
+    }
+    return n
+}
+
+pub fn split_top(src: ref u8) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    val start: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(src, i))
+        if c == 39 {
+            i = skip_single(src, i)
+            continue
+        }
+        if c == 34 {
+            i = skip_double(src, i)
+            continue
+        }
+        if c == 92 {
+            i = i + 2
+            continue
+        }
+        if c == 96 {
+            i = skip_backtick(src, i)
+            continue
+        }
+        if c == 36 && i + 1 < n && @load8(@ptradd(src, i + 1)) == 40 {
+            i = skip_dollar_paren(src, i + 2)
+            continue
+        }
+        if c == 35 {
+            val prev_ok: bool = i == 0 || is_space(@load8(@ptradd(src, i - 1))) || is_sep(@load8(@ptradd(src, i - 1)))
+            if prev_ok {
+                for {
+                    if i >= n {
+                        break
+                    }
+                    if @load8(@ptradd(src, i)) == 10 {
+                        break
+                    }
+                    i++
+                }
+                continue
+            }
+        }
+        if c == 59 || c == 10 {
+            add_segment(out, src, start, i, 1)
+            i++
+            start = i
+            continue
+        }
+        if c == 38 {
+            if i + 1 < n {
+                val d: u8 = @load8(@ptradd(src, i + 1))
+                if d == 38 {
+                    add_segment(out, src, start, i, 2)
+                    i = i + 2
+                    start = i
+                    continue
+                }
+                if d == 62 {
+                    i = i + 2
+                    continue
+                }
+            }
+            if i > 0 && @load8(@ptradd(src, i - 1)) == 62 {
+                i++
+                continue
+            }
+            add_segment(out, src, start, i, 4)
+            i++
+            start = i
+            continue
+        }
+        if c == 124 {
+            if i + 1 < n && @load8(@ptradd(src, i + 1)) == 124 {
+                add_segment(out, src, start, i, 3)
+                i = i + 2
+                start = i
+                continue
+            }
+            i++
+            continue
+        }
+        i++
+    }
+    add_segment(out, src, start, n, 1)
+    return out
+}
+
+fn add_segment(out: mut ref u.Vec, src: ref u8, start: i64, end: i64, conn: i64) void = trust {
+    val text: ref u8 = u.s_trim(u.s_substr(src, start, end))
+    if u.s_len(text) == 0 {
+        return
+    }
+    val seg: mut ref Segment = @alloc(@sizeof(Segment)) as ref Segment
+    seg.text = text
+    seg.conn = conn
+    u.vec_pushp(out, seg as ref void)
+}
+
+// ---------------------------------------------------------------------------
+// Word scanning and expansion
+// ---------------------------------------------------------------------------
+
+pub fn get_var(name: ref u8) ref u8 = trust {
+    if u.s_eq(name, c"?") {
+        return u.s_int(sh_last_status)
+    }
+    if u.s_eq(name, c"$") {
+        return u.s_int(ex.getpid() as i64)
+    }
+    if u.s_eq(name, c"!") {
+        return u.s_int(sh_last_pid)
+    }
+    if u.s_eq(name, c"#") {
+        return u.s_int(sh_args.len)
+    }
+    if u.s_eq(name, c"0") {
+        return u.s_dup(sh_prog)
+    }
+    val v: i64 = u.map_get(sh_vars, name)
+    if v != 0 {
+        return @bitcast(v, ref u8)
+    }
+    val e: ref u8 = u.env_get(name)
+    if e != none {
+        return e
+    }
+    return c""
+}
+
+fn set_var(name: ref u8, value: ref u8) void = trust {
+    u.map_put(sh_vars, name, @bitcast(u.s_dup(value), i64))
+}
+
+fn capture_cmd(inner: ref u8) ref u8 = trust {
+    if u.hooks_ready == 0 {
+        return u.s_dup(c"")
+    }
+    val hook: fn(ref u8) ref u8 = u.run_capture_hook
+    val out: ref u8 = hook(inner)
+    if out == none {
+        return u.s_dup(c"")
+    }
+    return out
+}
+
+fn trim_trailing_newlines(s: ref u8) ref u8 = trust {
+    val n: mut i64 = u.s_len(s)
+    for {
+        if n <= 0 {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, n - 1))
+        if c != 10 && c != 13 {
+            break
+        }
+        n--
+    }
+    return u.s_substr(s, 0, n)
+}
+
+fn has_glob(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 42 || c == 63 || c == 91 {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn is_assignment_word(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    if n == 0 {
+        return false
+    }
+    val c0: u8 = @load8(s)
+    if !((c0 >= 65 && c0 <= 90) || (c0 >= 97 && c0 <= 122) || c0 == 95) {
+        return false
+    }
+    val i: mut i64 = 1
+    for {
+        if i >= n {
+            return false
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 61 {
+            return true
+        }
+        if !((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95) {
+            return false
+        }
+        i++
+    }
+    return false
+}
+
+fn scan_word(src: ref u8, startpos: i64, toks: mut ref u.Vec) i64 = trust {
+    val n: i64 = u.s_len(src)
+    val b: mut ref u.Buf = u.buf_new()
+    val i: mut i64 = startpos
+    val quoted: mut i64 = 0
+    val started: mut i64 = 0
+    if i < n && @load8(@ptradd(src, i)) == 126 {
+        val tilde_end: mut i64 = i + 1
+        for {
+            if tilde_end >= n {
+                break
+            }
+            val c: u8 = @load8(@ptradd(src, tilde_end))
+            if c == 47 || is_space(c) || is_sep(c) {
+                break
+            }
+            tilde_end++
+        }
+        val tilde: ref u8 = u.s_ndup(@ptradd(src, i), tilde_end - i)
+        u.buf_add(b, u.expand_tilde(tilde))
+        i = tilde_end
+        started = 1
+    }
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(src, i))
+        if is_space(c) || is_sep(c) {
+            break
+        }
+        if c == 39 {
+            quoted = 1
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(src, i))
+                if d == 39 {
+                    i++
+                    break
+                }
+                u.buf_ch(b, d)
+                i++
+            }
+            started = 1
+            continue
+        }
+        if c == 34 {
+            quoted = 1
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(src, i))
+                if d == 34 {
+                    i++
+                    break
+                }
+                if d == 92 && i + 1 < n {
+                    val e: u8 = @load8(@ptradd(src, i + 1))
+                    if e == 34 || e == 92 || e == 36 || e == 96 {
+                        u.buf_ch(b, e)
+                        i = i + 2
+                        continue
+                    }
+                    if e == 10 {
+                        i = i + 2
+                        continue
+                    }
+                }
+                if d == 36 {
+                    i = expand_dollar(src, i, b)
+                    continue
+                }
+                if d == 96 {
+                    val close: i64 = skip_backtick(src, i)
+                    val inner: ref u8 = u.s_substr(src, i + 1, close - 1)
+                    u.buf_add(b, trim_trailing_newlines(capture_cmd(inner)))
+                    i = close
+                    continue
+                }
+                u.buf_ch(b, d)
+                i++
+            }
+            started = 1
+            continue
+        }
+        if c == 92 {
+            if i + 1 < n {
+                val d: u8 = @load8(@ptradd(src, i + 1))
+                if d == 10 {
+                    i = i + 2
+                    continue
+                }
+                u.buf_ch(b, d)
+                i = i + 2
+                started = 1
+            } else {
+                i++
+            }
+            continue
+        }
+        if c == 36 {
+            i = expand_dollar(src, i, b)
+            started = 1
+            continue
+        }
+        if c == 96 {
+            val close: i64 = skip_backtick(src, i)
+            val inner: ref u8 = u.s_substr(src, i + 1, close - 1)
+            u.buf_add(b, trim_trailing_newlines(capture_cmd(inner)))
+            i = close
+            started = 1
+            continue
+        }
+        u.buf_ch(b, c)
+        i++
+        started = 1
+    }
+    if started == 1 {
+        val word: ref u8 = u.buf_take(b)
+        if quoted == 0 && has_glob(word) && !is_assignment_word(word) {
+            val matches: ref u.Vec = glob_expand(word)
+            if matches.len > 0 {
+                val k: mut i64 = 0
+                for {
+                    if k >= matches.len {
+                        break
+                    }
+                    val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+                    t.kind = 1
+                    t.text = u.vec_p(matches, k) as ref u8
+                    t.quoted = 0
+                    t.fd = 0
+                    u.vec_pushp(toks, t as ref void)
+                    k++
+                }
+                return i
+            }
+        }
+        val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+        t.kind = 1
+        t.text = word
+        t.quoted = quoted
+        t.fd = 0
+        u.vec_pushp(toks, t as ref void)
+    } else {
+        u.buf_free(b)
+    }
+    return i
+}
+
+fn expand_dollar(src: ref u8, at: i64, b: mut ref u.Buf) i64 = trust {
+    val n: i64 = u.s_len(src)
+    if at + 1 >= n {
+        u.buf_ch(b, 36)
+        return at + 1
+    }
+    val c: u8 = @load8(@ptradd(src, at + 1))
+    if c == 40 {
+        val close: i64 = skip_dollar_paren(src, at + 2)
+        val inner: ref u8 = u.s_substr(src, at + 2, close - 1)
+        u.buf_add(b, trim_trailing_newlines(capture_cmd(inner)))
+        return close
+    }
+    if c == 123 {
+        val close: mut i64 = at + 2
+        for {
+            if close >= n {
+                break
+            }
+            if @load8(@ptradd(src, close)) == 125 {
+                break
+            }
+            close++
+        }
+        if close < n {
+            val name: ref u8 = u.s_substr(src, at + 2, close)
+            u.buf_add(b, get_var(name))
+            return close + 1
+        }
+        u.buf_ch(b, 36)
+        return at + 1
+    }
+    if c == 63 || c == 36 || c == 33 || c == 35 || c == 48 {
+        val name: mut u8 = c
+        u.buf_add(b, get_var(u.s_ndup(@addr(name), 1)))
+        return at + 2
+    }
+    if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 {
+        val e: mut i64 = at + 1
+        for {
+            if e >= n {
+                break
+            }
+            val d: u8 = @load8(@ptradd(src, e))
+            if !((d >= 65 && d <= 90) || (d >= 97 && d <= 122) || (d >= 48 && d <= 57) || d == 95) {
+                break
+            }
+            e++
+        }
+        val name: ref u8 = u.s_substr(src, at + 1, e)
+        u.buf_add(b, get_var(name))
+        return e
+    }
+    u.buf_ch(b, 36)
+    return at + 1
+}
+
+fn glob_expand(pattern: ref u8) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    glob_walk(pattern, 0, out)
+    sort_glob(out)
+    return out
+}
+
+fn sort_glob(v: mut ref u.Vec) void = trust {
+    val i: mut i64 = 1
+    for {
+        if i >= v.len {
+            break
+        }
+        val key: ref u8 = u.vec_p(v, i) as ref u8
+        val j: mut i64 = i - 1
+        for {
+            if j < 0 {
+                break
+            }
+            if u.s_cmp(u.vec_p(v, j) as ref u8, key) <= 0 {
+                break
+            }
+            u.vec_setp(v, j + 1, u.vec_p(v, j))
+            j--
+        }
+        u.vec_setp(v, j + 1, key as ref void)
+        i++
+    }
+}
+
+fn glob_walk(pattern: ref u8, base_end: i64, out: mut ref u.Vec) void = trust {
+    val n: i64 = u.s_len(pattern)
+    if base_end > n {
+        return
+    }
+    val slash: mut i64 = -1
+    val i: mut i64 = base_end
+    for {
+        if i >= n {
+            break
+        }
+        if @load8(@ptradd(pattern, i)) == 47 {
+            slash = i
+            break
+        }
+        i++
+    }
+    if slash < 0 {
+        val dirpart: ref u8 = u.s_substr(pattern, 0, base_end)
+        val namepat: ref u8 = u.s_substr(pattern, base_end, n)
+        val dir: mut ref u8 = u.s_dup(c".")
+        if u.s_len(dirpart) > 0 {
+            dir = dirpart
+            if u.s_len(dir) > 1 && @load8(@ptradd(dir, u.s_len(dir) - 1)) == 47 {
+                dir = u.s_substr(dir, 0, u.s_len(dir) - 1)
+            }
+        }
+        val d: ref void = u.dir_open(dir)
+        if d == none {
+            return
+        }
+        for {
+            val name: ref u8 = u.dir_next(d)
+            if name == none {
+                break
+            }
+            if u.s_len(name) == 0 {
+                continue
+            }
+            if @load8(name) == 46 && !(u.s_len(namepat) > 0 && @load8(namepat) == 46) {
+                continue
+            }
+            if wildcard_match(namepat, name) {
+                val full: ref u8 = u.path_join(dirpart, name)
+                u.vec_pushp(out, full as ref void)
+            }
+        }
+        u.dir_close(d)
+        return
+    }
+    val dirpart: ref u8 = u.s_substr(pattern, 0, base_end)
+    val seg: ref u8 = u.s_substr(pattern, base_end, slash)
+    if has_glob(seg) {
+        val dir: mut ref u8 = u.s_dup(c".")
+        if u.s_len(dirpart) > 0 {
+            dir = dirpart
+        }
+        val d: ref void = u.dir_open(dir)
+        if d == none {
+            return
+        }
+        for {
+            val name: ref u8 = u.dir_next(d)
+            if name == none {
+                break
+            }
+            if u.s_len(name) == 0 || (u.s_len(name) > 0 && @load8(name) == 46 && !(u.s_len(seg) > 0 && @load8(seg) == 46)) {
+                continue
+            }
+            if wildcard_match(seg, name) {
+                val nextbase: ref u8 = u.path_join(dirpart, name)
+                glob_walk(pattern, u.s_len(nextbase), out)
+            }
+        }
+        u.dir_close(d)
+        return
+    }
+    val nextbase: ref u8 = u.path_join(dirpart, seg)
+    glob_walk(pattern, u.s_len(nextbase), out)
+}
+
+pub fn wildcard_match(pat: ref u8, text: ref u8) bool = trust {
+    return wc(pat, 0, text, 0)
+}
+
+fn wc(pat: ref u8, pi: i64, text: ref u8, ti: i64) bool = trust {
+    val pn: i64 = u.s_len(pat)
+    val tn: i64 = u.s_len(text)
+    if pi >= pn {
+        return ti >= tn
+    }
+    val c: u8 = @load8(@ptradd(pat, pi))
+    if c == 42 {
+        return var_jump(pat, pi, text, ti, tn)
+    }
+    if c == 63 {
+        return ti < tn && wc(pat, pi + 1, text, ti + 1)
+    }
+    if c == 91 {
+        val close: mut i64 = pi + 1
+        for {
+            if close >= pn {
+                break
+            }
+            if @load8(@ptradd(pat, close)) == 93 {
+                break
+            }
+            close++
+        }
+        if close < pn && ti < tn {
+            val tc: u8 = @load8(@ptradd(text, ti))
+            if class_match(pat, pi + 1, close, tc) {
+                return wc(pat, close + 1, text, ti + 1)
+            }
+            return false
+        }
+        return false
+    }
+    if ti < tn && c == @load8(@ptradd(text, ti)) {
+        return wc(pat, pi + 1, text, ti + 1)
+    }
+    return false
+}
+
+fn var_jump(pat: ref u8, pi: i64, text: ref u8, ti: i64, tn: i64) bool = trust {
+    val i: mut i64 = ti
+    for {
+        if i > tn {
+            break
+        }
+        if wc(pat, pi + 1, text, i) {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn class_match(pat: ref u8, start: i64, end: i64, c: u8) bool = trust {
+    val neg: mut bool = false
+    val i: mut i64 = start
+    if i < end {
+        val f: u8 = @load8(@ptradd(pat, i))
+        if f == 33 || f == 94 {
+            neg = true
+            i++
+        }
+    }
+    val hit: mut bool = false
+    for {
+        if i >= end {
+            break
+        }
+        if i + 2 < end && @load8(@ptradd(pat, i + 1)) == 45 {
+            val lo: u8 = @load8(@ptradd(pat, i))
+            val hi: u8 = @load8(@ptradd(pat, i + 2))
+            if c >= lo && c <= hi {
+                hit = true
+            }
+            i = i + 3
+            continue
+        }
+        if @load8(@ptradd(pat, i)) == c {
+            hit = true
+        }
+        i++
+    }
+    if neg {
+        return !hit
+    }
+    return hit
+}
+
+pub fn scan_shell(src: ref u8) ref u.Vec = trust {
+    val toks: mut ref u.Vec = u.vec_new()
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(src, i))
+        if is_space(c) {
+            i++
+            continue
+        }
+        if c == 10 {
+            i++
+            continue
+        }
+        if c == 35 {
+            for {
+                if i >= n {
+                    break
+                }
+                if @load8(@ptradd(src, i)) == 10 {
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if c == 124 {
+            val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+            t.kind = 2
+            t.text = c"|"
+            t.quoted = 0
+            t.fd = 0
+            u.vec_pushp(toks, t as ref void)
+            i++
+            continue
+        }
+        if c == 60 {
+            val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+            t.kind = 5
+            t.text = c"<"
+            t.quoted = 0
+            t.fd = 0
+            u.vec_pushp(toks, t as ref void)
+            i++
+            continue
+        }
+        if c == 62 {
+            if i + 1 < n && @load8(@ptradd(src, i + 1)) == 62 {
+                push_op(toks, 4, c">>", 0)
+                i = i + 2
+            } else {
+                push_op(toks, 3, c">", 0)
+                i++
+            }
+            continue
+        }
+        if c == 38 && i + 1 < n && @load8(@ptradd(src, i + 1)) == 62 {
+            if i + 2 < n && @load8(@ptradd(src, i + 2)) == 62 {
+                push_op(toks, 9, c"&>>", 0)
+                i = i + 3
+            } else {
+                push_op(toks, 8, c"&>", 0)
+                i = i + 2
+            }
+            continue
+        }
+        if c == 50 && i + 1 < n && @load8(@ptradd(src, i + 1)) == 62 {
+            if i + 2 < n && @load8(@ptradd(src, i + 2)) == 38 {
+                val e: mut i64 = i + 3
+                for {
+                    if e >= n {
+                        break
+                    }
+                    val d: u8 = @load8(@ptradd(src, e))
+                    if d < 48 || d > 57 {
+                        break
+                    }
+                    e++
+                }
+                val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+                t.kind = 10
+                t.text = u.s_substr(src, i + 3, e)
+                t.quoted = 0
+                t.fd = 2
+                u.vec_pushp(toks, t as ref void)
+                i = e
+                continue
+            }
+            if i + 2 < n && @load8(@ptradd(src, i + 2)) == 62 {
+                push_op(toks, 7, c"2>>", 2)
+                i = i + 3
+            } else {
+                push_op(toks, 6, c"2>", 2)
+                i = i + 2
+            }
+            continue
+        }
+        val next: i64 = scan_word(src, i, toks)
+        if next <= i {
+            i++
+        } else {
+            i = next
+        }
+    }
+    return toks
+}
+
+fn push_op(toks: mut ref u.Vec, kind: i64, text: ref u8, fd: i64) void = trust {
+    val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+    t.kind = kind
+    t.text = text
+    t.quoted = 0
+    t.fd = fd
+    u.vec_pushp(toks, t as ref void)
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline parser
+// ---------------------------------------------------------------------------
+
+fn new_command() ref Command = trust {
+    val c: mut ref Command = @alloc(@sizeof(Command)) as ref Command
+    c.argv = u.vec_new()
+    c.assigns = u.vec_new()
+    c.redirs = u.vec_new()
+    return c
+}
+
+fn new_pipeline() ref Pipeline = trust {
+    val p: mut ref Pipeline = @alloc(@sizeof(Pipeline)) as ref Pipeline
+    p.cmds = u.vec_new()
+    return p
+}
+
+pub fn parse_pipeline(tokens: ref u.Vec) ref Pipeline = trust {
+    val pipe: mut ref Pipeline = new_pipeline()
+    val cur: mut ref Command = new_command()
+    val i: mut i64 = 0
+    for {
+        if i >= tokens.len {
+            break
+        }
+        val t: ref STok = u.vec_p(tokens, i) as ref STok
+        if t.kind == 1 {
+            if cur.argv.len == 0 && is_assignment_word(t.text) {
+                u.vec_pushp(cur.assigns, t.text as ref void)
+            } else {
+                u.vec_pushp(cur.argv, t.text as ref void)
+            }
+            i++
+            continue
+        }
+        if t.kind == 2 {
+            if cur.argv.len == 0 && cur.assigns.len == 0 && cur.redirs.len == 0 {
+                error(c"syntax error: empty pipeline stage")
+                return pipe
+            }
+            u.vec_pushp(pipe.cmds, cur as ref void)
+            cur = new_command()
+            i++
+            continue
+        }
+        if t.kind >= 3 && t.kind <= 10 {
+            val r: mut ref Redir = @alloc(@sizeof(Redir)) as ref Redir
+            r.kind = t.kind
+            r.fd = t.fd
+            r.target = none
+            r.dupfd = -1
+            if t.kind == 3 || t.kind == 4 {
+                r.fd = 1
+            } elif t.kind == 5 {
+                r.fd = 0
+            } elif t.kind == 6 || t.kind == 7 {
+                r.fd = 2
+            } elif t.kind == 8 || t.kind == 9 {
+                r.fd = 1
+            }
+            if t.kind == 10 {
+                r.dupfd = parse_fd(t.text)
+            } else {
+                i++
+                if i >= tokens.len || (u.vec_p(tokens, i) as ref STok).kind != 1 {
+                    error(c"syntax error: redirection needs a target")
+                    return pipe
+                }
+                r.target = (u.vec_p(tokens, i) as ref STok).text
+            }
+            u.vec_pushp(cur.redirs, r as ref void)
+            i++
+            continue
+        }
+        i++
+    }
+    if cur.argv.len > 0 || cur.assigns.len > 0 || cur.redirs.len > 0 {
+        u.vec_pushp(pipe.cmds, cur as ref void)
+    }
+    return pipe
+}
+
+fn parse_fd(s: ref u8) i64 = trust {
+    match u.parse_int(s) {
+        some n => {
+            return n
+        }
+        none => {
+            return -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Execution
+// ---------------------------------------------------------------------------
+
+pub fn run_line(line: ref u8) i32 = trust {
+    val t: ref u8 = u.s_trim(line)
+    if u.s_len(t) == 0 {
+        return 0
+    }
+    val segs: ref u.Vec = split_top(t)
+    val status: mut i64 = sh_last_status
+    val gate: mut i64 = 1
+    val i: mut i64 = 0
+    for {
+        if i >= segs.len {
+            break
+        }
+        val seg: ref Segment = u.vec_p(segs, i) as ref Segment
+        val should: bool = gate == 1 || (gate == 2 && status == 0) || (gate == 3 && status != 0)
+        if should {
+            if seg.conn == 4 {
+                run_segment(seg.text, true)
+                status = 0
+            } else {
+                status = run_segment(seg.text, false) as i64
+            }
+        }
+        gate = seg.conn
+        if gate == 4 {
+            gate = 1
+        }
+        sh_last_status = status
+        i++
+    }
+    return status as i32
+}
+
+fn run_segment(text: ref u8, background: bool) i32 = trust {
+    sh_error = none
+    val toks: ref u.Vec = scan_shell(text)
+    if sh_error != none {
+        u.write_fd(2, u.s_cat3(c"blood: ", sh_error, c"\n"))
+        sh_last_status = 2
+        return 2
+    }
+    val pipe: ref Pipeline = parse_pipeline(toks)
+    if sh_error != none {
+        u.write_fd(2, u.s_cat3(c"blood: ", sh_error, c"\n"))
+        sh_last_status = 2
+        return 2
+    }
+    return run_pipeline(pipe, background)
+}
+
+fn is_builtin(name: ref u8) bool = trust {
+    if u.s_eq(name, c"cd") || u.s_eq(name, c"pwd") || u.s_eq(name, c"exit") || u.s_eq(name, c"quit") || u.s_eq(name, c"history") || u.s_eq(name, c"clear") || u.s_eq(name, c"export") || u.s_eq(name, c"unset") || u.s_eq(name, c"alias") || u.s_eq(name, c"unalias") || u.s_eq(name, c"help") || u.s_eq(name, c"source") || u.s_eq(name, c"echo") || u.s_eq(name, c"say") || u.s_eq(name, c"set") || u.s_eq(name, c"type") || u.s_eq(name, c"which") || u.s_eq(name, c"jobs") || u.s_eq(name, c"wait") || u.s_eq(name, c".") || u.s_eq(name, c"true") || u.s_eq(name, c"false") || u.s_eq(name, c":") {
+        return true
+    }
+    return false
+}
+
+fn run_pipeline(pipe: ref Pipeline, background: bool) i32 = trust {
+    if pipe.cmds.len == 0 {
+        return 0
+    }
+    if background {
+        val pid: i32 = ex.p_fork()
+        if pid == 0 {
+            ex.child_reset()
+            val st: i32 = run_pipeline(pipe, false)
+            ex.p_exit(st)
+        }
+        if pid > 0 {
+            u.vec_push(sh_jobs, pid as i64)
+            sh_last_pid = pid as i64
+            return 0
+        }
+        return 127
+    }
+    if pipe.cmds.len == 1 {
+        val cmd: ref Command = u.vec_p(pipe.cmds, 0) as ref Command
+        return run_single(cmd)
+    }
+    val n: i64 = pipe.cmds.len
+    val pipes: mut ref u.Vec = u.vec_new()
+    val k: mut i64 = 0
+    for {
+        if k >= n - 1 {
+            break
+        }
+        val pp: mut ref ex.Pipe = @alloc(@sizeof(ex.Pipe)) as ref ex.Pipe
+        pp.read_fd = 0
+        pp.write_fd = 0
+        val made: ex.Pipe = ex.make_pipe()
+        pp.read_fd = made.read_fd
+        pp.write_fd = made.write_fd
+        u.vec_pushp(pipes, pp as ref void)
+        k++
+    }
+    val pids: mut ref u.Vec = u.vec_new()
+    val cidx: mut i64 = 0
+    for {
+        if cidx >= n {
+            break
+        }
+        val cmd: ref Command = u.vec_p(pipe.cmds, cidx) as ref Command
+        val pid: i32 = ex.p_fork()
+        if pid == 0 {
+            ex.child_reset()
+            if cidx > 0 {
+                val prev: ref ex.Pipe = u.vec_p(pipes, cidx - 1) as ref ex.Pipe
+                ex.fd_dup2(prev.read_fd, 0)
+            }
+            if cidx < n - 1 {
+                val next: ref ex.Pipe = u.vec_p(pipes, cidx) as ref ex.Pipe
+                ex.fd_dup2(next.write_fd, 1)
+            }
+            close_pipes(pipes)
+            if apply_redirs(cmd.redirs) != 0 {
+                ex.p_exit(1)
+            }
+            apply_assigns_child(cmd.assigns)
+            if cmd.argv.len == 0 {
+                ex.p_exit(0)
+            }
+            val name: ref u8 = u.vec_p(cmd.argv, 0) as ref u8
+            if is_builtin(name) {
+                val st: i32 = run_builtin(cmd)
+                ex.p_exit(st)
+            }
+            ex.child_exec(cmd.argv)
+            ex.p_exit(127)
+        }
+        if pid > 0 {
+            u.vec_push(pids, pid as i64)
+        }
+        cidx++
+    }
+    close_pipes(pipes)
+    val last: mut i32 = 0
+    val w: mut i64 = 0
+    for {
+        if w >= pids.len {
+            break
+        }
+        last = ex.wait_pid(u.vec_gets(pids, w) as i32)
+        w++
+    }
+    return last
+}
+
+fn close_pipes(pipes: ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= pipes.len {
+            break
+        }
+        val p: ref ex.Pipe = u.vec_p(pipes, i) as ref ex.Pipe
+        ex.fd_close(p.read_fd)
+        ex.fd_close(p.write_fd)
+        i++
+    }
+}
+
+fn run_single(cmd: ref Command) i32 = trust {
+    if cmd.argv.len == 0 {
+        if cmd.assigns.len > 0 {
+            val i: mut i64 = 0
+            for {
+                if i >= cmd.assigns.len {
+                    break
+                }
+                val def: ref u8 = u.vec_p(cmd.assigns, i) as ref u8
+                apply_assignment(def, false)
+                i++
+            }
+        }
+        if cmd.redirs.len > 0 {
+            save_redirs_apply(cmd.redirs)
+        }
+        return 0
+    }
+    val name: ref u8 = u.vec_p(cmd.argv, 0) as ref u8
+    if u.map_has(sh_aliases, name) {
+        val alias: ref u8 = @bitcast(u.map_get(sh_aliases, name), ref u8)
+        if sh_alias_depth < 8 {
+            sh_alias_depth++
+            val extra: ref u8 = alias_from_tokens(alias, cmd.argv)
+            val st: i32 = run_line(extra)
+            sh_alias_depth--
+            return st
+        }
+    }
+    if is_builtin(name) {
+        return run_builtin_with_redirs(cmd)
+    }
+    return run_external(cmd)
+}
+
+fn alias_from_tokens(alias: ref u8, argv: ref u.Vec) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, alias)
+    val i: mut i64 = 1
+    for {
+        if i >= argv.len {
+            break
+        }
+        u.buf_add(b, c" ")
+        u.buf_add(b, quote_arg(u.vec_p(argv, i) as ref u8))
+        i++
+    }
+    return u.buf_take(b)
+}
+
+fn quote_arg(s: ref u8) ref u8 = trust {
+    if u.s_len(s) == 0 {
+        return u.s_dup(c"''")
+    }
+    val needs: mut bool = false
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if is_space(c) || is_sep(c) || c == 36 || c == 34 || c == 39 || c == 92 || c == 42 || c == 63 || c == 91 || c == 35 || c == 126 {
+            needs = true
+            break
+        }
+        i++
+    }
+    if !needs {
+        return u.s_dup(s)
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 39)
+    val j: mut i64 = 0
+    for {
+        if j >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, j))
+        if c == 39 {
+            u.buf_add(b, c"'\\''")
+        } else {
+            u.buf_ch(b, c)
+        }
+        j++
+    }
+    u.buf_ch(b, 39)
+    return u.buf_take(b)
+}
+
+fn apply_assignment(def: ref u8, exported: bool) void = trust {
+    val eq: i64 = u.s_index_of_char(def, 61, 0)
+    if eq <= 0 {
+        return
+    }
+    val name: ref u8 = u.s_substr(def, 0, eq)
+    val value: ref u8 = u.s_substr(def, eq + 1, u.s_len(def))
+    set_var(name, value)
+    if exported || u.env_get(name) != none {
+        u.env_set(name, value)
+    }
+}
+
+fn apply_assigns_child(assigns: ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= assigns.len {
+            break
+        }
+        val def: ref u8 = u.vec_p(assigns, i) as ref u8
+        val eq: i64 = u.s_index_of_char(def, 61, 0)
+        if eq > 0 {
+            u.env_set(u.s_substr(def, 0, eq), u.s_substr(def, eq + 1, u.s_len(def)))
+        }
+        i++
+    }
+}
+
+fn apply_redirs(redirs: ref u.Vec) i32 = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= redirs.len {
+            break
+        }
+        val r: ref Redir = u.vec_p(redirs, i) as ref Redir
+        if r.dupfd >= 0 {
+            ex.fd_dup2(r.dupfd as i32, r.fd as i32)
+            i++
+            continue
+        }
+        if r.kind == 5 {
+            val fd: i32 = ex.open_read(r.target)
+            if fd < 0 {
+                u.write_fd(2, u.s_cat3(c"blood: ", r.target, c": cannot open for reading\n"))
+                return -1
+            }
+            ex.fd_dup2(fd, 0)
+            ex.fd_close(fd)
+        } elif r.kind == 8 || r.kind == 9 {
+            val append: bool = r.kind == 9
+            val fd: i32 = ex.open_write(r.target, append)
+            if fd < 0 {
+                u.write_fd(2, u.s_cat3(c"blood: ", r.target, c": cannot open for writing\n"))
+                return -1
+            }
+            ex.fd_dup2(fd, 1)
+            ex.fd_dup2(fd, 2)
+            ex.fd_close(fd)
+        } else {
+            val append: bool = r.kind == 4 || r.kind == 7
+            val fd: i32 = ex.open_write(r.target, append)
+            if fd < 0 {
+                u.write_fd(2, u.s_cat3(c"blood: ", r.target, c": cannot open for writing\n"))
+                return -1
+            }
+            ex.fd_dup2(fd, r.fd as i32)
+            ex.fd_close(fd)
+        }
+        i++
+    }
+    return 0
+}
+
+fn save_redirs_apply(redirs: ref u.Vec) void = trust {
+    val s0: i32 = ex.fd_dup(0)
+    val s1: i32 = ex.fd_dup(1)
+    val s2: i32 = ex.fd_dup(2)
+    apply_redirs(redirs)
+    if s0 >= 0 {
+        ex.fd_dup2(s0, 0)
+        ex.fd_close(s0)
+    }
+    if s1 >= 0 {
+        ex.fd_dup2(s1, 1)
+        ex.fd_close(s1)
+    }
+    if s2 >= 0 {
+        ex.fd_dup2(s2, 2)
+        ex.fd_close(s2)
+    }
+}
+
+fn run_builtin_with_redirs(cmd: ref Command) i32 = trust {
+    if cmd.redirs.len == 0 && cmd.assigns.len == 0 {
+        return run_builtin(cmd)
+    }
+    val s0: i32 = ex.fd_dup(0)
+    val s1: i32 = ex.fd_dup(1)
+    val s2: i32 = ex.fd_dup(2)
+    val saved: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = 0
+    for {
+        if i >= cmd.assigns.len {
+            break
+        }
+        val def: ref u8 = u.vec_p(cmd.assigns, i) as ref u8
+        val eq: i64 = u.s_index_of_char(def, 61, 0)
+        if eq > 0 {
+            val name: ref u8 = u.s_substr(def, 0, eq)
+            val old: i64 = u.map_get(sh_vars, name)
+            u.vec_pushp(saved, name as ref void)
+            u.vec_push(saved, old)
+            apply_assignment(def, false)
+        }
+        i++
+    }
+    val redir_ok: i32 = apply_redirs(cmd.redirs)
+    val st: mut i32 = 1
+    if redir_ok == 0 {
+        st = run_builtin(cmd)
+    }
+    if s0 >= 0 {
+        ex.fd_dup2(s0, 0)
+        ex.fd_close(s0)
+    }
+    if s1 >= 0 {
+        ex.fd_dup2(s1, 1)
+        ex.fd_close(s1)
+    }
+    if s2 >= 0 {
+        ex.fd_dup2(s2, 2)
+        ex.fd_close(s2)
+    }
+    val j: mut i64 = 0
+    for {
+        if j + 1 >= saved.len {
+            break
+        }
+        val name: ref u8 = u.vec_p(saved, j) as ref u8
+        val old: i64 = u.vec_gets(saved, j + 1)
+        if old == 0 {
+            u.map_del(sh_vars, name)
+        } else {
+            u.map_put(sh_vars, name, old)
+        }
+        j = j + 2
+    }
+    return st
+}
+
+fn run_external(cmd: ref Command) i32 = trust {
+    val pid: i32 = ex.p_fork()
+    if pid == 0 {
+        ex.child_reset()
+        apply_assigns_child(cmd.assigns)
+        if apply_redirs(cmd.redirs) != 0 {
+            ex.p_exit(1)
+        }
+        ex.child_exec(cmd.argv)
+        ex.p_exit(127)
+    }
+    if pid < 0 {
+        u.write_fd(2, c"blood: fork failed\n")
+        return 127
+    }
+    return ex.wait_pid(pid)
+}
+
+// ---------------------------------------------------------------------------
+// Builtins
+// ---------------------------------------------------------------------------
+
+fn argv_at(cmd: ref Command, i: i64) ref u8 = trust {
+    if i >= cmd.argv.len {
+        return c""
+    }
+    return u.vec_p(cmd.argv, i) as ref u8
+}
+
+fn run_builtin(cmd: ref Command) i32 = trust {
+    val name: ref u8 = argv_at(cmd, 0)
+    if u.s_eq(name, c"true") || u.s_eq(name, c":") {
+        return 0
+    }
+    if u.s_eq(name, c"false") {
+        return 1
+    }
+    if u.s_eq(name, c"cd") {
+        return bi_cd(cmd)
+    }
+    if u.s_eq(name, c"pwd") {
+        u.write_fd(1, u.s_cat(u.cwd(), c"\n"))
+        return 0
+    }
+    if u.s_eq(name, c"exit") || u.s_eq(name, c"quit") {
+        val code: mut i64 = sh_last_status
+        if cmd.argv.len > 1 {
+            match u.parse_int(argv_at(cmd, 1)) {
+                some n => {
+                    code = n
+                }
+                none => {
+                    u.write_fd(2, c"blood: exit: numeric argument required\n")
+                    code = 2
+                }
+            }
+        }
+        sh_exit_requested = 1
+        sh_exit_code = code
+        return code as i32
+    }
+    if u.s_eq(name, c"history") {
+        return bi_history(cmd)
+    }
+    if u.s_eq(name, c"clear") {
+        u.write_fd(1, c"\x1b[2J\x1b[H")
+        return 0
+    }
+    if u.s_eq(name, c"export") {
+        return bi_export(cmd)
+    }
+    if u.s_eq(name, c"unset") {
+        return bi_unset(cmd)
+    }
+    if u.s_eq(name, c"alias") {
+        return bi_alias(cmd)
+    }
+    if u.s_eq(name, c"unalias") {
+        return bi_unalias(cmd)
+    }
+    if u.s_eq(name, c"help") {
+        return bi_help(cmd)
+    }
+    if u.s_eq(name, c"source") || u.s_eq(name, c".") {
+        return bi_source(cmd)
+    }
+    if u.s_eq(name, c"echo") {
+        return bi_echo(cmd)
+    }
+    if u.s_eq(name, c"say") {
+        val b: mut ref u.Buf = u.buf_new()
+        val i: mut i64 = 1
+        for {
+            if i >= cmd.argv.len {
+                break
+            }
+            if i > 1 {
+                u.buf_ch(b, 32)
+            }
+            u.buf_add(b, argv_at(cmd, i))
+            i++
+        }
+        u.buf_ch(b, 10)
+        u.write_fd(1, u.buf_take(b))
+        return 0
+    }
+    if u.s_eq(name, c"set") {
+        return bi_set(cmd)
+    }
+    if u.s_eq(name, c"type") || u.s_eq(name, c"which") {
+        return bi_which(cmd)
+    }
+    if u.s_eq(name, c"jobs") {
+        return bi_jobs(cmd)
+    }
+    if u.s_eq(name, c"wait") {
+        return bi_wait(cmd)
+    }
+    return 127
+}
+
+fn bi_cd(cmd: ref Command) i32 = trust {
+    val target: mut ref u8 = u.s_dup(u.home_dir())
+    if cmd.argv.len > 1 {
+        val arg: ref u8 = argv_at(cmd, 1)
+        if u.s_eq(arg, c"-") {
+            target = u.s_dup(sh_oldpwd)
+            u.write_fd(1, u.s_cat(target, c"\n"))
+        } else {
+            target = u.expand_tilde(arg)
+        }
+    }
+    val old: ref u8 = u.cwd()
+    if u.chdir(target) != 0 {
+        u.write_fd(2, u.s_cat3(c"blood: cd: ", target, c": no such directory\n"))
+        return 1
+    }
+    sh_oldpwd = old
+    val now: ref u8 = u.cwd()
+    set_var(c"PWD", now)
+    set_var(c"OLDPWD", old)
+    u.env_set(c"PWD", now)
+    u.env_set(c"OLDPWD", old)
+    return 0
+}
+
+fn bi_history(cmd: ref Command) i32 = trust {
+    if cmd.argv.len > 1 && u.s_eq(argv_at(cmd, 1), c"-c") {
+        histmod.history_clear(sh_hist)
+        return 0
+    }
+    if cmd.argv.len > 1 && u.s_eq(argv_at(cmd, 1), c"-w") {
+        histmod.history_save(sh_hist)
+        return 0
+    }
+    val total: i64 = sh_hist.items.len
+    val from: mut i64 = 0
+    if cmd.argv.len > 1 {
+        match u.parse_int(argv_at(cmd, 1)) {
+            some n => {
+                from = total - n
+                if from < 0 {
+                    from = 0
+                }
+            }
+            none => {
+                from = 0
+            }
+        }
+    }
+    val i: mut i64 = from
+    for {
+        if i >= total {
+            break
+        }
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_add(b, c" ")
+        u.buf_add(b, u.s_int(i + 1))
+        u.buf_add(b, c"  ")
+        u.buf_add(b, u.vec_p(sh_hist.items, i) as ref u8)
+        u.buf_ch(b, 10)
+        u.write_fd(1, u.buf_take(b))
+        i++
+    }
+    return 0
+}
+
+fn bi_export(cmd: ref Command) i32 = trust {
+    if cmd.argv.len == 1 {
+        val i: mut i64 = 0
+        for {
+            if i >= sh_vars.cap {
+                break
+            }
+            if u.map_used_at(sh_vars, i) {
+                val k: ref u8 = u.map_key_at(sh_vars, i)
+                val v: ref u8 = @bitcast(u.map_val_at(sh_vars, i), ref u8)
+                u.write_fd(1, u.s_cat3(k, c"=", u.s_cat(v, c"\n")))
+            }
+            i++
+        }
+        return 0
+    }
+    val i: mut i64 = 1
+    for {
+        if i >= cmd.argv.len {
+            break
+        }
+        val def: ref u8 = argv_at(cmd, i)
+        val eq: i64 = u.s_index_of_char(def, 61, 0)
+        if eq > 0 {
+            apply_assignment(def, true)
+        } else {
+            val v: ref u8 = get_var(def)
+            u.env_set(def, v)
+        }
+        i++
+    }
+    return 0
+}
+
+fn bi_unset(cmd: ref Command) i32 = trust {
+    val i: mut i64 = 1
+    for {
+        if i >= cmd.argv.len {
+            break
+        }
+        val name: ref u8 = argv_at(cmd, i)
+        u.map_del(sh_vars, name)
+        u.env_unset(name)
+        i++
+    }
+    return 0
+}
+
+fn bi_alias(cmd: ref Command) i32 = trust {
+    if cmd.argv.len == 1 {
+        val i: mut i64 = 0
+        for {
+            if i >= sh_aliases.cap {
+                break
+            }
+            if u.map_used_at(sh_aliases, i) {
+                val k: ref u8 = u.map_key_at(sh_aliases, i)
+                val v: ref u8 = @bitcast(u.map_val_at(sh_aliases, i), ref u8)
+                u.write_fd(1, u.s_cat3(k, c"='", u.s_cat(v, c"'\n")))
+            }
+            i++
+        }
+        return 0
+    }
+    val i: mut i64 = 1
+    for {
+        if i >= cmd.argv.len {
+            break
+        }
+        val def: ref u8 = argv_at(cmd, i)
+        val eq: i64 = u.s_index_of_char(def, 61, 0)
+        if eq > 0 {
+            val name: ref u8 = u.s_substr(def, 0, eq)
+            val value: ref u8 = strip_alias_quotes(u.s_substr(def, eq + 1, u.s_len(def)))
+            u.map_put(sh_aliases, name, @bitcast(value, i64))
+        } else {
+            if u.map_has(sh_aliases, def) {
+                val v: ref u8 = @bitcast(u.map_get(sh_aliases, def), ref u8)
+                u.write_fd(1, u.s_cat3(def, c"='", u.s_cat(v, c"'\n")))
+            } else {
+                u.write_fd(2, u.s_cat3(c"blood: alias: ", def, c": not found\n"))
+            }
+        }
+        i++
+    }
+    return 0
+}
+
+fn strip_alias_quotes(s: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(s)
+    if n >= 2 {
+        val a: u8 = @load8(s)
+        val b: u8 = @load8(@ptradd(s, n - 1))
+        if (a == 34 && b == 34) || (a == 39 && b == 39) {
+            return u.s_substr(s, 1, n - 1)
+        }
+    }
+    return s
+}
+
+fn bi_unalias(cmd: ref Command) i32 = trust {
+    if cmd.argv.len > 1 && u.s_eq(argv_at(cmd, 1), c"-a") {
+        u.map_free(sh_aliases)
+        sh_aliases = u.map_new()
+        return 0
+    }
+    val i: mut i64 = 1
+    for {
+        if i >= cmd.argv.len {
+            break
+        }
+        u.map_del(sh_aliases, argv_at(cmd, i))
+        i++
+    }
+    return 0
+}
+
+fn bi_help(cmd: ref Command) i32 = trust {
+    val topic: mut ref u8 = c""
+    if cmd.argv.len > 1 {
+        topic = argv_at(cmd, 1)
+    }
+    if u.s_eq(topic, c"config") {
+        u.write_fd(1, c"Blood configuration: ~/.config/blood/blood.ini\n\n[prompt]\ntheme, show_username, show_hostname, show_directory, show_git,\nshow_time, show_exit_status, show_duration, show_jobs, two_line,\nsymbol, prompt_char, directory_style (full|short|basename)\n\n[colors]\nprimary, secondary, success, error, directory, git_clean, git_dirty,\nmuted, warning, accent (names, 256-colour numbers, or #rrggbb)\n\n[history]\nenabled, file, max_entries, ignore_duplicates\n\n[completion]\nenabled, case_sensitive\n\n[shell]\ndefault_editor, login_message, startup_file\n\n[aliases]\nname = command\n\n[env]\nNAME = value\n")
+        return 0
+    }
+    if u.s_eq(topic, c"script") || u.s_eq(topic, c"language") {
+        u.write_fd(1, c"Blood scripts\n\n  say \"hello {name}\"\n  name = \"world\"\n  if true:\n      say \"yes\"\n  else:\n      say \"no\"\n  while true:\n      break\n  for item in [\"a\", \"b\"]:\n      say item\n  fn greet(name):\n      return \"Hello, \" + name\n  try:\n      raise \"oops\"\n  catch err:\n      say err\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n")
+        return 0
+    }
+    u.write_fd(1, c"Blood builtins\n\n  cd [dir]        change directory (cd - returns)\n  pwd             print working directory\n  exit [code]     leave the shell\n  history [-c|-w] command history\n  clear           clear the screen\n  export NAME=..  export a variable\n  unset NAME..    remove variables\n  alias NAME=..   define an alias\n  unalias NAME..  remove an alias\n  help [topic]    this help (topics: config, script)\n  source FILE     run a blood script\n  echo ARGS..     print arguments\n  say ARGS..      print arguments\n  type NAME       show how a command resolves\n  jobs            background jobs\n  wait            wait for background jobs\n\nInteractive keys: Ctrl-A/E/B/F/K/U/W/L, Ctrl-R history search,\nTab completion menu, Up/Down history, Ctrl-C cancel, Ctrl-D exit.\n")
+    return 0
+}
+
+fn bi_source(cmd: ref Command) i32 = trust {
+    if cmd.argv.len < 2 {
+        u.write_fd(2, c"blood: source: missing file\n")
+        return 2
+    }
+    val path: ref u8 = u.expand_tilde(argv_at(cmd, 1))
+    if !u.file_exists(path) {
+        u.write_fd(2, u.s_cat3(c"blood: source: ", path, c": no such file\n"))
+        return 1
+    }
+    if u.hooks_ready == 0 {
+        return 1
+    }
+    val hook: fn(ref u8) i32 = u.run_script_file_hook
+    return hook(path)
+}
+
+fn bi_echo(cmd: ref Command) i32 = trust {
+    val newline: mut bool = true
+    val i: mut i64 = 1
+    if cmd.argv.len > 1 && u.s_eq(argv_at(cmd, 1), c"-n") {
+        newline = false
+        i = 2
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val start: i64 = i
+    for {
+        if i >= cmd.argv.len {
+            break
+        }
+        if i > start {
+            u.buf_ch(b, 32)
+        }
+        u.buf_add(b, argv_at(cmd, i))
+        i++
+    }
+    if newline {
+        u.buf_ch(b, 10)
+    }
+    u.write_fd(1, u.buf_take(b))
+    return 0
+}
+
+fn bi_set(cmd: ref Command) i32 = trust {
+    if cmd.argv.len == 1 {
+        val i: mut i64 = 0
+        for {
+            if i >= sh_vars.cap {
+                break
+            }
+            if u.map_used_at(sh_vars, i) {
+                val k: ref u8 = u.map_key_at(sh_vars, i)
+                val v: ref u8 = @bitcast(u.map_val_at(sh_vars, i), ref u8)
+                u.write_fd(1, u.s_cat3(k, c"=", u.s_cat(v, c"\n")))
+            }
+            i++
+        }
+        return 0
+    }
+    val i: mut i64 = 1
+    for {
+        if i >= cmd.argv.len {
+            break
+        }
+        apply_assignment(argv_at(cmd, i), false)
+        i++
+    }
+    return 0
+}
+
+fn bi_which(cmd: ref Command) i32 = trust {
+    if cmd.argv.len < 2 {
+        return 2
+    }
+    val name: ref u8 = argv_at(cmd, 1)
+    if is_builtin(name) {
+        u.write_fd(1, u.s_cat3(name, c": builtin\n", c""))
+        return 0
+    }
+    if u.map_has(sh_aliases, name) {
+        val v: ref u8 = @bitcast(u.map_get(sh_aliases, name), ref u8)
+        u.write_fd(1, u.s_cat3(name, c": aliased to ", u.s_cat(v, c"\n")))
+        return 0
+    }
+    val path: ref u8 = u.env_get(c"PATH")
+    if path != none {
+        val n: i64 = u.s_len(path)
+        val start: mut i64 = 0
+        val i: mut i64 = 0
+        for {
+            if i > n {
+                break
+            }
+            if i == n || @load8(@ptradd(path, i)) == 58 {
+                val dir: ref u8 = u.s_ndup(@ptradd(path, start), i - start)
+                if u.s_len(dir) > 0 {
+                    val full: ref u8 = u.path_join(dir, name)
+                    if u.file_exists(full) && !u.is_dir(full) {
+                        u.write_fd(1, u.s_cat(full, c"\n"))
+                        return 0
+                    }
+                }
+                start = i + 1
+            }
+            i++
+        }
+    }
+    u.write_fd(2, u.s_cat3(c"blood: ", name, c": not found\n"))
+    return 1
+}
+
+fn bi_jobs(cmd: ref Command) i32 = trust {
+    if cmd.argv.len < 0 {
+        return 1
+    }
+    reap_jobs()
+    val i: mut i64 = 0
+    for {
+        if i >= sh_jobs.len {
+            break
+        }
+        val pid: i64 = u.vec_gets(sh_jobs, i)
+        u.write_fd(1, u.s_cat3(c"[", u.s_int(i + 1), c"] "))
+        u.write_fd(1, u.s_cat3(u.s_int(pid), c" running\n", c""))
+        i++
+    }
+    return 0
+}
+
+fn bi_wait(cmd: ref Command) i32 = trust {
+    if cmd.argv.len < 0 {
+        return 1
+    }
+    val last: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= sh_jobs.len {
+            break
+        }
+        last = ex.wait_pid(u.vec_gets(sh_jobs, i) as i32) as i64
+        i++
+    }
+    sh_jobs.len = 0
+    return last as i32
+}
+
+pub fn reap_jobs() void = trust {
+    if sh_jobs == none {
+        return
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= sh_jobs.len {
+            break
+        }
+        val pid: i32 = u.vec_gets(sh_jobs, i) as i32
+        val st: i32 = ex.wait_nohang(pid)
+        if st >= 0 {
+            u.vec_remove(sh_jobs, i)
+            continue
+        }
+        i++
+    }
+}
+
+pub fn job_count() i64 = trust {
+    if sh_jobs == none {
+        return 0
+    }
+    return sh_jobs.len
+}
+
+pub fn capture_text(cmd: ref u8) ref u8 = trust {
+    val p: ex.Pipe = ex.make_pipe()
+    val pid: i32 = ex.p_fork()
+    if pid == 0 {
+        ex.child_reset()
+        ex.fd_close(p.read_fd)
+        ex.fd_dup2(p.write_fd, 1)
+        ex.fd_close(p.write_fd)
+        val st: i32 = run_line(cmd)
+        ex.p_exit(st)
+    }
+    ex.fd_close(p.write_fd)
+    if pid < 0 {
+        ex.fd_close(p.read_fd)
+        u.hook_status = 2
+        return u.s_dup(c"")
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val chunk: ref u8 = u.xalloc(4096) as ref u8
+    for {
+        val n: i64 = ex.fd_read(p.read_fd, chunk, 4096)
+        if n <= 0 {
+            break
+        }
+        u.buf_addn(b, chunk, n)
+    }
+    u.xfree(chunk)
+    ex.fd_close(p.read_fd)
+    val st: i32 = ex.wait_pid(pid)
+    sh_last_status = st as i64
+    u.hook_status = st as i64
+    return u.buf_take(b)
+}

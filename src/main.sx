@@ -1,5 +1,390 @@
-val stdio = use("std/stdio")
+/// Blood — an interactive shell and small Python-like scripting language.
 
-pub fn main() void = {
-    stdio.puts("Hello, world.")
+val u = use("util.sx")
+val cfgmod = use("config.sx")
+val histmod = use("history.sx")
+val prompt = use("prompt.sx")
+val term = use("terminal.sx")
+val ex = use("exec.sx")
+val shell = use("shell.sx")
+val script = use("script.sx")
+
+val VERSION: ref u8 = c"0.1.0"
+
+fn arg_at(av: list[ref u8], i: i64) ref u8 = trust {
+    val n: i64 = @len(av) as i64
+    if i < 0 || i >= n {
+        return none
+    }
+    match @get(av, i as usize) {
+        some p => {
+            return p
+        }
+        none => {
+            return none
+        }
+    }
+}
+
+fn on_interrupt(sig: i32) void = trust {
+    if sig == -1 {
+        return
+    }
+    u.interrupt_flag = 1
+}
+
+fn install_hooks() void = trust {
+    u.run_shell_hook = shell.run_line
+    u.run_capture_hook = shell.capture_text
+    u.run_script_file_hook = script.run_file
+    u.hooks_ready = 1
+}
+
+fn print_version() void = trust {
+    u.stdout_ln(u.s_cat3(c"blood ", VERSION, c" (Spectre)"))
+}
+
+fn print_help() void = trust {
+    val text: ref u8 = c"usage: blood [options] [script.blood [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  --init           write a default configuration file\n  --version        print the version\n  -h, --help       show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n"
+    u.write_fd(1, text)
+}
+
+fn ensure_config_dirs(c: ref cfgmod.Config) void = trust {
+    u.mkdir_p(u.path_dir(c.path))
+    u.mkdir_p(u.path_dir(c.history_file))
+}
+
+fn banner(c: ref cfgmod.Config) void = trust {
+    if c.login_message == 0 {
+        return
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"\x1b[0m")
+    u.buf_add(b, c.color_primary)
+    u.buf_add(b, c"╭─ ")
+    u.buf_add(b, c"blood ")
+    u.buf_add(b, VERSION)
+    u.buf_add(b, c"\x1b[0m")
+    u.buf_add(b, c.color_muted)
+    u.buf_add(b, c" — type ")
+    u.buf_add(b, c"\x1b[0m")
+    u.buf_add(b, c.color_accent)
+    u.buf_add(b, c"help")
+    u.buf_add(b, c"\x1b[0m")
+    u.buf_add(b, c.color_muted)
+    u.buf_add(b, c" for commands, ")
+    u.buf_add(b, c"\x1b[0m")
+    u.buf_add(b, c.color_accent)
+    u.buf_add(b, c"help script")
+    u.buf_add(b, c"\x1b[0m")
+    u.buf_add(b, c.color_muted)
+    u.buf_add(b, c" for the language.\n")
+    u.buf_add(b, c"\x1b[0m")
+    u.write_fd(1, u.buf_take(b))
+}
+
+fn read_all_stdin() ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val first: mut bool = true
+    for {
+        val line: ref u8 = term.read_plain()
+        if line == none {
+            break
+        }
+        if !first {
+            u.buf_ch(b, 10)
+        }
+        first = false
+        u.buf_add(b, line)
+    }
+    return u.buf_take(b)
+}
+
+fn first_line(src: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        if @load8(@ptradd(src, i)) == 10 {
+            return u.s_substr(src, 0, i)
+        }
+        i++
+    }
+    return src
+}
+
+fn strip_shebang(src: ref u8) ref u8 = trust {
+    if u.s_starts(src, c"#!") {
+        val n: i64 = u.s_len(src)
+        val i: mut i64 = 0
+        for {
+            if i >= n {
+                break
+            }
+            if @load8(@ptradd(src, i)) == 10 {
+                return u.s_substr(src, i + 1, n)
+            }
+            i++
+        }
+        return u.s_dup(c"")
+    }
+    return src
+}
+
+fn startup_files(c: ref cfgmod.Config) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    if u.s_len(c.startup_file) > 0 {
+        u.vec_pushp(out, c.startup_file as ref void)
+    }
+    val default_path: ref u8 = u.path_join(u.path_dir(c.path), c"init.blood")
+    if u.file_exists(default_path) {
+        u.vec_pushp(out, default_path as ref void)
+    }
+    return out
+}
+
+fn run_startup(c: ref cfgmod.Config) void = trust {
+    val files: ref u.Vec = startup_files(c)
+    val i: mut i64 = 0
+    for {
+        if i >= files.len {
+            break
+        }
+        val path: ref u8 = u.vec_p(files, i) as ref u8
+        val st: i32 = script.run_file(path)
+        if st != 0 {
+            u.write_fd(2, u.s_cat3(c"blood: startup: ", path, c" failed\n"))
+        }
+        i++
+    }
+}
+
+fn prompt_continuation() ref u8 = trust {
+    return c"\x1b[90m  … \x1b[0m"
+}
+
+fn interactive_loop(c: ref cfgmod.Config, h: mut ref histmod.History) i32 = trust {
+    val status: mut i64 = 0
+    val duration: mut i64 = 0
+    val code: mut i32 = 0
+    banner(c)
+    for {
+        if shell.exit_requested() {
+            code = shell.exit_code()
+            break
+        }
+        shell.reap_jobs()
+        val p: ref u8 = prompt.render(c, status as i32, duration, shell.job_count())
+        val ed: mut ref term.Editor = term.editor_new(c, h, shell.vars(), shell.aliases())
+        val line: ref u8 = term.readline(ed, p)
+        term.cooked_mode()
+        if line == none {
+            if term.was_cancelled(ed) {
+                u.interrupt_flag = 0
+                continue
+            }
+            break
+        }
+        if u.s_len(u.s_trim(line)) == 0 {
+            continue
+        }
+        val full: mut ref u8 = u.s_dup(line)
+        val is_script: bool = script.looks_like_script(line)
+        val block_mode: mut bool = false
+        if is_script {
+            val t: ref u8 = u.s_trim(line)
+            if u.s_len(t) > 0 && @load8(@ptradd(t, u.s_len(t) - 1)) == 58 {
+                block_mode = true
+            }
+        }
+        if block_mode {
+            for {
+                val ced: mut ref term.Editor = term.editor_new(c, h, shell.vars(), shell.aliases())
+                val next: ref u8 = term.readline(ced, prompt_continuation())
+                term.cooked_mode()
+                if next == none {
+                    if term.was_cancelled(ced) {
+                        full = u.s_dup(c"")
+                    }
+                    break
+                }
+                if u.s_len(u.s_trim(next)) == 0 {
+                    break
+                }
+                full = u.s_cat3(full, c"\n", next)
+            }
+        } else {
+            for {
+                if !script.needs_continuation(full) {
+                    break
+                }
+                val ced: mut ref term.Editor = term.editor_new(c, h, shell.vars(), shell.aliases())
+                val next: ref u8 = term.readline(ced, prompt_continuation())
+                term.cooked_mode()
+                if next == none {
+                    if term.was_cancelled(ced) {
+                        full = u.s_dup(c"")
+                    }
+                    break
+                }
+                if u.s_len(next) == 0 {
+                    full = u.s_cat3(full, c"\n", c"")
+                } else {
+                    full = u.s_cat3(full, c"\n", next)
+                }
+            }
+        }
+        if u.s_len(u.s_trim(full)) == 0 {
+            continue
+        }
+        histmod.history_add(h, full)
+        u.interrupt_flag = 0
+        val started: i64 = u.now_ms()
+        if script.looks_like_script(full) {
+            val st: i32 = script.run_interactive(full)
+            if st != 0 {
+                status = st as i64
+            } elif u.script_exit_code >= 0 {
+                status = u.script_exit_code
+            } else {
+                status = script.status_value()
+            }
+            shell.set_last_status(status as i32)
+        } else {
+            val st: i32 = shell.run_line(full)
+            u.interrupt_flag = 0
+            status = st as i64
+            script.set_external_status(status)
+            if u.script_exit_code >= 0 {
+                code = u.script_exit_code as i32
+                break
+            }
+        }
+        duration = u.now_ms() - started
+        if shell.exit_requested() {
+            code = shell.exit_code()
+            break
+        }
+        if u.script_exit_code >= 0 {
+            code = u.script_exit_code as i32
+            break
+        }
+    }
+    histmod.history_save(h)
+    return code
+}
+
+pub fn main() i32 = trust {
+    val av: list[ref u8] = @args()
+    val argc: i64 = @len(av) as i64
+    val c: ref cfgmod.Config = cfgmod.load_config()
+    ensure_config_dirs(c)
+    ex.signal_ignore(3)
+    ex.signal_handler(2, on_interrupt)
+    ex.signal_ignore(15)
+    ex.signal_ignore(20)
+    val h: mut ref histmod.History = histmod.history_new(c)
+    histmod.history_load(h)
+    shell.shell_init(c, h, false)
+    script.script_init()
+    install_hooks()
+    term.init_terminal()
+    val args_vec: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = 1
+    for {
+        if i >= argc {
+            break
+        }
+        u.vec_pushp(args_vec, arg_at(av, i) as ref void)
+        i++
+    }
+    val first: ref u8 = arg_at(av, 1)
+    if first != none && (u.s_eq(first, c"--version") || u.s_eq(first, c"-v")) {
+        print_version()
+        return 0
+    }
+    if first != none && (u.s_eq(first, c"--help") || u.s_eq(first, c"-h")) {
+        print_help()
+        return 0
+    }
+    if first != none && u.s_eq(first, c"--init") {
+        if cfgmod.init_config_file(c.path) {
+            u.stdout_ln(u.s_cat(c"wrote ", c.path))
+            return 0
+        }
+        u.write_fd(2, u.s_cat3(c"blood: cannot write ", c.path, c"\n"))
+        return 1
+    }
+    if first != none && u.s_eq(first, c"-c") {
+        val cmd: ref u8 = arg_at(av, 2)
+        if cmd == none {
+            u.write_fd(2, c"blood: -c requires a command\n")
+            return 2
+        }
+        val rest: mut ref u.Vec = u.vec_new()
+        val j: mut i64 = 3
+        for {
+            if j >= argc {
+                break
+            }
+            u.vec_pushp(rest, arg_at(av, j) as ref void)
+            j++
+        }
+        script.set_args(rest)
+        val st: mut i32 = 0
+        if script.looks_like_script(cmd) {
+            st = script.run_text(strip_shebang(cmd), false, c"-c")
+        } else {
+            st = shell.run_line(cmd)
+        }
+        term.cooked_mode()
+        if u.script_exit_code >= 0 {
+            return u.script_exit_code as i32
+        }
+        return st
+    }
+    if first != none && u.s_len(first) > 0 && @load8(first) != 45 {
+        val rest: mut ref u.Vec = u.vec_new()
+        val j: mut i64 = 2
+        for {
+            if j >= argc {
+                break
+            }
+            u.vec_pushp(rest, arg_at(av, j) as ref void)
+            j++
+        }
+        script.set_args(rest)
+        val src: ref u8 = u.read_file(first)
+        if src == none {
+            u.write_fd(2, u.s_cat3(c"blood: ", first, c": no such script\n"))
+            return 1
+        }
+        val st: i32 = script.run_file(first)
+        if u.script_exit_code >= 0 {
+            return u.script_exit_code as i32
+        }
+        return st
+    }
+    val interactive: bool = term.have_tty()
+    if !interactive {
+        val src: ref u8 = read_all_stdin()
+        if u.s_len(u.s_trim(src)) == 0 {
+            return 0
+        }
+        if script.looks_like_script(first_line(src)) {
+            return script.run_text(strip_shebang(src), false, c"stdin")
+        }
+        return shell.run_line(src)
+    }
+    shell.shell_init(c, h, true)
+    run_startup(c)
+    val code: i32 = interactive_loop(c, h)
+    term.cooked_mode()
+    ex.signal_default(2)
+    ex.signal_default(3)
+    ex.signal_default(15)
+    ex.signal_default(20)
+    return code
 }

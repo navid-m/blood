@@ -1,0 +1,241 @@
+/// Persistent command history with duplicate suppression and search.
+
+val u = use("util.sx")
+val cfgmod = use("config.sx")
+
+pub type History = {
+    items: mut ref u.Vec
+    file: mut ref u8
+    max: mut i64
+    ignore_dups: mut i64
+    enabled: mut i64
+    dirty: mut i64
+}
+
+fn encode(line: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(line)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c == 92 {
+            u.buf_add(b, c"\\\\")
+        } elif c == 10 {
+            u.buf_add(b, c"\\n")
+        } elif c == 13 {
+            u.buf_add(b, c"\\r")
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+    return u.buf_take(b)
+}
+
+fn decode(line: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(line)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c == 92 && i + 1 < n {
+            val nx: u8 = @load8(@ptradd(line, i + 1))
+            if nx == 110 {
+                u.buf_ch(b, 10)
+                i = i + 2
+                continue
+            }
+            if nx == 114 {
+                u.buf_ch(b, 13)
+                i = i + 2
+                continue
+            }
+            if nx == 92 {
+                u.buf_ch(b, 92)
+                i = i + 2
+                continue
+            }
+        }
+        u.buf_ch(b, c)
+        i++
+    }
+    return u.buf_take(b)
+}
+
+pub fn history_new(c: ref cfgmod.Config) ref History = trust {
+    val h: mut ref History = @alloc(@sizeof(History)) as ref History
+    h.items = u.vec_new()
+    h.file = u.s_dup(c.history_file)
+    h.max = c.history_max
+    h.ignore_dups = c.history_ignore_dups
+    h.enabled = c.history_enabled
+    h.dirty = 0
+    return h
+}
+
+pub fn history_len(h: ref History) i64 = trust {
+    return h.items.len
+}
+
+pub fn history_get(h: ref History, i: i64) ref u8 = trust {
+    if i < 0 || i >= h.items.len {
+        return none
+    }
+    return u.vec_p(h.items, i) as ref u8
+}
+
+pub fn history_set_file(h: mut ref History, file: ref u8) void = trust {
+    h.file = u.s_dup(file)
+}
+
+pub fn history_load(h: mut ref History) void = trust {
+    if h.enabled == 0 {
+        return
+    }
+    val data: ref u8 = u.read_file(h.file)
+    if data == none {
+        return
+    }
+    val n: i64 = u.s_len(data)
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(data, i)) == 10 {
+            if i > start {
+                val raw: ref u8 = u.s_ndup(@ptradd(data, start), i - start)
+                if u.s_len(raw) > 0 {
+                    u.vec_pushp(h.items, decode(raw) as ref void)
+                }
+            }
+            start = i + 1
+        }
+        i++
+    }
+    val over: i64 = h.items.len - h.max
+    val k: mut i64 = 0
+    for {
+        if k >= over {
+            break
+        }
+        u.vec_remove(h.items, 0)
+        k++
+    }
+}
+
+pub fn history_add(h: mut ref History, line: ref u8) void = trust {
+    if h.enabled == 0 || line == none || u.s_len(u.s_trim(line)) == 0 {
+        return
+    }
+    if h.ignore_dups != 0 && h.items.len > 0 {
+        val last: ref u8 = u.vec_p(h.items, h.items.len - 1) as ref u8
+        if u.s_eq(last, line) {
+            return
+        }
+    }
+    u.vec_pushp(h.items, u.s_dup(line) as ref void)
+    if h.items.len > h.max {
+        u.vec_remove(h.items, 0)
+    }
+    if h.enabled != 0 {
+        val dir: ref u8 = u.path_dir(h.file)
+        u.mkdir_p(dir)
+        val rec: ref u8 = u.s_cat(encode(line), c"\n")
+        u.append_file(h.file, rec)
+    }
+    h.dirty = 1
+}
+
+pub fn history_save(h: ref History) void = trust {
+    if h.enabled == 0 {
+        return
+    }
+    val dir: ref u8 = u.path_dir(h.file)
+    u.mkdir_p(dir)
+    val b: mut ref u.Buf = u.buf_new()
+    val i: mut i64 = 0
+    for {
+        if i >= h.items.len {
+            break
+        }
+        val line: ref u8 = u.vec_p(h.items, i) as ref u8
+        u.buf_add(b, encode(line))
+        u.buf_ch(b, 10)
+        i++
+    }
+    u.write_file(h.file, u.buf_take(b))
+}
+
+pub fn history_clear(h: mut ref History) void = trust {
+    h.items.len = 0
+    u.write_file(h.file, c"")
+}
+
+pub fn ci_contains(hay: ref u8, needle: ref u8) bool = trust {
+    val hn: i64 = u.s_len(hay)
+    val nn: i64 = u.s_len(needle)
+    if nn == 0 {
+        return true
+    }
+    if nn > hn {
+        return false
+    }
+    val limit: i64 = hn - nn
+    val i: mut i64 = 0
+    for {
+        if i > limit {
+            break
+        }
+        val j: mut i64 = 0
+        val matched: mut bool = true
+        for {
+            if j >= nn {
+                break
+            }
+            if lower(@load8(@ptradd(hay, i + j))) != lower(@load8(@ptradd(needle, j))) {
+                matched = false
+                break
+            }
+            j++
+        }
+        if matched {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn lower(c: u8) u8 = trust {
+    if c >= 65 && c <= 90 {
+        return c + 32
+    }
+    return c
+}
+
+pub fn history_search(h: ref History, query: ref u8, from: i64) i64 = trust {
+    val start: mut i64 = from
+    if start >= h.items.len {
+        start = h.items.len - 1
+    }
+    val i: mut i64 = start
+    for {
+        if i < 0 {
+            break
+        }
+        val line: ref u8 = u.vec_p(h.items, i) as ref u8
+        if ci_contains(line, query) {
+            return i
+        }
+        i--
+    }
+    return -1
+}

@@ -1,0 +1,971 @@
+/// Terminal handling, raw mode, and the interactive line editor.
+
+val u = use("util.sx")
+val cfgmod = use("config.sx")
+val histmod = use("history.sx")
+val comp = use("completion.sx")
+
+extern (C, header) fn c_tcgetattr(fd: i32, t: ref Termios) i32 = "tcgetattr"
+extern (C, header) fn c_tcsetattr(fd: i32, act: i32, t: ref Termios) i32 = "tcsetattr"
+extern (C, header) fn c_ioctl(fd: i32, req: u64, ...) i32 = "ioctl"
+extern (C, header) fn c_read(fd: i32, buf: ref void, n: usize) i64 = "read"
+
+pub type Termios = {
+    c_iflag: mut u32
+    c_oflag: mut u32
+    c_cflag: mut u32
+    c_lflag: mut u32
+    c_line: mut u8
+    c_cc: mut [32]u8
+    c_ispeed: mut u32
+    c_ospeed: mut u32
+}
+
+pub type WinSize = {
+    rows: u16
+    cols: u16
+    xpixel: u16
+    ypixel: u16
+}
+
+pub type TermState = {
+    orig: mut Termios
+    have_tty: mut i64
+    raw_active: mut i64
+}
+
+val term: mut TermState = @zeroed
+
+pub type Editor = {
+    cfg: mut ref cfgmod.Config
+    hist: mut ref histmod.History
+    vars: mut ref u.Map
+    aliases: mut ref u.Map
+    line: mut ref u8
+    len: mut i64
+    cap: mut i64
+    pos: mut i64
+    view_start: mut i64
+    hist_index: mut i64
+    draft: mut ref u8
+    cancelled: mut i64
+    eof: mut i64
+    first_draw: mut i64
+    drawn_rows: mut i64
+    menu_active: mut i64
+    menu_items: mut ref u.Vec
+    menu_index: mut i64
+    menu_start: mut i64
+    menu_end: mut i64
+    menu_base: mut ref u8
+    search_active: mut i64
+    search_query: mut ref u8
+    search_index: mut i64
+    search_orig: mut ref u8
+}
+
+fn const_icanon() u32 = trust {
+    return 2 as u32
+}
+
+fn const_echo() u32 = trust {
+    return 8 as u32
+}
+
+fn const_isig() u32 = trust {
+    return 1 as u32
+}
+
+fn const_iexten() u32 = trust {
+    return 32768 as u32
+}
+
+fn const_ixon() u32 = trust {
+    return 1024 as u32
+}
+
+fn const_icrnl() u32 = trust {
+    return 256 as u32
+}
+
+pub fn init_terminal() void = trust {
+    val t: mut Termios = @zeroed
+    if c_tcgetattr(0, @addr(t)) == 0 {
+        term.orig = t
+        term.have_tty = 1
+    } else {
+        term.have_tty = 0
+    }
+    term.raw_active = 0
+}
+
+pub fn have_tty() bool = trust {
+    return term.have_tty != 0
+}
+
+pub fn raw_mode() void = trust {
+    if term.have_tty == 0 {
+        return
+    }
+    val t: mut Termios = term.orig
+    t.c_lflag = t.c_lflag & ~(const_echo() | const_icanon() | const_iexten() | const_isig())
+    t.c_iflag = t.c_iflag & ~(const_ixon() | const_icrnl())
+    @store8(@ptradd(@addr(t.c_cc) as ref u8, 6), 1)
+    @store8(@ptradd(@addr(t.c_cc) as ref u8, 5), 0)
+    c_tcsetattr(0, 0, @addr(t))
+    term.raw_active = 1
+}
+
+pub fn cooked_mode() void = trust {
+    if term.have_tty == 0 {
+        return
+    }
+    c_tcsetattr(0, 0, @addr(term.orig))
+    term.raw_active = 0
+}
+
+pub fn cols() i64 = trust {
+    val ws: mut WinSize = @zeroed
+    if c_ioctl(1, 21523 as u64, @addr(ws)) == 0 && ws.cols > 0 {
+        return ws.cols as i64
+    }
+    return 80
+}
+
+pub fn rows() i64 = trust {
+    val ws: mut WinSize = @zeroed
+    if c_ioctl(1, 21523 as u64, @addr(ws)) == 0 && ws.rows > 0 {
+        return ws.rows as i64
+    }
+    return 24
+}
+
+pub fn write_s(s: ref u8) void = trust {
+    u.write_fd(1, s)
+}
+
+fn read_key() i32 = trust {
+    val c: mut u8 = 0
+    val n: i64 = c_read(0, @addr(c) as ref void, 1)
+    if n <= 0 {
+        return -1
+    }
+    return c as i32
+}
+
+pub fn editor_new(
+    c: ref cfgmod.Config,
+    h: ref histmod.History,
+    vars: ref u.Map,
+    aliases: ref u.Map
+) ref Editor = trust {
+    val e: mut ref Editor = @alloc(@sizeof(Editor)) as ref Editor
+    e.cfg = c
+    e.hist = h
+    e.vars = vars
+    e.aliases = aliases
+    e.cap = 256
+    e.line = u.xalloc(256) as ref u8
+    @store8(e.line, 0)
+    e.len = 0
+    e.pos = 0
+    e.view_start = 0
+    e.hist_index = h.items.len
+    e.draft = u.s_dup(c"")
+    e.cancelled = 0
+    e.eof = 0
+    e.first_draw = 1
+    e.drawn_rows = 1
+    e.menu_active = 0
+    e.menu_items = none
+    e.menu_index = 0
+    e.menu_start = 0
+    e.menu_end = 0
+    e.menu_base = u.s_dup(c"")
+    e.search_active = 0
+    e.search_query = u.s_dup(c"")
+    e.search_index = h.items.len - 1
+    e.search_orig = u.s_dup(c"")
+    return e
+}
+
+pub fn was_cancelled(e: ref Editor) bool = trust {
+    return e.cancelled != 0
+}
+
+pub fn was_eof(e: ref Editor) bool = trust {
+    return e.eof != 0
+}
+
+fn ed_reserve(e: mut ref Editor, extra: i64) void = trust {
+    val need: i64 = e.len + extra + 1
+    if need <= e.cap {
+        return
+    }
+    val nc: mut i64 = e.cap * 2
+    for {
+        if nc >= need {
+            break
+        }
+        nc = nc * 2
+    }
+    e.line = u.mem_realloc(e.line as ref void, nc)
+    e.cap = nc
+}
+
+fn ed_set(e: mut ref Editor, s: ref u8) void = trust {
+    val n: i64 = u.s_len(s)
+    e.len = 0
+    ed_reserve(e, n)
+    if n > 0 {
+        u.mem_copy(e.line as ref void, s as ref void, n)
+    }
+    e.len = n
+    e.pos = n
+    @store8(@ptradd(e.line, n), 0)
+}
+
+fn ed_insert_byte(e: mut ref Editor, c: u8) void = trust {
+    ed_reserve(e, 1)
+    if e.pos < e.len {
+        u.mem_move(@ptradd(e.line, e.pos + 1) as ref void, @ptradd(e.line, e.pos) as ref void, e.len - e.pos)
+    }
+    @store8(@ptradd(e.line, e.pos), c)
+    e.len++
+    e.pos++
+    @store8(@ptradd(e.line, e.len), 0)
+}
+
+fn ed_backspace(e: mut ref Editor) void = trust {
+    if e.pos <= 0 {
+        return
+    }
+    val prev: i64 = u.utf8_prev(e.line, e.pos)
+    val count: i64 = e.pos - prev
+    if e.pos < e.len {
+        u.mem_move(@ptradd(e.line, prev) as ref void, @ptradd(e.line, e.pos) as ref void, e.len - e.pos)
+    }
+    e.len = e.len - count
+    e.pos = prev
+    @store8(@ptradd(e.line, e.len), 0)
+}
+
+fn ed_delete(e: mut ref Editor) void = trust {
+    if e.pos >= e.len {
+        return
+    }
+    val next: i64 = u.utf8_next(e.line, e.pos, e.len)
+    val count: i64 = next - e.pos
+    if next < e.len {
+        u.mem_move(@ptradd(e.line, e.pos) as ref void, @ptradd(e.line, next) as ref void, e.len - next)
+    }
+    e.len = e.len - count
+    @store8(@ptradd(e.line, e.len), 0)
+}
+
+fn ed_kill_to_end(e: mut ref Editor) void = trust {
+    if e.pos < e.len {
+        e.len = e.pos
+        @store8(@ptradd(e.line, e.len), 0)
+    }
+}
+
+fn ed_kill_word(e: mut ref Editor) void = trust {
+    val end: i64 = e.pos
+    val i: mut i64 = e.pos
+    for {
+        if i <= 0 {
+            break
+        }
+        val c: u8 = @load8(@ptradd(e.line, i - 1))
+        if c != 32 && c != 9 {
+            break
+        }
+        i--
+    }
+    for {
+        if i <= 0 {
+            break
+        }
+        val c: u8 = @load8(@ptradd(e.line, i - 1))
+        if c == 32 || c == 9 {
+            break
+        }
+        i--
+    }
+    replace_range(e, i, end, c"")
+}
+
+fn replace_range(e: mut ref Editor, start: i64, end: i64, repl: ref u8) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    if start > 0 {
+        u.buf_addn(b, e.line, start)
+    }
+    u.buf_add(b, repl)
+    if end < e.len {
+        u.buf_addn(b, @ptradd(e.line, end), e.len - end)
+    }
+    val newline: ref u8 = u.buf_take(b)
+    val newpos: i64 = start + u.s_len(repl)
+    ed_set(e, newline)
+    e.pos = newpos
+}
+
+fn line_with_prefix(line: ref u8, start: i64, repl: ref u8, end: i64) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    if start > 0 {
+        u.buf_addn(b, line, start)
+    }
+    u.buf_add(b, repl)
+    val n: i64 = u.s_len(line)
+    if end < n {
+        u.buf_addn(b, @ptradd(line, end), n - end)
+    }
+    return u.buf_take(b)
+}
+
+fn display_width(line: ref u8, start: i64, end: i64) i64 = trust {
+    val i: mut i64 = start
+    val w: mut i64 = 0
+    for {
+        if i >= end {
+            break
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c == 10 || c == 13 {
+            w++
+            i++
+            continue
+        }
+        if (c & 192) != 128 {
+            w++
+        }
+        i++
+    }
+    return w
+}
+
+fn emit_display_segment(line: ref u8, start: i64, end: i64) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val i: mut i64 = start
+    for {
+        if i >= end {
+            break
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c == 10 {
+            u.buf_add(b, c"\xe2\x8f\x8e")
+        } elif c == 13 {
+            u.buf_ch(b, 32)
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+    write_s(u.buf_take(b))
+}
+
+fn prompt_last_width(prompt: ref u8) i64 = trust {
+    val n: i64 = u.s_len(prompt)
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        if @load8(@ptradd(prompt, i)) == 10 {
+            start = i + 1
+        }
+        i++
+    }
+    return u.visible_width(u.s_substr(prompt, start, n))
+}
+
+fn prompt_rows(prompt: ref u8) i64 = trust {
+    val n: i64 = u.s_len(prompt)
+    val i: mut i64 = 0
+    val r: mut i64 = 1
+    for {
+        if i >= n {
+            break
+        }
+        if @load8(@ptradd(prompt, i)) == 10 {
+            r++
+        }
+        i++
+    }
+    return r
+}
+
+fn common_prefix(items: ref u.Vec) ref u8 = trust {
+    if items.len == 0 {
+        return u.s_dup(c"")
+    }
+    val first: ref u8 = u.vec_p(items, 0) as ref u8
+    val n: i64 = u.s_len(first)
+    val upto: mut i64 = n
+    val i: mut i64 = 1
+    for {
+        if i >= items.len {
+            break
+        }
+        val s: ref u8 = u.vec_p(items, i) as ref u8
+        val m: i64 = u.s_len(s)
+        if m < upto {
+            upto = m
+        }
+        val j: mut i64 = 0
+        for {
+            if j >= upto {
+                break
+            }
+            if @load8(@ptradd(first, j)) != @load8(@ptradd(s, j)) {
+                upto = j
+                break
+            }
+            j++
+        }
+        i++
+    }
+    return u.s_substr(first, 0, upto)
+}
+
+fn draw_menu(e: ref Editor) void = trust {
+    if e.menu_active == 0 || e.menu_items == none || e.menu_items.len == 0 {
+        return
+    }
+    val total: i64 = e.menu_items.len
+    val max_show: i64 = 200
+    val shown: mut i64 = total
+    if shown > max_show {
+        shown = max_show
+    }
+    val maxw: mut i64 = 1
+    val i: mut i64 = 0
+    for {
+        if i >= shown {
+            break
+        }
+        val item: ref u8 = u.vec_p(e.menu_items, i) as ref u8
+        val w: i64 = u.visible_width(item)
+        if w > maxw {
+            maxw = w
+        }
+        i++
+    }
+    val termw: i64 = cols()
+    val colw: mut i64 = maxw + 3
+    if colw > termw {
+        colw = termw
+    }
+    val ncols: mut i64 = termw / colw
+    if ncols < 1 {
+        ncols = 1
+    }
+    if ncols > shown {
+        ncols = shown
+    }
+    val maxrows: i64 = rows() - 2
+    val nrows: mut i64 = (shown + ncols - 1) / ncols
+    if nrows > maxrows && maxrows > 0 {
+        nrows = maxrows
+        shown = nrows * ncols
+    }
+    write_s(c"\x1b7")
+    write_s(c"\n")
+    val r: mut i64 = 0
+    for {
+        if r >= nrows {
+            break
+        }
+        val cidx: mut i64 = r
+        for {
+            if cidx >= shown {
+                break
+            }
+            val item: ref u8 = u.vec_p(e.menu_items, cidx) as ref u8
+            val selected: bool = cidx == e.menu_index
+            if selected {
+                write_s(c"\x1b[7m")
+            }
+            write_s(item)
+            if selected {
+                write_s(c"\x1b[0m")
+            }
+            val pad: i64 = colw - u.visible_width(item)
+            val p: mut i64 = 0
+            for {
+                if p >= pad {
+                    break
+                }
+                write_s(c" ")
+                p++
+            }
+            cidx = cidx + nrows
+        }
+        write_s(c"\x1b[K")
+        if r + 1 < nrows {
+            write_s(c"\n")
+        }
+        r++
+    }
+    if total > shown {
+        write_s(c"\n")
+        write_s(u.s_cat(c"  ... ", u.s_cat(u.s_int(total - shown), c" more matches")))
+    }
+    write_s(c"\x1b8")
+}
+
+fn display_prompt(e: ref Editor, prompt: ref u8) ref u8 = trust {
+    if e.search_active == 0 {
+        return prompt
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"\x1b[36m(reverse-i-search)\x1b[0m `")
+    u.buf_add(b, e.search_query)
+    u.buf_add(b, c"': ")
+    return u.buf_take(b)
+}
+
+fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
+    val pr: ref u8 = display_prompt(e, prompt)
+    val rows_up: i64 = e.drawn_rows - 1
+    if e.first_draw == 0 {
+        if rows_up > 0 {
+            write_s(u.s_cat3(c"\x1b[", u.s_int(rows_up), c"A"))
+        }
+        write_s(c"\r")
+    } else {
+        e.first_draw = 0
+    }
+    write_s(pr)
+    val pwidth: i64 = prompt_last_width(pr)
+    val termw: i64 = cols()
+    val avail: mut i64 = termw - pwidth - 1
+    if avail < 10 {
+        avail = 10
+    }
+    if e.pos < e.view_start {
+        e.view_start = e.pos
+    }
+    for {
+        if display_width(e.line, e.view_start, e.pos) <= avail {
+            break
+        }
+        if e.view_start >= e.len {
+            break
+        }
+        e.view_start = u.utf8_next(e.line, e.view_start, e.len)
+    }
+    val end: mut i64 = e.view_start
+    val w: mut i64 = 0
+    for {
+        if end >= e.len {
+            break
+        }
+        val nw: i64 = display_width(e.line, end, u.utf8_next(e.line, end, e.len))
+        if w + nw > avail {
+            break
+        }
+        w = w + nw
+        end = u.utf8_next(e.line, end, e.len)
+    }
+    emit_display_segment(e.line, e.view_start, end)
+    write_s(c"\x1b[J")
+    val tail_w: i64 = display_width(e.line, e.pos, end)
+    if tail_w > 0 {
+        write_s(u.s_cat3(c"\x1b[", u.s_int(tail_w), c"D"))
+    }
+    draw_menu(e)
+    e.drawn_rows = prompt_rows(pr)
+    write_s(c"\x1b[0m")
+}
+
+fn history_recall(e: mut ref Editor, up: bool) void = trust {
+    val total: i64 = e.hist.items.len
+    if total == 0 {
+        return
+    }
+    if up {
+        if e.hist_index == total {
+            e.draft = u.s_dup(e.line)
+        }
+        if e.hist_index > 0 {
+            e.hist_index--
+            ed_set(e, u.vec_p(e.hist.items, e.hist_index) as ref u8)
+            e.pos = e.len
+        }
+    } else {
+        if e.hist_index < total - 1 {
+            e.hist_index++
+            ed_set(e, u.vec_p(e.hist.items, e.hist_index) as ref u8)
+            e.pos = e.len
+        } elif e.hist_index == total - 1 {
+            e.hist_index = total
+            ed_set(e, e.draft)
+            e.pos = e.len
+        }
+    }
+    e.menu_active = 0
+}
+
+fn search_find(e: mut ref Editor, from: i64) void = trust {
+    val idx: i64 = histmod.history_search(e.hist, e.search_query, from)
+    if idx < 0 {
+        return
+    }
+    e.search_index = idx
+    ed_set(e, u.vec_p(e.hist.items, idx) as ref u8)
+    e.pos = e.len
+}
+
+fn open_completion(e: mut ref Editor) void = trust {
+    val res: comp.CompResult = comp.complete(e.cfg, e.line, e.pos, e.vars, e.aliases)
+    if res.items.len == 0 {
+        write_s(c"\x07")
+        e.menu_active = 0
+        return
+    }
+    if res.items.len == 1 {
+        replace_range(e, res.start, res.end, u.vec_p(res.items, 0) as ref u8)
+        e.menu_active = 0
+        return
+    }
+    val word: ref u8 = u.s_substr(e.line, res.start, res.end)
+    val common: ref u8 = common_prefix(res.items)
+    val start: i64 = res.start
+    val end: mut i64 = res.end
+    if u.s_len(common) > u.s_len(word) {
+        replace_range(e, res.start, res.end, common)
+        end = start + u.s_len(common)
+    }
+    e.menu_active = 1
+    e.menu_items = res.items
+    e.menu_index = -1
+    e.menu_start = start
+    e.menu_end = end
+    e.menu_base = u.s_dup(e.line)
+}
+
+fn apply_menu_item(e: mut ref Editor) void = trust {
+    if e.menu_active == 0 || e.menu_items == none || e.menu_items.len == 0 {
+        return
+    }
+    val item: ref u8 = u.vec_p(e.menu_items, e.menu_index) as ref u8
+    val next: ref u8 = line_with_prefix(e.menu_base, e.menu_start, item, e.menu_end)
+    ed_set(e, next)
+    e.pos = e.menu_start + u.s_len(item)
+}
+
+fn menu_next(e: mut ref Editor, delta: i64) void = trust {
+    if e.menu_active == 0 || e.menu_items == none || e.menu_items.len == 0 {
+        return
+    }
+    val n: i64 = e.menu_items.len
+    val idx: mut i64 = e.menu_index + delta
+    if idx < 0 {
+        idx = n - 1
+    }
+    if idx >= n {
+        idx = 0
+    }
+    e.menu_index = idx
+    apply_menu_item(e)
+}
+
+fn read_escape(e: mut ref Editor) i64 = trust {
+    val c1: i32 = read_key()
+    if c1 < 0 {
+        return -1
+    }
+    if c1 == 91 {
+        val params: mut ref u8 = u.s_dup(c"")
+        val final: mut i32 = -1
+        for {
+            val k: i32 = read_key()
+            if k < 0 {
+                break
+            }
+            if k >= 48 && k <= 63 {
+                val cb: u8 = k as u8
+                val one: mut u8 = cb
+                params = u.s_cat(params, u.s_ndup(@addr(one), 1))
+                continue
+            }
+            final = k
+            break
+        }
+        if final == 65 {
+            history_recall(e, true)
+            return 1
+        }
+        if final == 66 {
+            history_recall(e, false)
+            return 1
+        }
+        if final == 67 {
+            if e.pos < e.len {
+                e.pos = u.utf8_next(e.line, e.pos, e.len)
+            }
+            return 1
+        }
+        if final == 68 {
+            if e.pos > 0 {
+                e.pos = u.utf8_prev(e.line, e.pos)
+            }
+            return 1
+        }
+        if final == 72 || u.s_eq(params, c"1") || u.s_eq(params, c"7") {
+            e.pos = 0
+            return 1
+        }
+        if final == 70 || u.s_eq(params, c"4") || u.s_eq(params, c"8") {
+            e.pos = e.len
+            return 1
+        }
+        if final == 90 {
+            if e.menu_active == 1 {
+                menu_next(e, -1)
+            }
+            return 1
+        }
+        if final == 126 {
+            if u.s_eq(params, c"3") {
+                ed_delete(e)
+            }
+            return 1
+        }
+        return 1
+    }
+    if c1 == 98 {
+        if e.pos > 0 {
+            e.pos = u.utf8_prev(e.line, e.pos)
+        }
+        return 1
+    }
+    if c1 == 102 {
+        if e.pos < e.len {
+            e.pos = u.utf8_next(e.line, e.pos, e.len)
+        }
+        return 1
+    }
+    return 1
+}
+
+fn handle_search_key(e: mut ref Editor, k: i32) i64 = trust {
+    if k == 3 || k == 27 {
+        e.search_active = 0
+        ed_set(e, e.search_orig)
+        return 1
+    }
+    if k == 13 || k == 10 {
+        e.search_active = 0
+        return 2
+    }
+    if k == 18 {
+        if e.search_index > 0 {
+            search_find(e, e.search_index - 1)
+        }
+        return 1
+    }
+    if k == 127 || k == 8 {
+        val n: i64 = u.s_len(e.search_query)
+        if n > 0 {
+            e.search_query = u.s_substr(e.search_query, 0, u.utf8_prev(e.search_query, n))
+            search_find(e, e.hist.items.len - 1)
+        }
+        return 1
+    }
+    if k >= 32 && k < 127 {
+        val cb: u8 = k as u8
+        val one: mut u8 = cb
+        e.search_query = u.s_cat(e.search_query, u.s_ndup(@addr(one), 1))
+        search_find(e, e.hist.items.len - 1)
+        return 1
+    }
+    return 1
+}
+
+pub fn readline(e: mut ref Editor, prompt: ref u8) ref u8 = trust {
+    raw_mode()
+    e.first_draw = 1
+    e.view_start = 0
+    draw(e, prompt)
+    for {
+        val k: i32 = read_key()
+        if k < 0 {
+            e.eof = 1
+            write_s(c"\n")
+            return none
+        }
+        if e.search_active == 1 {
+            val r: i64 = handle_search_key(e, k)
+            if r == 2 {
+                e.menu_active = 0
+                write_s(c"\n")
+                return u.s_dup(e.line)
+            }
+            draw(e, prompt)
+            continue
+        }
+        if k == 13 || k == 10 {
+            e.menu_active = 0
+            e.hist_index = e.hist.items.len
+            write_s(c"\n")
+            return u.s_dup(e.line)
+        }
+        if k == 3 {
+            e.cancelled = 1
+            e.menu_active = 0
+            write_s(c"^C\n")
+            return none
+        }
+        if k == 4 {
+            if e.len == 0 {
+                e.eof = 1
+                write_s(c"\n")
+                return none
+            }
+            ed_delete(e)
+            e.menu_active = 0
+            draw(e, prompt)
+            continue
+        }
+        if k == 1 {
+            e.pos = 0
+            e.menu_active = 0
+            draw(e, prompt)
+            continue
+        }
+        if k == 5 {
+            e.pos = e.len
+            e.menu_active = 0
+            draw(e, prompt)
+            continue
+        }
+        if k == 2 {
+            if e.pos > 0 {
+                e.pos = u.utf8_prev(e.line, e.pos)
+            }
+            e.menu_active = 0
+            draw(e, prompt)
+            continue
+        }
+        if k == 6 {
+            if e.pos < e.len {
+                e.pos = u.utf8_next(e.line, e.pos, e.len)
+            }
+            e.menu_active = 0
+            draw(e, prompt)
+            continue
+        }
+        if k == 11 {
+            ed_kill_to_end(e)
+            e.menu_active = 0
+            draw(e, prompt)
+            continue
+        }
+        if k == 21 {
+            replace_range(e, 0, e.pos, c"")
+            e.menu_active = 0
+            draw(e, prompt)
+            continue
+        }
+        if k == 23 {
+            ed_kill_word(e)
+            e.menu_active = 0
+            draw(e, prompt)
+            continue
+        }
+        if k == 12 {
+            write_s(c"\x1b[2J\x1b[H")
+            e.first_draw = 1
+            e.menu_active = 0
+            draw(e, prompt)
+            continue
+        }
+        if k == 16 {
+            history_recall(e, true)
+            draw(e, prompt)
+            continue
+        }
+        if k == 14 {
+            history_recall(e, false)
+            draw(e, prompt)
+            continue
+        }
+        if k == 18 {
+            if e.search_active == 0 {
+                e.search_orig = u.s_dup(e.line)
+                e.search_query = u.s_dup(c"")
+                e.search_index = e.hist.items.len - 1
+                e.search_active = 1
+                e.menu_active = 0
+            }
+            draw(e, prompt)
+            continue
+        }
+        if k == 9 {
+            if e.menu_active == 1 {
+                menu_next(e, 1)
+            } else {
+                open_completion(e)
+            }
+            draw(e, prompt)
+            continue
+        }
+        if k == 27 {
+            if e.menu_active == 1 {
+                e.menu_active = 0
+                draw(e, prompt)
+                continue
+            }
+            read_escape(e)
+            draw(e, prompt)
+            continue
+        }
+        if k == 127 || k == 8 {
+            e.menu_active = 0
+            ed_backspace(e)
+            draw(e, prompt)
+            continue
+        }
+        if k >= 32 && k < 127 {
+            e.menu_active = 0
+            e.hist_index = e.hist.items.len
+            ed_insert_byte(e, k as u8)
+            draw(e, prompt)
+            continue
+        }
+        if k >= 128 {
+            e.menu_active = 0
+            ed_insert_byte(e, k as u8)
+            draw(e, prompt)
+            continue
+        }
+    }
+    return none
+}
+
+/// Read one line from a non-interactive stdin (no prompts, no editing).
+pub fn read_plain() ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    for {
+        val k: i32 = read_key()
+        if k < 0 {
+            if b.len == 0 {
+                return none
+            }
+            break
+        }
+        if k == 10 {
+            break
+        }
+        if k == 13 {
+            continue
+        }
+        val c: u8 = k as u8
+        u.buf_ch(b, c)
+    }
+    return u.buf_take(b)
+}

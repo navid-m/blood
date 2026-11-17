@@ -1,0 +1,1472 @@
+/// Lexer, AST and parser for the Blood scripting language.
+
+val u = use("util.sx")
+
+pub enum TokenKind = {
+    Eof
+    Newline
+    Indent
+    Dedent
+    Ident
+    Int
+    Float
+    Str
+    Op
+    CmdSubst
+}
+
+pub type Token = {
+    kind: mut TokenKind
+    text: mut ref u8
+    line: mut i64
+    col: mut i64
+    start: mut i64
+    end: mut i64
+}
+
+pub enum NodeKind = {
+    Program
+    Block
+    Say
+    ExprStmt
+    Assign
+    If
+    While
+    For
+    FnDef
+    Return
+    Break
+    Continue
+    Pass
+    Try
+    Raise
+    ShellCmd
+    IntLit
+    FloatLit
+    StrLit
+    BoolLit
+    NullLit
+    Var
+    ListLit
+    DictLit
+    Unary
+    Binary
+    Call
+    Index
+    Attr
+    CmdSubst
+}
+
+pub enum BinOp = {
+    Add
+    Sub
+    Mul
+    Div
+    Mod
+    Eq
+    Ne
+    Lt
+    Gt
+    Le
+    Ge
+    In
+    NotIn
+}
+
+pub enum UnOp = {
+    Neg
+    Not
+}
+
+pub type Node = {
+    kind: mut NodeKind
+    a: mut i64
+    b: mut i64
+    s: mut ref u8
+    kids: mut ref u.Vec
+    params: mut ref u.Vec
+    line: mut i64
+    col: mut i64
+}
+
+pub type Lexer = {
+    src: mut ref u8
+    len: mut i64
+    pos: mut i64
+    line: mut i64
+    col: mut i64
+    tokens: mut ref u.Vec
+    indents: mut ref u.Vec
+    line_start: mut i64
+    depth: mut i64
+}
+
+pub type Parser = {
+    toks: mut ref u.Vec
+    src: mut ref u8
+    i: mut i64
+}
+
+val g_error: mut ref u8 = none
+val g_error_line: mut i64 = 0
+val g_error_col: mut i64 = 0
+
+pub fn last_error() ref u8 = trust {
+    return g_error
+}
+
+pub fn last_error_line() i64 = trust {
+    return g_error_line
+}
+
+pub fn last_error_col() i64 = trust {
+    return g_error_col
+}
+
+fn set_error(line: i64, col: i64, msg: ref u8) void = trust {
+    if g_error != none {
+        return
+    }
+    g_error = u.s_dup(msg)
+    g_error_line = line
+    g_error_col = col
+}
+
+pub fn clear_error() void = trust {
+    g_error = none
+    g_error_line = 0
+    g_error_col = 0
+}
+
+fn tok_new(kind: TokenKind, text: ref u8, line: i64, col: i64, start: i64, end: i64) ref Token = trust {
+    val t: mut ref Token = @alloc(@sizeof(Token)) as ref Token
+    t.kind = kind
+    t.text = text
+    t.line = line
+    t.col = col
+    t.start = start
+    t.end = end
+    return t
+}
+
+fn last_kind(lx: ref Lexer) TokenKind = trust {
+    if lx.tokens.len == 0 {
+        return TokenKind.Eof
+    }
+    val t: ref Token = u.vec_p(lx.tokens, lx.tokens.len - 1) as ref Token
+    return t.kind
+}
+
+fn emit(lx: mut ref Lexer, kind: TokenKind, text: ref u8, start: i64, end: i64, line: i64, col: i64) void = trust {
+    u.vec_pushp(lx.tokens, tok_new(kind, text, line, col, start, end) as ref void)
+}
+
+fn emit_indent(lx: mut ref Lexer, kind: TokenKind) void = trust {
+    val t: ref Token = tok_new(kind, u.s_dup(c""), lx.line, 1, lx.pos, lx.pos)
+    u.vec_pushp(lx.tokens, t as ref void)
+}
+
+pub fn lex(src: ref u8) ref u.Vec = trust {
+    val lx: mut ref Lexer = @alloc(@sizeof(Lexer)) as ref Lexer
+    lx.src = src
+    lx.len = u.s_len(src)
+    lx.pos = 0
+    lx.line = 1
+    lx.col = 1
+    lx.tokens = u.vec_new()
+    lx.indents = u.vec_new()
+    u.vec_push(lx.indents, 0)
+    lx.line_start = 1
+    lx.depth = 0
+    val at_line_start: mut bool = true
+    for {
+        if lx.pos >= lx.len {
+            break
+        }
+        if at_line_start && lx.depth == 0 {
+            val width: i64 = measure_indent(lx)
+            if is_blank_line(lx) {
+                skip_blank(lx)
+                at_line_start = true
+                continue
+            }
+            val top: i64 = u.vec_gets(lx.indents, lx.indents.len - 1)
+            if width > top {
+                u.vec_push(lx.indents, width)
+                emit_indent(lx, TokenKind.Indent)
+            } else {
+                for {
+                    val cur: i64 = u.vec_gets(lx.indents, lx.indents.len - 1)
+                    if cur <= width {
+                        break
+                    }
+                    emit_indent(lx, TokenKind.Dedent)
+                    u.vec_pop(lx.indents)
+                }
+            }
+            at_line_start = false
+        }
+        if lx.pos >= lx.len {
+            break
+        }
+        val c: u8 = @load8(@ptradd(lx.src, lx.pos))
+        if c == 32 || c == 9 {
+            lx.pos++
+            lx.col++
+            continue
+        }
+        if c == 35 {
+            for {
+                if lx.pos >= lx.len {
+                    break
+                }
+                if @load8(@ptradd(lx.src, lx.pos)) == 10 {
+                    break
+                }
+                lx.pos++
+                lx.col++
+            }
+            continue
+        }
+        if c == 10 {
+            if lx.depth == 0 {
+                if last_kind(lx) != TokenKind.Newline && last_kind(lx) != TokenKind.Indent {
+                    emit(lx, TokenKind.Newline, u.s_dup(c"\n"), lx.pos, lx.pos + 1, lx.line, lx.col)
+                }
+            }
+            lx.pos++
+            lx.line++
+            lx.col = 1
+            at_line_start = true
+            continue
+        }
+        if c == 13 {
+            lx.pos++
+            lx.col++
+            continue
+        }
+        if is_alpha(c) {
+            val start: i64 = lx.pos
+            val sline: i64 = lx.line
+            val scol: i64 = lx.col
+            for {
+                if lx.pos >= lx.len {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(lx.src, lx.pos))
+                if !is_alnum(d) {
+                    break
+                }
+                lx.pos++
+                lx.col++
+            }
+            emit(lx, TokenKind.Ident, u.s_ndup(@ptradd(lx.src, start), lx.pos - start), start, lx.pos, sline, scol)
+            continue
+        }
+        if c >= 48 && c <= 57 {
+            val start: i64 = lx.pos
+            val sline: i64 = lx.line
+            val scol: i64 = lx.col
+            val is_float: mut bool = false
+            for {
+                if lx.pos >= lx.len {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(lx.src, lx.pos))
+                if d < 48 || d > 57 {
+                    break
+                }
+                lx.pos++
+                lx.col++
+            }
+            if lx.pos < lx.len && @load8(@ptradd(lx.src, lx.pos)) == 46 {
+                val nexti: i64 = lx.pos + 1
+                if nexti < lx.len {
+                    val d: u8 = @load8(@ptradd(lx.src, nexti))
+                    if d >= 48 && d <= 57 {
+                        is_float = true
+                        lx.pos++
+                        lx.col++
+                        for {
+                            if lx.pos >= lx.len {
+                                break
+                            }
+                            val e: u8 = @load8(@ptradd(lx.src, lx.pos))
+                            if e < 48 || e > 57 {
+                                break
+                            }
+                            lx.pos++
+                            lx.col++
+                        }
+                    }
+                }
+            }
+            if lx.pos < lx.len {
+                val e: u8 = @load8(@ptradd(lx.src, lx.pos))
+                if e == 101 || e == 69 {
+                    val save: i64 = lx.pos
+                    val savec: i64 = lx.col
+                    lx.pos++
+                    lx.col++
+                    if lx.pos < lx.len {
+                        val sign: u8 = @load8(@ptradd(lx.src, lx.pos))
+                        if sign == 43 || sign == 45 {
+                            lx.pos++
+                            lx.col++
+                        }
+                    }
+                    val have_digit: mut bool = false
+                    for {
+                        if lx.pos >= lx.len {
+                            break
+                        }
+                        val d: u8 = @load8(@ptradd(lx.src, lx.pos))
+                        if d < 48 || d > 57 {
+                            break
+                        }
+                        have_digit = true
+                        lx.pos++
+                        lx.col++
+                    }
+                    if have_digit {
+                        is_float = true
+                    } else {
+                        lx.pos = save
+                        lx.col = savec
+                    }
+                }
+            }
+            val text: ref u8 = u.s_ndup(@ptradd(lx.src, start), lx.pos - start)
+            if is_float {
+                emit(lx, TokenKind.Float, text, start, lx.pos, sline, scol)
+            } else {
+                emit(lx, TokenKind.Int, text, start, lx.pos, sline, scol)
+            }
+            continue
+        }
+        if c == 34 || c == 39 {
+            val start: i64 = lx.pos
+            val quote: u8 = c
+            val sline: i64 = lx.line
+            val scol: i64 = lx.col
+            lx.pos++
+            lx.col++
+            val b: mut ref u.Buf = u.buf_new()
+            val closed: mut bool = false
+            for {
+                if lx.pos >= lx.len {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(lx.src, lx.pos))
+                if d == quote {
+                    lx.pos++
+                    lx.col++
+                    closed = true
+                    break
+                }
+                if d == 92 {
+                    lx.pos++
+                    lx.col++
+                    if lx.pos >= lx.len {
+                        break
+                    }
+                    val e: u8 = @load8(@ptradd(lx.src, lx.pos))
+                    lx.pos++
+                    lx.col++
+                    if e == 110 {
+                        u.buf_ch(b, 10)
+                    } elif e == 116 {
+                        u.buf_ch(b, 9)
+                    } elif e == 114 {
+                        u.buf_ch(b, 13)
+                    } elif e == 48 {
+                        u.buf_ch(b, 0)
+                    } elif e == 120 {
+                        val h1: i64 = hex_at(lx.src, lx.pos)
+                        val h2: i64 = hex_at(lx.src, lx.pos + 1)
+                        if h1 >= 0 && h2 >= 0 {
+                            u.buf_ch(b, (h1 * 16 + h2) as u8)
+                            lx.pos = lx.pos + 2
+                            lx.col = lx.col + 2
+                        }
+                    } else {
+                        u.buf_ch(b, e)
+                    }
+                    continue
+                }
+                u.buf_ch(b, d)
+                lx.pos++
+                lx.col++
+            }
+            if !closed {
+                set_error(sline, scol, c"unterminated string")
+            }
+            emit(lx, TokenKind.Str, u.buf_take(b), start, lx.pos, sline, scol)
+            continue
+        }
+        if c == 96 {
+            val sline: i64 = lx.line
+            val scol: i64 = lx.col
+            lx.pos++
+            lx.col++
+            val start: i64 = lx.pos
+            val closed: mut bool = false
+            for {
+                if lx.pos >= lx.len {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(lx.src, lx.pos))
+                if d == 96 {
+                    closed = true
+                    break
+                }
+                lx.pos++
+                lx.col++
+            }
+            val text: ref u8 = u.s_ndup(@ptradd(lx.src, start), lx.pos - start)
+            if closed {
+                lx.pos++
+                lx.col++
+            } else {
+                set_error(sline, scol, c"unterminated command substitution")
+            }
+            emit(lx, TokenKind.CmdSubst, text, start, lx.pos, sline, scol)
+            continue
+        }
+        if c == 36 && lx.pos + 1 < lx.len && @load8(@ptradd(lx.src, lx.pos + 1)) == 40 {
+            val sline: i64 = lx.line
+            val scol: i64 = lx.col
+            lx.pos = lx.pos + 2
+            lx.col = lx.col + 2
+            val start: i64 = lx.pos
+            val depth: mut i64 = 1
+            for {
+                if lx.pos >= lx.len {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(lx.src, lx.pos))
+                if d == 40 {
+                    depth++
+                } elif d == 41 {
+                    depth--
+                    if depth == 0 {
+                        break
+                    }
+                }
+                lx.pos++
+                lx.col++
+            }
+            val text: ref u8 = u.s_ndup(@ptradd(lx.src, start), lx.pos - start)
+            if lx.pos < lx.len {
+                lx.pos++
+                lx.col++
+            } else {
+                set_error(sline, scol, c"unterminated command substitution")
+            }
+            emit(lx, TokenKind.CmdSubst, text, start, lx.pos, sline, scol)
+            continue
+        }
+        val sline: i64 = lx.line
+        val scol: i64 = lx.col
+        val start: i64 = lx.pos
+        val two: mut ref u8 = c""
+        if lx.pos + 1 < lx.len {
+            val d: u8 = @load8(@ptradd(lx.src, lx.pos + 1))
+            if (c == 61 && d == 61) || (c == 33 && d == 61) || (c == 60 && d == 61) || (c == 62 && d == 61) || (c == 43 && d == 61) || (c == 45 && d == 61) || (c == 42 && d == 61) || (c == 47 && d == 61) || (c == 42 && d == 42) {
+                two = u.s_ndup(@ptradd(lx.src, lx.pos), 2)
+                lx.pos = lx.pos + 2
+                lx.col = lx.col + 2
+                emit(lx, TokenKind.Op, two, start, lx.pos, sline, scol)
+                continue
+            }
+        }
+        if c == 40 || c == 91 || c == 123 {
+            lx.depth = lx.depth + 1
+        } elif c == 41 || c == 93 || c == 125 {
+            if lx.depth > 0 {
+                lx.depth = lx.depth - 1
+            }
+        }
+        lx.pos++
+        lx.col++
+        emit(lx, TokenKind.Op, u.s_ndup(@ptradd(lx.src, start), 1), start, lx.pos, sline, scol)
+    }
+    if !at_line_start && lx.depth == 0 {
+        emit(lx, TokenKind.Newline, u.s_dup(c"\n"), lx.pos, lx.pos, lx.line, lx.col)
+    }
+    for {
+        if lx.indents.len <= 1 {
+            break
+        }
+        emit_indent(lx, TokenKind.Dedent)
+        u.vec_pop(lx.indents)
+    }
+    emit(lx, TokenKind.Eof, u.s_dup(c""), lx.pos, lx.pos, lx.line, lx.col)
+    return lx.tokens
+}
+
+fn measure_indent(lx: ref Lexer) i64 = trust {
+    val save: i64 = lx.pos
+    val width: mut i64 = 0
+    val i: mut i64 = save
+    for {
+        if i >= lx.len {
+            break
+        }
+        val c: u8 = @load8(@ptradd(lx.src, i))
+        if c == 32 {
+            width++
+            i++
+        } elif c == 9 {
+            width = width + 4
+            i++
+        } else {
+            break
+        }
+    }
+    return width
+}
+
+fn is_blank_line(lx: ref Lexer) bool = trust {
+    val i: mut i64 = lx.pos
+    for {
+        if i >= lx.len {
+            return true
+        }
+        val c: u8 = @load8(@ptradd(lx.src, i))
+        if c == 32 || c == 9 || c == 13 {
+            i++
+            continue
+        }
+        if c == 10 {
+            return true
+        }
+        if c == 35 {
+            return true
+        }
+        return false
+    }
+    return true
+}
+
+fn skip_blank(lx: mut ref Lexer) void = trust {
+    for {
+        if lx.pos >= lx.len {
+            break
+        }
+        val c: u8 = @load8(@ptradd(lx.src, lx.pos))
+        if c == 10 {
+            lx.pos++
+            lx.line++
+            lx.col = 1
+            break
+        }
+        if c == 0 {
+            break
+        }
+        lx.pos++
+        lx.col++
+    }
+}
+
+fn is_alpha(c: u8) bool = trust {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn is_alnum(c: u8) bool = trust {
+    return is_alpha(c) || (c >= 48 && c <= 57)
+}
+
+fn hex_at(s: ref u8, i: i64) i64 = trust {
+    if i >= u.s_len(s) {
+        return -1
+    }
+    val c: u8 = @load8(@ptradd(s, i))
+    if c >= 48 && c <= 57 {
+        return (c - 48) as i64
+    }
+    if c >= 97 && c <= 102 {
+        return (c - 87) as i64
+    }
+    if c >= 65 && c <= 70 {
+        return (c - 55) as i64
+    }
+    return -1
+}
+
+fn node_new(kind: NodeKind, line: i64, col: i64) ref Node = trust {
+    val n: mut ref Node = @alloc(@sizeof(Node)) as ref Node
+    n.kind = kind
+    n.a = 0
+    n.b = 0
+    n.s = none
+    n.kids = u.vec_new()
+    n.params = u.vec_new()
+    n.line = line
+    n.col = col
+    return n
+}
+
+fn cur(p: ref Parser) ref Token = trust {
+    return u.vec_p(p.toks, p.i) as ref Token
+}
+
+fn peek(p: ref Parser, off: i64) ref Token = trust {
+    val j: i64 = p.i + off
+    if j >= p.toks.len {
+        return u.vec_p(p.toks, p.toks.len - 1) as ref Token
+    }
+    return u.vec_p(p.toks, j) as ref Token
+}
+
+fn advance(p: mut ref Parser) void = trust {
+    if p.i + 1 < p.toks.len {
+        p.i++
+    }
+}
+
+fn text_is(t: ref Token, text: ref u8) bool = trust {
+    return u.s_eq(t.text, text)
+}
+
+fn expect_op(p: mut ref Parser, text: ref u8) bool = trust {
+    val t: ref Token = cur(p)
+    if u.s_eq(t.text, text) {
+        advance(p)
+        return true
+    }
+    set_error(t.line, t.col, u.s_cat3(c"expected '", text, c"'"))
+    return false
+}
+
+fn skip_newlines(p: mut ref Parser) void = trust {
+    for {
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+            continue
+        }
+        break
+    }
+}
+
+fn parse_suite(p: mut ref Parser, line: i64, col: i64) ref Node = trust {
+    val block: mut ref Node = node_new(NodeKind.Block, line, col)
+    if !expect_op(p, c":") {
+        return block
+    }
+    if cur(p).kind == TokenKind.Newline {
+        advance(p)
+        if cur(p).kind == TokenKind.Indent {
+            advance(p)
+        } else {
+            set_error(cur(p).line, cur(p).col, c"expected an indented block")
+            return block
+        }
+        for {
+            skip_newlines(p)
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c";") {
+                advance(p)
+                continue
+            }
+            if cur(p).kind == TokenKind.Dedent || cur(p).kind == TokenKind.Eof {
+                break
+            }
+            val s: ref Node = parse_statement(p)
+            if s != none {
+                u.vec_pushp(block.kids, s as ref void)
+            }
+            if cur(p).kind == TokenKind.Dedent || cur(p).kind == TokenKind.Eof {
+                break
+            }
+        }
+        if cur(p).kind == TokenKind.Dedent {
+            advance(p)
+        }
+        return block
+    }
+    for {
+        if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof {
+            break
+        }
+        val s: ref Node = parse_statement(p)
+        if s != none {
+            u.vec_pushp(block.kids, s as ref void)
+        }
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c";") {
+            advance(p)
+            continue
+        }
+        break
+    }
+    if cur(p).kind == TokenKind.Newline {
+        advance(p)
+    }
+    return block
+}
+
+fn keyword(t: ref Token, word: ref u8) bool = trust {
+    return t.kind == TokenKind.Ident && u.s_eq(t.text, word)
+}
+
+fn is_compound(t: ref Token) bool = trust {
+    if t.kind != TokenKind.Ident {
+        return false
+    }
+    return keyword(t, c"if") || keyword(t, c"while") || keyword(t, c"for") || keyword(t, c"fn") || keyword(t, c"try")
+}
+
+fn parse_shell_cmd(p: mut ref Parser, t: ref Token) ref Node = trust {
+    val n: mut ref Node = node_new(NodeKind.ShellCmd, t.line, t.col)
+    n.s = line_slice(p, t.start)
+    for {
+        if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent {
+            break
+        }
+        advance(p)
+    }
+    if cur(p).kind == TokenKind.Newline {
+        advance(p)
+    }
+    return n
+}
+
+fn parse_statement(p: mut ref Parser) ref Node = trust {
+    skip_newlines(p)
+    val t: ref Token = cur(p)
+    if t.kind == TokenKind.Eof || t.kind == TokenKind.Dedent {
+        return none
+    }
+    if t.kind == TokenKind.Op && (u.s_eq(t.text, c"/") || u.s_eq(t.text, c".") || u.s_eq(t.text, c"~")) {
+        return parse_shell_cmd(p, t)
+    }
+    if keyword(t, c"if") {
+        return parse_if(p)
+    }
+    if keyword(t, c"while") {
+        return parse_while(p)
+    }
+    if keyword(t, c"for") {
+        return parse_for(p)
+    }
+    if keyword(t, c"fn") {
+        return parse_fn(p)
+    }
+    if keyword(t, c"try") {
+        return parse_try(p)
+    }
+    return parse_simple(p)
+}
+
+fn parse_if(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    val n: mut ref Node = node_new(NodeKind.If, t.line, t.col)
+    advance(p)
+    val cond: ref Node = parse_expr(p)
+    u.vec_pushp(n.kids, cond as ref void)
+    u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
+    n.a = 1
+    for {
+        if keyword(cur(p), c"elif") {
+            val et: ref Token = cur(p)
+            advance(p)
+            val cnd: ref Node = parse_expr(p)
+            u.vec_pushp(n.kids, cnd as ref void)
+            u.vec_pushp(n.kids, parse_suite(p, et.line, et.col) as ref void)
+            n.a = n.a + 1
+            continue
+        }
+        break
+    }
+    if keyword(cur(p), c"else") {
+        val et: ref Token = cur(p)
+        advance(p)
+        u.vec_pushp(n.kids, parse_suite(p, et.line, et.col) as ref void)
+        n.b = 1
+    }
+    return n
+}
+
+fn parse_while(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    val n: mut ref Node = node_new(NodeKind.While, t.line, t.col)
+    advance(p)
+    val cond: ref Node = parse_expr(p)
+    u.vec_pushp(n.kids, cond as ref void)
+    u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
+    return n
+}
+
+fn parse_for(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    val n: mut ref Node = node_new(NodeKind.For, t.line, t.col)
+    advance(p)
+    val var: ref Token = cur(p)
+    if var.kind != TokenKind.Ident {
+        set_error(var.line, var.col, c"expected a loop variable")
+        return n
+    }
+    n.s = u.s_dup(var.text)
+    advance(p)
+    if keyword(cur(p), c"in") {
+        advance(p)
+    } else {
+        set_error(cur(p).line, cur(p).col, c"expected 'in'")
+    }
+    val iter: ref Node = parse_expr(p)
+    u.vec_pushp(n.kids, iter as ref void)
+    u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
+    return n
+}
+
+fn parse_fn(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    val n: mut ref Node = node_new(NodeKind.FnDef, t.line, t.col)
+    advance(p)
+    val name: ref Token = cur(p)
+    if name.kind != TokenKind.Ident {
+        set_error(name.line, name.col, c"expected a function name")
+        return n
+    }
+    n.s = u.s_dup(name.text)
+    advance(p)
+    if !expect_op(p, c"(") {
+        return n
+    }
+    for {
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c")") {
+            break
+        }
+        val pt: ref Token = cur(p)
+        if pt.kind != TokenKind.Ident {
+            set_error(pt.line, pt.col, c"expected a parameter name")
+            break
+        }
+        u.vec_pushp(n.params, u.s_dup(pt.text) as ref void)
+        advance(p)
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c":") {
+            advance(p)
+            for {
+                if cur(p).kind == TokenKind.Op && (text_is(cur(p), c",") || text_is(cur(p), c")")) {
+                    break
+                }
+                advance(p)
+            }
+        }
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+            advance(p)
+            continue
+        }
+        break
+    }
+    if !expect_op(p, c")") {
+        return n
+    }
+    val body: ref Node = parse_suite(p, t.line, t.col)
+    u.vec_pushp(n.kids, body as ref void)
+    return n
+}
+
+fn parse_try(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    val n: mut ref Node = node_new(NodeKind.Try, t.line, t.col)
+    advance(p)
+    u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
+    skip_newlines(p)
+    if keyword(cur(p), c"catch") || keyword(cur(p), c"except") {
+        advance(p)
+        if cur(p).kind == TokenKind.Ident {
+            n.s = u.s_dup(cur(p).text)
+            advance(p)
+        }
+        val ct: ref Token = cur(p)
+        u.vec_pushp(n.kids, parse_suite(p, ct.line, ct.col) as ref void)
+    } else {
+        set_error(t.line, t.col, c"expected 'catch' after try block")
+    }
+    return n
+}
+
+fn is_assign_op(t: ref Token) i64 = trust {
+    if t.kind != TokenKind.Op {
+        return 0
+    }
+    if u.s_eq(t.text, c"=") {
+        return 1
+    }
+    if u.s_eq(t.text, c"+=") {
+        return 2
+    }
+    if u.s_eq(t.text, c"-=") {
+        return 3
+    }
+    if u.s_eq(t.text, c"*=") {
+        return 4
+    }
+    if u.s_eq(t.text, c"/=") {
+        return 5
+    }
+    return 0
+}
+
+fn starts_shell(p: ref Parser) bool = trust {
+    val a: ref Token = cur(p)
+    val b: ref Token = peek(p, 1)
+    if a.kind != TokenKind.Ident {
+        return false
+    }
+    if is_compound(a) || keyword(a, c"say") || keyword(a, c"return") || keyword(a, c"break") || keyword(a, c"continue") || keyword(a, c"pass") || keyword(a, c"raise") {
+        return false
+    }
+    if b.kind == TokenKind.Eof || b.kind == TokenKind.Newline || b.kind == TokenKind.Dedent {
+        return true
+    }
+    if b.kind == TokenKind.Op {
+        if u.s_eq(b.text, c"(") || u.s_eq(b.text, c"[") || u.s_eq(b.text, c".") {
+            return false
+        }
+        if u.s_eq(b.text, c"=") || u.s_eq(b.text, c"+=") || u.s_eq(b.text, c"-=") || u.s_eq(b.text, c"*=") || u.s_eq(b.text, c"/=") {
+            return false
+        }
+        if u.s_eq(b.text, c"+") || u.s_eq(b.text, c"*") || u.s_eq(b.text, c"/") || u.s_eq(b.text, c"%") {
+            return false
+        }
+        if u.s_eq(b.text, c"==") || u.s_eq(b.text, c"!=") || u.s_eq(b.text, c"<") || u.s_eq(b.text, c">") || u.s_eq(b.text, c"<=") || u.s_eq(b.text, c">=") || u.s_eq(b.text, c"**") {
+            return false
+        }
+        if u.s_eq(b.text, c"-") {
+            val c: ref Token = peek(p, 2)
+            if c.kind == TokenKind.Int || c.kind == TokenKind.Float || c.kind == TokenKind.Str || c.kind == TokenKind.Op {
+                return false
+            }
+        }
+        if u.s_eq(b.text, c")") || u.s_eq(b.text, c",") || u.s_eq(b.text, c":") {
+            return false
+        }
+        return true
+    }
+    if b.kind == TokenKind.Ident {
+        if keyword(b, c"and") || keyword(b, c"or") || keyword(b, c"in") || keyword(b, c"not") {
+            return false
+        }
+        return true
+    }
+    if b.kind == TokenKind.Int || b.kind == TokenKind.Float || b.kind == TokenKind.Str || b.kind == TokenKind.CmdSubst {
+        return true
+    }
+    return false
+}
+
+fn line_slice(p: ref Parser, start: i64) ref u8 = trust {
+    val n: i64 = u.s_len(p.src)
+    val end: mut i64 = start
+    for {
+        if end >= n {
+            break
+        }
+        if @load8(@ptradd(p.src, end)) == 10 {
+            break
+        }
+        end++
+    }
+    return u.s_trim(u.s_substr(p.src, start, end))
+}
+
+fn parse_simple(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    if keyword(t, c"say") {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Say, t.line, t.col)
+        for {
+            if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent {
+                break
+            }
+            val e: ref Node = parse_expr(p)
+            u.vec_pushp(n.kids, e as ref void)
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+                advance(p)
+                continue
+            }
+            break
+        }
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+        return n
+    }
+    if keyword(t, c"return") {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Return, t.line, t.col)
+        if cur(p).kind != TokenKind.Newline && cur(p).kind != TokenKind.Eof && cur(p).kind != TokenKind.Dedent {
+            val e: ref Node = parse_expr(p)
+            u.vec_pushp(n.kids, e as ref void)
+        }
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+        return n
+    }
+    if keyword(t, c"break") {
+        advance(p)
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+        return node_new(NodeKind.Break, t.line, t.col)
+    }
+    if keyword(t, c"continue") {
+        advance(p)
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+        return node_new(NodeKind.Continue, t.line, t.col)
+    }
+    if keyword(t, c"pass") {
+        advance(p)
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+        return node_new(NodeKind.Pass, t.line, t.col)
+    }
+    if keyword(t, c"raise") || keyword(t, c"throw") {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Raise, t.line, t.col)
+        if cur(p).kind != TokenKind.Newline && cur(p).kind != TokenKind.Eof {
+            u.vec_pushp(n.kids, parse_expr(p) as ref void)
+        }
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+        return n
+    }
+    if starts_shell(p) {
+        val n: mut ref Node = node_new(NodeKind.ShellCmd, t.line, t.col)
+        n.s = line_slice(p, t.start)
+        for {
+            if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent {
+                break
+            }
+            advance(p)
+        }
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+        return n
+    }
+    val lhs: ref Node = parse_expr(p)
+    val op: i64 = is_assign_op(cur(p))
+    if op != 0 {
+        advance(p)
+        val rhs: ref Node = parse_expr(p)
+        val n: mut ref Node = node_new(NodeKind.Assign, lhs.line, lhs.col)
+        n.a = op
+        u.vec_pushp(n.kids, lhs as ref void)
+        u.vec_pushp(n.kids, rhs as ref void)
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+        return n
+    }
+    val n: mut ref Node = node_new(NodeKind.ExprStmt, lhs.line, lhs.col)
+    u.vec_pushp(n.kids, lhs as ref void)
+    if cur(p).kind == TokenKind.Newline {
+        advance(p)
+    }
+    return n
+}
+
+fn parse_expr(p: mut ref Parser) ref Node = trust {
+    return parse_or(p)
+}
+
+fn parse_or(p: mut ref Parser) ref Node = trust {
+    val left: mut ref Node = parse_and(p)
+    if keyword(cur(p), c"or") {
+        val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
+        n.a = 100
+        u.vec_pushp(n.kids, left as ref void)
+        advance(p)
+        u.vec_pushp(n.kids, parse_or(p) as ref void)
+        return n
+    }
+    return left
+}
+
+fn parse_and(p: mut ref Parser) ref Node = trust {
+    val left: mut ref Node = parse_not(p)
+    if keyword(cur(p), c"and") {
+        val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
+        n.a = 101
+        u.vec_pushp(n.kids, left as ref void)
+        advance(p)
+        u.vec_pushp(n.kids, parse_and(p) as ref void)
+        return n
+    }
+    return left
+}
+
+fn parse_not(p: mut ref Parser) ref Node = trust {
+    if keyword(cur(p), c"not") {
+        val t: ref Token = cur(p)
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Unary, t.line, t.col)
+        n.a = UnOp.Not as i64
+        u.vec_pushp(n.kids, parse_not(p) as ref void)
+        return n
+    }
+    return parse_compare(p)
+}
+
+fn parse_compare(p: mut ref Parser) ref Node = trust {
+    val left: mut ref Node = parse_add(p)
+    if cur(p).kind == TokenKind.Ident && u.s_eq(cur(p).text, c"in") {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
+        n.a = BinOp.In as i64
+        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, parse_add(p) as ref void)
+        return n
+    }
+    if cur(p).kind == TokenKind.Ident && u.s_eq(cur(p).text, c"not") && keyword(peek(p, 1), c"in") {
+        advance(p)
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
+        n.a = BinOp.NotIn as i64
+        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, parse_add(p) as ref void)
+        return n
+    }
+    if cur(p).kind == TokenKind.Op {
+        val op: i64 = cmp_op(cur(p).text)
+        if op != 0 {
+            advance(p)
+            val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
+            n.a = op
+            u.vec_pushp(n.kids, left as ref void)
+            u.vec_pushp(n.kids, parse_add(p) as ref void)
+            return n
+        }
+    }
+    return left
+}
+
+fn cmp_op(text: ref u8) i64 = trust {
+    if u.s_eq(text, c"==") {
+        return BinOp.Eq as i64
+    }
+    if u.s_eq(text, c"!=") {
+        return BinOp.Ne as i64
+    }
+    if u.s_eq(text, c"<") {
+        return BinOp.Lt as i64
+    }
+    if u.s_eq(text, c">") {
+        return BinOp.Gt as i64
+    }
+    if u.s_eq(text, c"<=") {
+        return BinOp.Le as i64
+    }
+    if u.s_eq(text, c">=") {
+        return BinOp.Ge as i64
+    }
+    return 0
+}
+
+fn parse_add(p: mut ref Parser) ref Node = trust {
+    val left: mut ref Node = parse_mul(p)
+    for {
+        if cur(p).kind != TokenKind.Op {
+            break
+        }
+        val t: ref Token = cur(p)
+        val op: mut i64 = 0
+        if u.s_eq(t.text, c"+") {
+            op = BinOp.Add as i64
+        } elif u.s_eq(t.text, c"-") {
+            op = BinOp.Sub as i64
+        } else {
+            break
+        }
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Binary, t.line, t.col)
+        n.a = op
+        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, parse_mul(p) as ref void)
+        left = n
+    }
+    return left
+}
+
+fn parse_mul(p: mut ref Parser) ref Node = trust {
+    val left: mut ref Node = parse_unary(p)
+    for {
+        if cur(p).kind != TokenKind.Op {
+            break
+        }
+        val t: ref Token = cur(p)
+        val op: mut i64 = 0
+        if u.s_eq(t.text, c"*") {
+            op = BinOp.Mul as i64
+        } elif u.s_eq(t.text, c"/") {
+            op = BinOp.Div as i64
+        } elif u.s_eq(t.text, c"%") {
+            op = BinOp.Mod as i64
+        } else {
+            break
+        }
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Binary, t.line, t.col)
+        n.a = op
+        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, parse_unary(p) as ref void)
+        left = n
+    }
+    return left
+}
+
+fn parse_unary(p: mut ref Parser) ref Node = trust {
+    if cur(p).kind == TokenKind.Op && u.s_eq(cur(p).text, c"-") {
+        val t: ref Token = cur(p)
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Unary, t.line, t.col)
+        n.a = UnOp.Neg as i64
+        u.vec_pushp(n.kids, parse_unary(p) as ref void)
+        return n
+    }
+    if cur(p).kind == TokenKind.Op && u.s_eq(cur(p).text, c"+") {
+        advance(p)
+        return parse_unary(p)
+    }
+    return parse_postfix(p)
+}
+
+fn parse_postfix(p: mut ref Parser) ref Node = trust {
+    val primary: ref Node = parse_primary(p)
+    val node: mut ref Node = primary
+    for {
+        if cur(p).kind != TokenKind.Op {
+            break
+        }
+        val t: ref Token = cur(p)
+        if u.s_eq(t.text, c"(") {
+            advance(p)
+            val call: mut ref Node = node_new(NodeKind.Call, t.line, t.col)
+            u.vec_pushp(call.kids, node as ref void)
+            for {
+                if cur(p).kind == TokenKind.Op && text_is(cur(p), c")") {
+                    break
+                }
+                if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof {
+                    break
+                }
+                u.vec_pushp(call.kids, parse_expr(p) as ref void)
+                if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+                    advance(p)
+                    continue
+                }
+                break
+            }
+            if !expect_op(p, c")") {
+                return call
+            }
+            node = call
+            continue
+        }
+        if u.s_eq(t.text, c"[") {
+            advance(p)
+            val idx: mut ref Node = node_new(NodeKind.Index, t.line, t.col)
+            u.vec_pushp(idx.kids, node as ref void)
+            u.vec_pushp(idx.kids, parse_expr(p) as ref void)
+            if !expect_op(p, c"]") {
+                return idx
+            }
+            node = idx
+            continue
+        }
+        if u.s_eq(t.text, c".") {
+            advance(p)
+            val attr: mut ref Node = node_new(NodeKind.Attr, t.line, t.col)
+            u.vec_pushp(attr.kids, node as ref void)
+            if cur(p).kind != TokenKind.Ident {
+                set_error(cur(p).line, cur(p).col, c"expected an attribute name")
+                return attr
+            }
+            attr.s = u.s_dup(cur(p).text)
+            advance(p)
+            node = attr
+            continue
+        }
+        break
+    }
+    return node
+}
+
+fn parse_primary(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    if t.kind == TokenKind.Int {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.IntLit, t.line, t.col)
+        match u.parse_int(t.text) {
+            some v => {
+                n.a = v
+            }
+            none => {
+                set_error(t.line, t.col, c"invalid integer literal")
+            }
+        }
+        return n
+    }
+    if t.kind == TokenKind.Float {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.FloatLit, t.line, t.col)
+        match u.parse_float(t.text) {
+            some v => {
+                n.a = @bitcast(v, i64)
+            }
+            none => {
+                set_error(t.line, t.col, c"invalid float literal")
+            }
+        }
+        return n
+    }
+    if t.kind == TokenKind.Str {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.StrLit, t.line, t.col)
+        n.s = t.text
+        return n
+    }
+    if t.kind == TokenKind.CmdSubst {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.CmdSubst, t.line, t.col)
+        n.s = t.text
+        return n
+    }
+    if t.kind == TokenKind.Ident {
+        if keyword(t, c"true") {
+            advance(p)
+            val n: mut ref Node = node_new(NodeKind.BoolLit, t.line, t.col)
+            n.a = 1
+            return n
+        }
+        if keyword(t, c"false") {
+            advance(p)
+            return node_new(NodeKind.BoolLit, t.line, t.col)
+        }
+        if keyword(t, c"null") || keyword(t, c"none") {
+            advance(p)
+            return node_new(NodeKind.NullLit, t.line, t.col)
+        }
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Var, t.line, t.col)
+        n.s = u.s_dup(t.text)
+        return n
+    }
+    if t.kind == TokenKind.Op && u.s_eq(t.text, c"(") {
+        advance(p)
+        val e: ref Node = parse_expr(p)
+        if !expect_op(p, c")") {
+            return e
+        }
+        return e
+    }
+    if t.kind == TokenKind.Op && u.s_eq(t.text, c"[") {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.ListLit, t.line, t.col)
+        for {
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c"]") {
+                break
+            }
+            if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof {
+                break
+            }
+            u.vec_pushp(n.kids, parse_expr(p) as ref void)
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+                advance(p)
+                continue
+            }
+            break
+        }
+        if !expect_op(p, c"]") {
+            return n
+        }
+        return n
+    }
+    if t.kind == TokenKind.Op && u.s_eq(t.text, c"{") {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.DictLit, t.line, t.col)
+        for {
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c"}") {
+                break
+            }
+            if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof {
+                break
+            }
+            val k: ref Node = parse_expr(p)
+            if !expect_op(p, c":") {
+                return n
+            }
+            val v: ref Node = parse_expr(p)
+            u.vec_pushp(n.kids, k as ref void)
+            u.vec_pushp(n.kids, v as ref void)
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+                advance(p)
+                continue
+            }
+            break
+        }
+        if !expect_op(p, c"}") {
+            return n
+        }
+        return n
+    }
+    set_error(t.line, t.col, c"unexpected token")
+    advance(p)
+    return node_new(NodeKind.NullLit, t.line, t.col)
+}
+
+pub fn parse(src: ref u8) ref Node = trust {
+    clear_error()
+    val toks: ref u.Vec = lex(src)
+    val p: mut ref Parser = @alloc(@sizeof(Parser)) as ref Parser
+    p.toks = toks
+    p.src = src
+    p.i = 0
+    val program: mut ref Node = node_new(NodeKind.Program, 1, 1)
+    for {
+        skip_newlines(p)
+        if cur(p).kind == TokenKind.Eof {
+            break
+        }
+        if cur(p).kind == TokenKind.Indent {
+            advance(p)
+            continue
+        }
+        if cur(p).kind == TokenKind.Dedent {
+            advance(p)
+            continue
+        }
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c";") {
+            advance(p)
+            continue
+        }
+        val s: ref Node = parse_statement(p)
+        if s != none {
+            u.vec_pushp(program.kids, s as ref void)
+        }
+        if g_error != none {
+            break
+        }
+    }
+    return program
+}
+
+/// Parse a single expression, used for string interpolation fields.
+pub fn parse_expr_text(src: ref u8) ref Node = trust {
+    clear_error()
+    val toks: ref u.Vec = lex(src)
+    val p: mut ref Parser = @alloc(@sizeof(Parser)) as ref Parser
+    p.toks = toks
+    p.src = src
+    p.i = 0
+    skip_newlines(p)
+    val n: ref Node = parse_expr(p)
+    return n
+}

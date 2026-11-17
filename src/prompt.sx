@@ -1,0 +1,319 @@
+/// Prompt rendering: git discovery, directory formatting, and themed output.
+
+val u = use("util.sx")
+val cfgmod = use("config.sx")
+val ex = use("exec.sx")
+
+extern (C, header) fn c_localtime(t: ref i64) ref void = "localtime"
+
+pub type GitInfo = {
+    branch: mut ref u8
+    root: mut ref u8
+    dirty: mut i64
+    valid: mut i64
+    checked_ms: mut i64
+    cwd: mut ref u8
+}
+
+val git_cache: mut GitInfo = @zeroed
+val host_cache: mut ref u8 = none
+
+fn host_name() ref u8 = trust {
+    if host_cache == none {
+        host_cache = u.hostname()
+        if u.s_eq(host_cache, c"") {
+            host_cache = c"localhost"
+        }
+    }
+    return host_cache
+}
+
+fn read_head_branch(gitdir: ref u8) ref u8 = trust {
+    val path: ref u8 = u.path_join(gitdir, c"HEAD")
+    val data: ref u8 = u.read_file(path)
+    if data == none {
+        return none
+    }
+    val t: ref u8 = u.s_trim(data)
+    if u.s_starts(t, c"ref: refs/heads/") {
+        return u.s_substr(t, 16, u.s_len(t))
+    }
+    if u.s_starts(t, c"ref: ") {
+        return u.s_substr(t, 5, u.s_len(t))
+    }
+    if u.s_len(t) >= 7 {
+        return u.s_substr(t, 0, 7)
+    }
+    return u.s_dup(t)
+}
+
+fn gitdir_of(root: ref u8) ref u8 = trust {
+    val dotgit: ref u8 = u.path_join(root, c".git")
+    if u.is_dir(dotgit) {
+        return u.s_dup(dotgit)
+    }
+    if !u.file_exists(dotgit) {
+        return none
+    }
+    val data: ref u8 = u.read_file(dotgit)
+    if data == none {
+        return none
+    }
+    val t: ref u8 = u.s_trim(data)
+    if !u.s_starts(t, c"gitdir:") {
+        return none
+    }
+    val p: ref u8 = u.s_substr(t, 7, u.s_len(t))
+    val tt: ref u8 = u.s_trim(p)
+    if u.is_dir(tt) {
+        return u.s_dup(tt)
+    }
+    return u.path_join(root, tt)
+}
+
+fn find_git(cwd: ref u8) GitInfo = trust {
+    val info: mut GitInfo = @zeroed
+    info.branch = none
+    info.root = none
+    info.cwd = none
+    val dir: mut ref u8 = u.s_dup(cwd)
+    for {
+        val gitdir: ref u8 = gitdir_of(dir)
+        if gitdir != none {
+            val branch: ref u8 = read_head_branch(gitdir)
+            if branch != none {
+                info.branch = branch
+                info.root = u.s_dup(dir)
+                info.valid = 1
+                info.cwd = u.s_dup(cwd)
+                return info
+            }
+        }
+        if u.s_eq(dir, c"/") {
+            break
+        }
+        val parent: ref u8 = u.path_dir(dir)
+        if u.s_eq(parent, dir) {
+            break
+        }
+        dir = parent
+    }
+    return info
+}
+
+fn git_argv(root: ref u8) ref u.Vec = trust {
+    val argv: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(argv, c"git" as ref void)
+    u.vec_pushp(argv, c"-C" as ref void)
+    u.vec_pushp(argv, root as ref void)
+    u.vec_pushp(argv, c"status" as ref void)
+    u.vec_pushp(argv, c"--porcelain" as ref void)
+    u.vec_pushp(argv, c"--untracked-files=no" as ref void)
+    return argv
+}
+
+fn check_dirty(root: ref u8) i64 = trust {
+    val argv: ref u.Vec = git_argv(root)
+    val out: ref u8 = ex.capture_argv(argv, true)
+    if out == none {
+        return 0
+    }
+    if u.s_len(u.s_trim(out)) > 0 {
+        return 1
+    }
+    return 0
+}
+
+pub fn git_info(cwd: ref u8, enabled: bool) GitInfo = trust {
+    val info: mut GitInfo = @zeroed
+    info.branch = none
+    info.root = none
+    info.dirty = 0
+    info.valid = 0
+    info.cwd = none
+    if !enabled {
+        return info
+    }
+    val now: i64 = u.now_ms()
+    if git_cache.valid == 1 && u.s_eq(git_cache.cwd, cwd) && now - git_cache.checked_ms < 1500 {
+        return git_cache
+    }
+    val found: GitInfo = find_git(cwd)
+    if found.valid == 0 {
+        git_cache.valid = 0
+        git_cache.cwd = u.s_dup(cwd)
+        git_cache.checked_ms = now
+        return found
+    }
+    val dirty: i64 = check_dirty(found.root)
+    git_cache.branch = found.branch
+    git_cache.root = found.root
+    git_cache.dirty = dirty
+    git_cache.valid = 1
+    git_cache.cwd = u.s_dup(cwd)
+    git_cache.checked_ms = now
+    return git_cache
+}
+
+fn style(c: ref u8, text: ref u8) ref u8 = trust {
+    return u.s_cat3(c, text, c"\x1b[0m")
+}
+
+fn shorten_home(dir: ref u8) ref u8 = trust {
+    val home: ref u8 = u.home_dir()
+    val hl: i64 = u.s_len(home)
+    if hl > 1 && u.s_starts(dir, home) {
+        if u.s_len(dir) == hl {
+            return u.s_dup(c"~")
+        }
+        if @load8(@ptradd(dir, hl)) == 47 {
+            return u.s_cat(c"~", @ptradd(dir, hl))
+        }
+    }
+    return u.s_dup(dir)
+}
+
+fn directory_text(c: ref cfgmod.Config, dir: ref u8) ref u8 = trust {
+    val short: ref u8 = shorten_home(dir)
+    if u.s_eq(c.directory_style, c"basename") {
+        val b: ref u8 = u.path_base(short)
+        if u.s_len(b) == 0 {
+            return u.s_dup(c"/")
+        }
+        return b
+    }
+    if u.s_eq(c.directory_style, c"short") {
+        val parent: ref u8 = u.path_dir(short)
+        val base: ref u8 = u.path_base(short)
+        if u.s_eq(parent, c"/") {
+            return u.s_cat(c"/", base)
+        }
+        if u.s_eq(parent, c"~") {
+            return u.s_cat(c"~/", base)
+        }
+        val pbase: ref u8 = u.path_base(parent)
+        return u.s_cat3(pbase, c"/", base)
+    }
+    return short
+}
+
+fn duration_text(ms: i64) ref u8 = trust {
+    if ms < 1000 {
+        return u.s_cat(u.s_int(ms), c"ms")
+    }
+    if ms < 60000 {
+        val tenths: i64 = ms / 100
+        val whole: i64 = tenths / 10
+        val frac: i64 = tenths % 10
+        return u.s_cat(u.s_cat(u.s_int(whole), c"."), u.s_cat(u.s_int(frac), c"s"))
+    }
+    val minutes: i64 = ms / 60000
+    val seconds: i64 = (ms % 60000) / 1000
+    return u.s_cat(u.s_cat(u.s_int(minutes), c"m"), u.s_cat(u.s_int(seconds), c"s"))
+}
+
+fn time_text() ref u8 = trust {
+    val secs: mut i64 = u.now_ms() / 1000
+    val tm: ref void = c_localtime(@addr(secs))
+    if tm == none {
+        return u.s_dup(c"")
+    }
+    val hh: i64 = (@load32(@ptradd(tm, 8)) as i64) & 0xFFFFFFFF
+    val mm: i64 = (@load32(@ptradd(tm, 4)) as i64) & 0xFFFFFFFF
+    val ss: i64 = (@load32(tm) as i64) & 0xFFFFFFFF
+    return @fmtalloc("{02d}:{02d}:{02d}", {hh, mm, ss})
+}
+
+pub fn render(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"\x1b[0m")
+    val plain: bool = u.s_eq(c.theme, c"plain")
+    val dir: ref u8 = u.cwd()
+    val user: ref u8 = u.username()
+    val host: ref u8 = host_name()
+    if plain {
+        if c.show_username != 0 {
+            u.buf_add(b, style(c.color_primary, user))
+            u.buf_add(b, c"@")
+            u.buf_add(b, style(c.color_secondary, host))
+            u.buf_add(b, c" ")
+        }
+        if c.show_directory != 0 {
+            u.buf_add(b, style(c.color_directory, directory_text(c, dir)))
+        }
+        if c.show_git != 0 {
+            val gi: GitInfo = git_info(dir, true)
+            if gi.valid == 1 {
+                u.buf_add(b, c" (")
+                if gi.dirty == 1 {
+                    u.buf_add(b, style(c.color_git_dirty, gi.branch))
+                } else {
+                    u.buf_add(b, style(c.color_git_clean, gi.branch))
+                }
+                u.buf_add(b, c")")
+            }
+        }
+        u.buf_add(b, c" ")
+        u.buf_add(b, style(c.color_primary, c">"))
+        u.buf_add(b, c" ")
+        return u.buf_take(b)
+    }
+    if c.two_line != 0 {
+        u.buf_add(b, style(c.color_muted, c"┌─ "))
+    }
+    if c.show_username != 0 {
+        u.buf_add(b, style(c.color_primary, user))
+        if c.show_hostname != 0 {
+            u.buf_add(b, style(c.color_muted, c"@"))
+            u.buf_add(b, style(c.color_secondary, host))
+        }
+        u.buf_add(b, c" ")
+    } elif c.show_hostname != 0 {
+        u.buf_add(b, style(c.color_secondary, host))
+        u.buf_add(b, c" ")
+    }
+    if c.show_directory != 0 {
+        u.buf_add(b, style(c.color_directory, directory_text(c, dir)))
+    }
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            u.buf_add(b, c" ")
+            u.buf_add(b, style(c.color_muted, c"on"))
+            u.buf_add(b, c" ")
+            if gi.dirty == 1 {
+                u.buf_add(b, style(c.color_git_dirty, gi.branch))
+                u.buf_add(b, style(c.color_git_dirty, c" *"))
+            } else {
+                u.buf_add(b, style(c.color_git_clean, gi.branch))
+            }
+        }
+    }
+    if c.show_time != 0 {
+        u.buf_add(b, c" ")
+        u.buf_add(b, style(c.color_muted, time_text()))
+    }
+    if c.show_jobs != 0 && jobs > 0 {
+        u.buf_add(b, c" ")
+        u.buf_add(b, style(c.color_warning, u.s_cat(c"⚙ ", u.s_int(jobs))))
+    }
+    if c.show_exit_status != 0 && status != 0 {
+        u.buf_add(b, c" ")
+        u.buf_add(b, style(c.color_error, u.s_cat(c"✘ ", u.s_int(status as i64))))
+    }
+    if c.show_duration != 0 && duration_ms >= 500 {
+        u.buf_add(b, c" ")
+        u.buf_add(b, style(c.color_muted, u.s_cat(c"took ", duration_text(duration_ms))))
+    }
+    if c.two_line != 0 {
+        u.buf_add(b, c"\n")
+        u.buf_add(b, style(c.color_muted, c"└─ "))
+        u.buf_add(b, style(c.color_primary, c.prompt_char))
+        u.buf_add(b, c" ")
+    } else {
+        u.buf_add(b, c" ")
+        u.buf_add(b, style(c.color_primary, c.prompt_char))
+        u.buf_add(b, c" ")
+    }
+    return u.buf_take(b)
+}
