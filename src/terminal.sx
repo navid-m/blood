@@ -9,6 +9,7 @@ extern (C, header) fn c_tcgetattr(fd: i32, t: ref Termios) i32 = "tcgetattr"
 extern (C, header) fn c_tcsetattr(fd: i32, act: i32, t: ref Termios) i32 = "tcsetattr"
 extern (C, header) fn c_ioctl(fd: i32, req: u64, ...) i32 = "ioctl"
 extern (C, header) fn c_read(fd: i32, buf: ref void, n: usize) i64 = "read"
+extern (C, header) fn c_poll(fds: ref PollFd, n: u64, timeout: i32) i32 = "poll"
 
 pub type Termios = {
     c_iflag: mut u32
@@ -19,6 +20,12 @@ pub type Termios = {
     c_cc: mut [32]u8
     c_ispeed: mut u32
     c_ospeed: mut u32
+}
+
+pub type PollFd = {
+    fd: mut i32
+    events: mut i16
+    revents: mut i16
 }
 
 pub type WinSize = {
@@ -151,6 +158,17 @@ fn read_key() i32 = trust {
         return -1
     }
     return c as i32
+}
+
+fn read_key_timeout(ms: i32) i32 = trust {
+    val pfd: mut PollFd = @zeroed
+    pfd.fd = 0
+    pfd.events = 1
+    pfd.revents = 0
+    if c_poll(@addr(pfd), 1, ms) <= 0 {
+        return -1
+    }
+    return read_key()
 }
 
 pub fn editor_new(
@@ -674,7 +692,7 @@ fn menu_next(e: mut ref Editor, delta: i64) void = trust {
 }
 
 fn read_escape(e: mut ref Editor) i64 = trust {
-    val c1: i32 = read_key()
+    val c1: i32 = read_key_timeout(25)
     if c1 < 0 {
         return -1
     }

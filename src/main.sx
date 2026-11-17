@@ -345,6 +345,10 @@ pub fn main() i32 = trust {
         }
         return st
     }
+    if first != none && u.s_len(first) > 0 && @load8(first) == 45 {
+        u.write_fd(2, u.s_cat3(c"blood: unknown option: ", first, c"\n"))
+        return 2
+    }
     if first != none && u.s_len(first) > 0 && @load8(first) != 45 {
         val rest: mut ref u.Vec = u.vec_new()
         val j: mut i64 = 2

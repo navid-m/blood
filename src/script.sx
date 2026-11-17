@@ -1728,6 +1728,11 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
             val len: i64 = u.s_len(s)
             val i: mut i64 = 0
             for {
+                if u.interrupt_flag != 0 {
+                    u.interrupt_flag = 0
+                    set_error(c"interrupted", n.line, n.col)
+                    break
+                }
                 if i >= len {
                     break
                 }
@@ -1752,6 +1757,11 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
             val m: ref u.Map = iterable.p as ref u.Map
             val i: mut i64 = 0
             for {
+                if u.interrupt_flag != 0 {
+                    u.interrupt_flag = 0
+                    set_error(c"interrupted", n.line, n.col)
+                    break
+                }
                 if i >= m.cap {
                     break
                 }
