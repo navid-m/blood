@@ -189,7 +189,7 @@ pub fn config_path() ref u8 = trust {
 }
 
 pub fn default_config() ref Config = trust {
-    val c: mut ref Config = @alloc(@sizeof(Config)) as ref Config
+    val c: mut ref Config = u.xalloc(@sizeof(Config) as i64) as ref Config
     c.path = config_path()
     c.theme = c"default"
     c.show_username = 1

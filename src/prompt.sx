@@ -3,8 +3,7 @@
 val u = use("util.sx")
 val cfgmod = use("config.sx")
 val ex = use("exec.sx")
-
-extern (C, header) fn c_localtime(t: ref i64) ref void = "localtime"
+val rt = use("std/runtime")
 
 pub type GitInfo = {
     branch: mut ref u8
@@ -214,7 +213,7 @@ fn duration_text(ms: i64) ref u8 = trust {
 
 fn time_text() ref u8 = trust {
     val secs: mut i64 = u.now_ms() / 1000
-    val tm: ref void = c_localtime(@addr(secs))
+    val tm: ref void = rt.localtime(@addr(secs))
     if tm == none {
         return u.s_dup(c"")
     }

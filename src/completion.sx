@@ -424,7 +424,7 @@ pub fn complete(
 ) CompResult = trust {
     val start: i64 = token_start(line, cursor)
     val end: i64 = token_end(line, cursor)
-    val res: mut ref CompResult = @alloc(@sizeof(CompResult)) as ref CompResult
+    val res: mut ref CompResult = u.xalloc(@sizeof(CompResult) as i64) as ref CompResult
     res.start = start
     res.end = end
     res.items = u.vec_new()

@@ -3,37 +3,10 @@
 /// The shell deliberately avoids the higher-level allocator abstractions for
 /// hot paths. Everything here is libc-backed and allocation-light.
 
-extern (C, header) fn c_malloc(size: usize) ref void = "malloc"
-extern (C, header) fn c_calloc(count: usize, size: usize) ref void = "calloc"
-extern (C, header) fn c_realloc(ptr: ref void, size: usize) ref void = "realloc"
-extern (C, header) fn c_free(ptr: ref void) void = "free"
-extern (C, header) fn c_memcpy(dst: ref void, src: ref void, n: usize) ref void = "memcpy"
-extern (C, header) fn c_memmove(dst: ref void, src: ref void, n: usize) ref void = "memmove"
-extern (C, header) fn c_strlen(s: ref u8) usize = "strlen"
-extern (C, header) fn c_strcmp(a: ref u8, b: ref u8) i32 = "strcmp"
-extern (C, header) fn c_strncmp(a: ref u8, b: ref u8, n: usize) i32 = "strncmp"
-extern (C, header) fn c_strstr(hay: ref u8, needle: ref u8) ref u8 = "strstr"
-extern (C, header) fn c_strtoll(s: ref u8, end: ref ref u8, base: i32) i64 = "strtoll"
-extern (C, header) fn c_strtod(s: ref u8, end: ref ref u8) f64 = "strtod"
-extern (C, header) fn c_access(path: ref u8, mode: i32) i32 = "access"
-extern (C, header) fn c_getenv(name: ref u8) ref u8 = "getenv"
-extern (C, header) fn c_setenv(name: ref u8, value: ref u8, overwrite: i32) i32 = "setenv"
-extern (C, header) fn c_unsetenv(name: ref u8) i32 = "unsetenv"
-extern (C, header) fn c_getcwd(buf: ref u8, size: usize) ref u8 = "getcwd"
-extern (C, header) fn c_chdir(path: ref u8) i32 = "chdir"
-extern (C, header) fn c_mkdir(path: ref u8, mode: u32) i32 = "mkdir"
-extern (C, header) fn c_opendir(path: ref u8) ref void = "opendir"
-extern (C, header) fn c_readdir(dir: ref void) ref DirEntry = "readdir"
-extern (C, header) fn c_closedir(dir: ref void) i32 = "closedir"
-extern (C, header) fn c_fopen(path: ref u8, mode: ref u8) ref void = "fopen"
-extern (C, header) fn c_fclose(f: ref void) i32 = "fclose"
-extern (C, header) fn c_fread(ptr: ref void, size: usize, count: usize, f: ref void) usize = "fread"
-extern (C, header) fn c_fwrite(ptr: ref void, size: usize, count: usize, f: ref void) usize = "fwrite"
-extern (C, header) fn c_fseek(f: ref void, off: i64, whence: i32) i32 = "fseek"
-extern (C, header) fn c_ftell(f: ref void) i64 = "ftell"
-extern (C, header) fn c_gettimeofday(tv: ref TimeVal, tz: ref void) i32 = "gettimeofday"
-extern (C, header) fn c_gethostname(buf: ref u8, n: usize) i32 = "gethostname"
-extern (C, header) fn c_write(fd: i32, buf: ref void, n: usize) i64 = "write"
+val allocators = use("std/allocators")
+val rt = use("std/runtime")
+
+val g_heap: allocators.HeapAllocator = @zeroed
 
 /// Linux `struct dirent` (x86_64 and aarch64).
 pub type DirEntry = {
@@ -85,44 +58,61 @@ pub val script_exit_code: mut i64 = -1
 pub val interrupt_flag: mut i64 = 0
 
 pub fn xalloc(n: i64) ref void = trust {
-    val real: i64 = n
-    return c_malloc(real as usize)
+    if n <= 0 {
+        return none
+    }
+    match allocators.alloc_in[allocators.HeapAllocator](g_heap, n as usize) {
+        some p => {
+            return p
+        }
+        none => {
+            return none
+        }
+    }
 }
 
 pub fn mem_copy(dst: ref void, src: ref void, n: i64) void = trust {
     if n > 0 {
-        c_memcpy(dst, src, n as usize)
+        rt.memcpy(dst, src, n as usize)
     }
 }
 
 pub fn mem_move(dst: ref void, src: ref void, n: i64) void = trust {
     if n > 0 {
-        c_memmove(dst, src, n as usize)
+        rt.memmove(dst, src, n as usize)
     }
 }
 
 pub fn mem_realloc(p: ref void, n: i64) ref u8 = trust {
-    return c_realloc(p, n as usize) as ref u8
+    if n <= 0 {
+        return none
+    }
+    match allocators.realloc_in[allocators.HeapAllocator](g_heap, p, n as usize) {
+        some out => {
+            return out as ref u8
+        }
+        none => {
+            return none
+        }
+    }
 }
 
 pub fn xfree(p: ref void) void = trust {
-    if p != none {
-        c_free(p)
-    }
+    allocators.free_in[allocators.HeapAllocator](g_heap, p)
 }
 
 pub fn s_len(s: ref u8) i64 = trust {
     if s == none {
         return 0
     }
-    return c_strlen(s) as i64
+    return rt.strlen(s)
 }
 
 pub fn s_eq(a: ref u8, b: ref u8) bool = trust {
     if a == none || b == none {
         return a == b
     }
-    return c_strcmp(a, b) == 0
+    return rt.strcmp(a, b) == 0
 }
 
 pub fn s_cmp(a: ref u8, b: ref u8) i64 = trust {
@@ -132,7 +122,7 @@ pub fn s_cmp(a: ref u8, b: ref u8) i64 = trust {
     if b == none {
         return s_len(a) + 1
     }
-    return c_strcmp(a, b) as i64
+    return rt.strcmp(a, b) as i64
 }
 
 pub fn s_dup(s: ref u8) ref u8 = trust {
@@ -140,26 +130,26 @@ pub fn s_dup(s: ref u8) ref u8 = trust {
         return none
     }
     val n: i64 = s_len(s)
-    val out: ref u8 = c_malloc((n + 1) as usize) as ref u8
+    val out: ref u8 = xalloc(n + 1) as ref u8
     if out == none {
         return none
     }
-    c_memcpy(out as ref void, s as ref void, n as usize)
+    rt.memcpy(out as ref void, s as ref void, n as usize)
     @store8(@ptradd(out, n), 0)
     return out
 }
 
 pub fn s_ndup(p: ref u8, n: i64) ref u8 = trust {
     if p == none || n <= 0 {
-        val empty: ref u8 = c_malloc(1 as usize) as ref u8
+        val empty: ref u8 = xalloc(1) as ref u8
         @store8(empty, 0)
         return empty
     }
-    val out: ref u8 = c_malloc((n + 1) as usize) as ref u8
+    val out: ref u8 = xalloc(n + 1) as ref u8
     if out == none {
         return none
     }
-    c_memcpy(out as ref void, p as ref void, n as usize)
+    rt.memcpy(out as ref void, p as ref void, n as usize)
     @store8(@ptradd(out, n), 0)
     return out
 }
@@ -169,7 +159,7 @@ pub fn s_alloc(n: i64) ref u8 = trust {
     if real < 0 {
         real = 0
     }
-    val out: ref u8 = c_malloc((real + 1) as usize) as ref u8
+    val out: ref u8 = xalloc(real + 1) as ref u8
     if out == none {
         return none
     }
@@ -178,23 +168,21 @@ pub fn s_alloc(n: i64) ref u8 = trust {
 }
 
 pub fn s_free(s: ref u8) void = trust {
-    if s != none {
-        c_free(s as ref void)
-    }
+    xfree(s as ref void)
 }
 
 pub fn s_cat(a: ref u8, b: ref u8) ref u8 = trust {
     val la: i64 = s_len(a)
     val lb: i64 = s_len(b)
-    val out: ref u8 = c_malloc((la + lb + 1) as usize) as ref u8
+    val out: ref u8 = xalloc(la + lb + 1) as ref u8
     if out == none {
         return none
     }
     if la > 0 {
-        c_memcpy(out as ref void, a as ref void, la as usize)
+        rt.memcpy(out as ref void, a as ref void, la as usize)
     }
     if lb > 0 {
-        c_memcpy(@ptradd(out, la), b as ref void, lb as usize)
+        rt.memcpy(@ptradd(out, la), b as ref void, lb as usize)
     }
     @store8(@ptradd(out, la + lb), 0)
     return out
@@ -204,18 +192,18 @@ pub fn s_cat3(a: ref u8, b: ref u8, c: ref u8) ref u8 = trust {
     val la: i64 = s_len(a)
     val lb: i64 = s_len(b)
     val lc: i64 = s_len(c)
-    val out: ref u8 = c_malloc((la + lb + lc + 1) as usize) as ref u8
+    val out: ref u8 = xalloc(la + lb + lc + 1) as ref u8
     if out == none {
         return none
     }
     if la > 0 {
-        c_memcpy(out as ref void, a as ref void, la as usize)
+        rt.memcpy(out as ref void, a as ref void, la as usize)
     }
     if lb > 0 {
-        c_memcpy(@ptradd(out, la), b as ref void, lb as usize)
+        rt.memcpy(@ptradd(out, la), b as ref void, lb as usize)
     }
     if lc > 0 {
-        c_memcpy(@ptradd(out, la + lb), c as ref void, lc as usize)
+        rt.memcpy(@ptradd(out, la + lb), c as ref void, lc as usize)
     }
     @store8(@ptradd(out, la + lb + lc), 0)
     return out
@@ -233,21 +221,33 @@ pub fn s_starts(s: ref u8, prefix: ref u8) bool = trust {
     if s_len(s) < lp {
         return false
     }
-    return c_strncmp(s, prefix, lp as usize) == 0
+    return rt.strncmp(s, prefix, lp as usize) == 0
+}
+
+pub fn s_ends_with(s: ref u8, suffix: ref u8) bool = trust {
+    if s == none || suffix == none {
+        return suffix == none
+    }
+    val ls: i64 = s_len(s)
+    val lp: i64 = s_len(suffix)
+    if ls < lp {
+        return false
+    }
+    return rt.strncmp(@ptradd(s, ls - lp), suffix, lp as usize) == 0
 }
 
 pub fn s_contains(s: ref u8, needle: ref u8) bool = trust {
     if s == none || needle == none {
         return false
     }
-    return c_strstr(s, needle) != none
+    return rt.strstr(s, needle) != none
 }
 
 pub fn s_find(s: ref u8, needle: ref u8) i64 = trust {
     if s == none || needle == none {
         return -1
     }
-    val p: ref u8 = c_strstr(s, needle)
+    val p: ref u8 = rt.strstr(s, needle)
     if p == none {
         return -1
     }
@@ -327,7 +327,7 @@ pub fn s_uint(v: i64) ref u8 = trust {
     if negative {
         mag = (0 as u64) - mag
     }
-    val tmp: ref u8 = c_malloc(32 as usize) as ref u8
+    val tmp: ref u8 = xalloc(32) as ref u8
     val start: mut i64 = 30
     if mag == 0 {
         @store8(@ptradd(tmp, 31), 48)
@@ -349,7 +349,7 @@ pub fn s_uint(v: i64) ref u8 = trust {
     if negative {
         extra = 1
     }
-    val out: ref u8 = c_malloc((digits + extra + 1) as usize) as ref u8
+    val out: ref u8 = xalloc(digits + extra + 1) as ref u8
     val p: mut i64 = 0
     if negative {
         @store8(out, 45)
@@ -364,7 +364,7 @@ pub fn s_uint(v: i64) ref u8 = trust {
         j++
     }
     @store8(@ptradd(out, p + digits), 0)
-    c_free(tmp as ref void)
+    xfree(tmp as ref void)
     return out
 }
 
@@ -389,7 +389,7 @@ pub fn parse_int(s: ref u8) option[i64] = trust {
         return none
     }
     val endp: mut ref u8 = none
-    val v: i64 = c_strtoll(t, @addr(endp), 10) as i64
+    val v: i64 = rt.strtol(t, @addr(endp), 10)
     if endp == none || @bitcast(endp, i64) == @bitcast(t, i64) {
         return none
     }
@@ -408,7 +408,7 @@ pub fn parse_float(s: ref u8) option[f64] = trust {
         return none
     }
     val endp: mut ref u8 = none
-    val v: f64 = c_strtod(t, @addr(endp)) as f64
+    val v: f64 = rt.strtod(t, @addr(endp))
     if endp == none || @bitcast(endp, i64) == @bitcast(t, i64) {
         return none
     }
@@ -419,8 +419,8 @@ pub fn parse_float(s: ref u8) option[f64] = trust {
 }
 
 pub fn buf_new() ref Buf = trust {
-    val b: mut ref Buf = c_malloc(@sizeof(Buf) as usize) as ref Buf
-    b.ptr = c_malloc(64 as usize) as ref u8
+    val b: mut ref Buf = xalloc(@sizeof(Buf) as i64) as ref Buf
+    b.ptr = xalloc(64) as ref u8
     @store8(b.ptr, 0)
     b.len = 0
     b.cap = 64
@@ -439,7 +439,7 @@ pub fn buf_reserve(b: mut ref Buf, extra: i64) void = trust {
         }
         nc = nc * 2
     }
-    b.ptr = c_realloc(b.ptr as ref void, nc as usize) as ref u8
+    b.ptr = mem_realloc(b.ptr as ref void, nc)
     b.cap = nc
 }
 
@@ -450,7 +450,7 @@ pub fn buf_add(b: mut ref Buf, s: ref u8) void = trust {
     val n: i64 = s_len(s)
     buf_reserve(b, n)
     if n > 0 {
-        c_memcpy(@ptradd(b.ptr, b.len) as ref void, s as ref void, n as usize)
+        rt.memcpy(@ptradd(b.ptr, b.len) as ref void, s as ref void, n as usize)
         b.len = b.len + n
         @store8(@ptradd(b.ptr, b.len), 0)
     }
@@ -461,7 +461,7 @@ pub fn buf_addn(b: mut ref Buf, s: ref u8, n: i64) void = trust {
         return
     }
     buf_reserve(b, n)
-    c_memcpy(@ptradd(b.ptr, b.len) as ref void, s as ref void, n as usize)
+    rt.memcpy(@ptradd(b.ptr, b.len) as ref void, s as ref void, n as usize)
     b.len = b.len + n
     @store8(@ptradd(b.ptr, b.len), 0)
 }
@@ -494,14 +494,12 @@ pub fn buf_view(b: ref Buf) ref u8 = trust {
 }
 
 pub fn buf_free(b: mut ref Buf) void = trust {
-    if b.ptr != none {
-        c_free(b.ptr as ref void)
-        b.ptr = none
-    }
+    xfree(b.ptr as ref void)
+    b.ptr = none
 }
 
 pub fn vec_new() ref Vec = trust {
-    val v: mut ref Vec = c_malloc(@sizeof(Vec) as usize) as ref Vec
+    val v: mut ref Vec = xalloc(@sizeof(Vec) as i64) as ref Vec
     v.data = none
     v.len = 0
     v.cap = 0
@@ -523,7 +521,7 @@ pub fn vec_reserve(v: mut ref Vec, extra: i64) void = trust {
         }
         nc = nc * 2
     }
-    v.data = c_realloc(v.data, (nc * 8) as usize)
+    v.data = mem_realloc(v.data, nc * 8) as ref void
     v.cap = nc
 }
 
@@ -567,7 +565,7 @@ pub fn vec_remove(v: mut ref Vec, i: i64) void = trust {
     }
     val tail: i64 = (v.len - i - 1) * 8
     if tail > 0 {
-        c_memmove(@ptradd(v.data, i * 8), @ptradd(v.data, (i + 1) * 8), tail as usize)
+        rt.memmove(@ptradd(v.data, i * 8), @ptradd(v.data, (i + 1) * 8), tail as usize)
     }
     v.len--
 }
@@ -575,17 +573,15 @@ pub fn vec_remove(v: mut ref Vec, i: i64) void = trust {
 pub fn vec_insert(v: mut ref Vec, i: i64, x: i64) void = trust {
     vec_reserve(v, 1)
     if i < v.len {
-        c_memmove(@ptradd(v.data, (i + 1) * 8), @ptradd(v.data, i * 8), ((v.len - i) * 8) as usize)
+        rt.memmove(@ptradd(v.data, (i + 1) * 8), @ptradd(v.data, i * 8), ((v.len - i) * 8) as usize)
     }
     @store64(@ptradd(v.data, i * 8), x)
     v.len++
 }
 
 pub fn vec_free(v: mut ref Vec) void = trust {
-    if v.data != none {
-        c_free(v.data)
-        v.data = none
-    }
+    xfree(v.data)
+    v.data = none
     v.len = 0
     v.cap = 0
 }
@@ -606,10 +602,11 @@ fn map_hash(s: ref u8) u64 = trust {
 }
 
 pub fn map_new() ref Map = trust {
-    val m: mut ref Map = c_malloc(@sizeof(Map) as usize) as ref Map
+    val m: mut ref Map = xalloc(@sizeof(Map) as i64) as ref Map
     m.cap = 32
     m.len = 0
-    m.slots = c_calloc(32 as usize, @sizeof(MapEntry) as usize) as ref MapEntry
+    m.slots = xalloc(32 * @sizeof(MapEntry) as i64) as ref MapEntry
+    rt.memset(m.slots as ref void, 0, (32 * @sizeof(MapEntry)) as usize)
     return m
 }
 
@@ -638,7 +635,8 @@ fn map_grow(m: mut ref Map) void = trust {
     val old_slots: ref MapEntry = m.slots
     val old_cap: i64 = m.cap
     m.cap = old_cap * 2
-    m.slots = c_calloc(m.cap as usize, @sizeof(MapEntry) as usize) as ref MapEntry
+    m.slots = xalloc(m.cap * @sizeof(MapEntry) as i64) as ref MapEntry
+    rt.memset(m.slots as ref void, 0, (m.cap * @sizeof(MapEntry)) as usize)
     val i: mut i64 = 0
     for {
         if i >= old_cap {
@@ -656,7 +654,7 @@ fn map_grow(m: mut ref Map) void = trust {
         }
         i++
     }
-    c_free(old_slots as ref void)
+    xfree(old_slots as ref void)
 }
 
 pub fn map_put(m: mut ref Map, key: ref u8, value: i64) void = trust {
@@ -739,10 +737,8 @@ pub fn map_used_at(m: ref Map, i: i64) bool = trust {
 }
 
 pub fn map_free(m: mut ref Map) void = trust {
-    if m.slots != none {
-        c_free(m.slots as ref void)
-        m.slots = none
-    }
+    xfree(m.slots as ref void)
+    m.slots = none
     m.len = 0
     m.cap = 0
 }
@@ -807,7 +803,7 @@ pub fn path_base(s: ref u8) ref u8 = trust {
 }
 
 pub fn home_dir() ref u8 = trust {
-    val h: ref u8 = c_getenv(c"HOME")
+    val h: ref u8 = rt.getenv(c"HOME")
     if h == none {
         return c"/"
     }
@@ -829,8 +825,8 @@ pub fn expand_tilde(s: ref u8) ref u8 = trust {
 }
 
 pub fn cwd() ref u8 = trust {
-    val b: ref u8 = c_malloc(4096 as usize) as ref u8
-    val r: ref u8 = c_getcwd(b, 4096 as usize)
+    val b: ref u8 = xalloc(4096) as ref u8
+    val r: ref u8 = rt.getcwd(b, 4096 as usize)
     if r == none {
         @store8(b, 0)
     }
@@ -838,70 +834,70 @@ pub fn cwd() ref u8 = trust {
 }
 
 pub fn chdir(path: ref u8) i32 = trust {
-    return c_chdir(path)
+    return rt.chdir(path)
 }
 
 pub fn file_exists(path: ref u8) bool = trust {
-    return c_access(path, 0) == 0
+    return rt.access(path, 0) == 0
 }
 
 pub fn is_executable(path: ref u8) bool = trust {
-    return c_access(path, 1) == 0
+    return rt.access(path, 1) == 0
 }
 
 pub fn is_dir(path: ref u8) bool = trust {
-    val d: ref void = c_opendir(path)
+    val d: ref void = rt.opendir(path)
     if d == none {
         return false
     }
-    c_closedir(d)
+    rt.closedir(d)
     return true
 }
 
 pub fn read_file(path: ref u8) ref u8 = trust {
-    val f: ref void = c_fopen(path, c"rb")
+    val f: ref void = rt.fopen(path, c"rb")
     if f == none {
         return none
     }
-    c_fseek(f, 0, 2)
-    val n: i64 = c_ftell(f)
-    c_fseek(f, 0, 0)
-    val out: ref u8 = c_malloc((n + 1) as usize) as ref u8
+    rt.fseek(f, 0, 2)
+    val n: i64 = rt.ftell(f)
+    rt.fseek(f, 0, 0)
+    val out: ref u8 = xalloc(n + 1) as ref u8
     if out == none {
-        c_fclose(f)
+        rt.fclose(f)
         return none
     }
     if n > 0 {
-        c_fread(out as ref void, 1 as usize, n as usize, f)
+        rt.fread(out as ref void, 1 as usize, n as usize, f)
     }
     @store8(@ptradd(out, n), 0)
-    c_fclose(f)
+    rt.fclose(f)
     return out
 }
 
 pub fn write_file(path: ref u8, data: ref u8) bool = trust {
-    val f: ref void = c_fopen(path, c"wb")
+    val f: ref void = rt.fopen(path, c"wb")
     if f == none {
         return false
     }
     val n: i64 = s_len(data)
     if n > 0 {
-        c_fwrite(data as ref void, 1 as usize, n as usize, f)
+        rt.fwrite(data as ref void, 1 as usize, n as usize, f)
     }
-    c_fclose(f)
+    rt.fclose(f)
     return true
 }
 
 pub fn append_file(path: ref u8, data: ref u8) bool = trust {
-    val f: ref void = c_fopen(path, c"ab")
+    val f: ref void = rt.fopen(path, c"ab")
     if f == none {
         return false
     }
     val n: i64 = s_len(data)
     if n > 0 {
-        c_fwrite(data as ref void, 1 as usize, n as usize, f)
+        rt.fwrite(data as ref void, 1 as usize, n as usize, f)
     }
-    c_fclose(f)
+    rt.fclose(f)
     return true
 }
 
@@ -925,14 +921,14 @@ pub fn mkdir_p(path: ref u8) bool = trust {
         if @load8(@ptradd(tmp, i)) == 47 {
             @store8(@ptradd(tmp, i), 0)
             if s_len(tmp) > 0 && !is_dir(tmp) {
-                c_mkdir(tmp, 493 as u32)
+                rt.mkdir(tmp, 493 as u32)
             }
             @store8(@ptradd(tmp, i), 47)
         }
         i++
     }
     if !is_dir(tmp) {
-        c_mkdir(tmp, 493 as u32)
+        rt.mkdir(tmp, 493 as u32)
     }
     val made: bool = is_dir(tmp)
     s_free(tmp)
@@ -1012,36 +1008,36 @@ pub fn utf8_next(s: ref u8, pos: i64, n: i64) i64 = trust {
 
 pub fn now_ms() i64 = trust {
     val tv: mut TimeVal = @zeroed
-    c_gettimeofday(@addr(tv), none)
+    rt.gettimeofday(@addr(tv) as ref void, none)
     return tv.tv_sec * 1000 + tv.tv_usec / 1000
 }
 
 pub fn env_get(name: ref u8) ref u8 = trust {
-    return c_getenv(name)
+    return rt.getenv(name)
 }
 
 pub fn env_set(name: ref u8, value: ref u8) void = trust {
     if name == none || value == none {
         return
     }
-    c_setenv(name, value, 1)
+    rt.setenv(name, value, 1)
 }
 
 pub fn env_unset(name: ref u8) void = trust {
     if name != none {
-        c_unsetenv(name)
+        rt.unsetenv(name)
     }
 }
 
 pub fn dir_open(path: ref u8) ref void = trust {
-    return c_opendir(path)
+    return rt.opendir(path)
 }
 
 pub fn dir_next(dir: ref void) ref u8 = trust {
     if dir == none {
         return none
     }
-    val e: ref DirEntry = c_readdir(dir)
+    val e: ref DirEntry = rt.readdir(dir) as ref DirEntry
     if e == none {
         return none
     }
@@ -1050,7 +1046,7 @@ pub fn dir_next(dir: ref void) ref u8 = trust {
 
 pub fn dir_close(dir: ref void) void = trust {
     if dir != none {
-        c_closedir(dir)
+        rt.closedir(dir)
     }
 }
 
@@ -1064,7 +1060,7 @@ pub fn write_fd(fd: i32, s: ref u8) void = trust {
         if done >= n {
             break
         }
-        val w: i64 = c_write(fd, @ptradd(s, done) as ref void, (n - done) as usize) as i64
+        val w: i64 = rt.write(fd, @ptradd(s, done) as ref void, (n - done) as usize)
         if w <= 0 {
             break
         }
@@ -1091,16 +1087,16 @@ pub fn stderr_ln(s: ref u8) void = trust {
 }
 
 pub fn hostname() ref u8 = trust {
-    val buf: ref u8 = c_malloc(256 as usize) as ref u8
+    val buf: ref u8 = xalloc(256) as ref u8
     @store8(buf, 0)
-    c_gethostname(buf, 256 as usize)
+    rt.gethostname(buf, 256 as usize)
     return buf
 }
 
 pub fn username() ref u8 = trust {
-    val u: mut ref u8 = c_getenv(c"USER")
+    val u: mut ref u8 = rt.getenv(c"USER")
     if u == none {
-        u = c_getenv(c"LOGNAME")
+        u = rt.getenv(c"LOGNAME")
     }
     if u == none {
         return c"user"

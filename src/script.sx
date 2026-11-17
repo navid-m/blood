@@ -3,8 +3,7 @@
 val u = use("util.sx")
 val lang = use("lang.sx")
 val term = use("terminal.sx")
-
-extern (C, header) fn c_usleep(usec: u32) i32 = "usleep"
+val rt = use("std/runtime")
 
 pub type Value = {
     tag: mut i64
@@ -1029,7 +1028,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     if id == 9 {
         val ms: i64 = num_i(arg(args, 0))
         if ms > 0 {
-            c_usleep((ms * 1000) as u32)
+            rt.usleep((ms * 1000) as u32)
         }
         return v_nil()
     }
@@ -2055,6 +2054,9 @@ pub fn looks_like_script(line: ref u8) bool = trust {
     }
     if @load8(t) == 35 {
         return true
+    }
+    if u.s_ends_with(t, c".blood") && !u.s_contains(t, c" ") && u.file_exists(t) {
+        return false
     }
     if u.s_starts(t, c"say ") || u.s_eq(t, c"say") || u.s_starts(t, c"if ") || u.s_starts(t, c"elif ") || u.s_starts(t, c"else") || u.s_starts(t, c"while ") || u.s_starts(t, c"for ") || u.s_starts(t, c"fn ") || u.s_starts(t, c"def ") || u.s_starts(t, c"return") || u.s_starts(t, c"break") || u.s_starts(t, c"continue") || u.s_starts(t, c"pass") || u.s_starts(t, c"try") || u.s_starts(t, c"catch") || u.s_starts(t, c"except") || u.s_starts(t, c"raise ") || u.s_starts(t, c"throw ") {
         return true

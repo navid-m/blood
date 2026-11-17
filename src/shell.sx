@@ -365,7 +365,7 @@ fn add_segment(out: mut ref u.Vec, src: ref u8, start: i64, end: i64, conn: i64)
     if u.s_len(text) == 0 {
         return
     }
-    val seg: mut ref Segment = @alloc(@sizeof(Segment)) as ref Segment
+    val seg: mut ref Segment = u.xalloc(@sizeof(Segment) as i64) as ref Segment
     seg.text = text
     seg.conn = conn
     u.vec_pushp(out, seg as ref void)
@@ -607,7 +607,7 @@ fn scan_word(src: ref u8, startpos: i64, toks: mut ref u.Vec) i64 = trust {
                     if k >= matches.len {
                         break
                     }
-                    val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+                    val t: mut ref STok = u.xalloc(@sizeof(STok) as i64) as ref STok
                     t.kind = 1
                     t.text = u.vec_p(matches, k) as ref u8
                     t.quoted = 0
@@ -618,7 +618,7 @@ fn scan_word(src: ref u8, startpos: i64, toks: mut ref u.Vec) i64 = trust {
                 return i
             }
         }
-        val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+        val t: mut ref STok = u.xalloc(@sizeof(STok) as i64) as ref STok
         t.kind = 1
         t.text = word
         t.quoted = quoted
@@ -920,7 +920,7 @@ pub fn scan_shell(src: ref u8) ref u.Vec = trust {
             continue
         }
         if c == 124 {
-            val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+            val t: mut ref STok = u.xalloc(@sizeof(STok) as i64) as ref STok
             t.kind = 2
             t.text = c"|"
             t.quoted = 0
@@ -930,7 +930,7 @@ pub fn scan_shell(src: ref u8) ref u.Vec = trust {
             continue
         }
         if c == 60 {
-            val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+            val t: mut ref STok = u.xalloc(@sizeof(STok) as i64) as ref STok
             t.kind = 5
             t.text = c"<"
             t.quoted = 0
@@ -972,7 +972,7 @@ pub fn scan_shell(src: ref u8) ref u.Vec = trust {
                     }
                     e++
                 }
-                val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+                val t: mut ref STok = u.xalloc(@sizeof(STok) as i64) as ref STok
                 t.kind = 10
                 t.text = u.s_substr(src, i + 3, e)
                 t.quoted = 0
@@ -1001,7 +1001,7 @@ pub fn scan_shell(src: ref u8) ref u.Vec = trust {
 }
 
 fn push_op(toks: mut ref u.Vec, kind: i64, text: ref u8, fd: i64) void = trust {
-    val t: mut ref STok = @alloc(@sizeof(STok)) as ref STok
+    val t: mut ref STok = u.xalloc(@sizeof(STok) as i64) as ref STok
     t.kind = kind
     t.text = text
     t.quoted = 0
@@ -1014,7 +1014,7 @@ fn push_op(toks: mut ref u.Vec, kind: i64, text: ref u8, fd: i64) void = trust {
 // ---------------------------------------------------------------------------
 
 fn new_command() ref Command = trust {
-    val c: mut ref Command = @alloc(@sizeof(Command)) as ref Command
+    val c: mut ref Command = u.xalloc(@sizeof(Command) as i64) as ref Command
     c.argv = u.vec_new()
     c.assigns = u.vec_new()
     c.redirs = u.vec_new()
@@ -1022,7 +1022,7 @@ fn new_command() ref Command = trust {
 }
 
 fn new_pipeline() ref Pipeline = trust {
-    val p: mut ref Pipeline = @alloc(@sizeof(Pipeline)) as ref Pipeline
+    val p: mut ref Pipeline = u.xalloc(@sizeof(Pipeline) as i64) as ref Pipeline
     p.cmds = u.vec_new()
     return p
 }
@@ -1056,7 +1056,7 @@ pub fn parse_pipeline(tokens: ref u.Vec) ref Pipeline = trust {
             continue
         }
         if t.kind >= 3 && t.kind <= 10 {
-            val r: mut ref Redir = @alloc(@sizeof(Redir)) as ref Redir
+            val r: mut ref Redir = u.xalloc(@sizeof(Redir) as i64) as ref Redir
             r.kind = t.kind
             r.fd = t.fd
             r.target = none
@@ -1193,7 +1193,7 @@ fn run_pipeline(pipe: ref Pipeline, background: bool) i32 = trust {
         if k >= n - 1 {
             break
         }
-        val pp: mut ref ex.Pipe = @alloc(@sizeof(ex.Pipe)) as ref ex.Pipe
+        val pp: mut ref ex.Pipe = u.xalloc(@sizeof(ex.Pipe) as i64) as ref ex.Pipe
         pp.read_fd = 0
         pp.write_fd = 0
         val made: ex.Pipe = ex.make_pipe()
@@ -1298,6 +1298,10 @@ fn run_single(cmd: ref Command) i32 = trust {
     }
     if is_builtin(name) {
         return run_builtin_with_redirs(cmd)
+    }
+    if u.s_ends_with(name, c".blood") && u.file_exists(name) && u.hooks_ready != 0 {
+        val hook: fn(ref u8) i32 = u.run_script_file_hook
+        return hook(name)
     }
     return run_external(cmd)
 }
@@ -1821,7 +1825,7 @@ fn bi_help(cmd: ref Command) i32 = trust {
         return 0
     }
     if u.s_eq(topic, c"script") || u.s_eq(topic, c"language") {
-        u.write_fd(1, c"Blood scripts\n\n  say \"hello {name}\"\n  name = \"world\"\n  if true:\n      say \"yes\"\n  else:\n      say \"no\"\n  while true:\n      break\n  for item in [\"a\", \"b\"]:\n      say item\n  fn greet(name):\n      return \"Hello, \" + name\n  try:\n      raise \"oops\"\n  catch err:\n      say err\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n")
+        u.write_fd(1, c"Blood scripts (.blood)\n\nPython style:\n  say \"hello {name}\"\n  name = \"world\"\n  if true:\n      say \"yes\"\n  else:\n      say \"no\"\n  while true:\n      break\n  for item in [\"a\", \"b\"]:\n      say item\n  fn greet(name):\n      return \"Hello, \" + name\n  try:\n      raise \"oops\"\n  catch err:\n      say err\n\nBrace style:\n  fn main {\n    say \"hello, world\"\n    if true {\n      say \"yes\"\n    }\n    for item in [\"a\", \"b\"] {\n      say item\n    }\n  }\n  main()\n\nThe two block styles cannot be mixed in one file.\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n")
         return 0
     }
     u.write_fd(1, c"Blood builtins\n\n  cd [dir]        change directory (cd - returns)\n  pwd             print working directory\n  exit [code]     leave the shell\n  history [-c|-w] command history\n  clear           clear the screen\n  export NAME=..  export a variable\n  unset NAME..    remove variables\n  alias NAME=..   define an alias\n  unalias NAME..  remove an alias\n  help [topic]    this help (topics: config, script)\n  source FILE     run a blood script\n  echo ARGS..     print arguments\n  say ARGS..      print arguments\n  type NAME       show how a command resolves\n  jobs            background jobs\n  wait            wait for background jobs\n\nInteractive keys: Ctrl-A/E/B/F/K/U/W/L, Ctrl-R history search,\nTab completion menu, Up/Down history, Ctrl-C cancel, Ctrl-D exit.\n")

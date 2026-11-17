@@ -69,7 +69,7 @@ fn decode(line: ref u8) ref u8 = trust {
 }
 
 pub fn history_new(c: ref cfgmod.Config) ref History = trust {
-    val h: mut ref History = @alloc(@sizeof(History)) as ref History
+    val h: mut ref History = u.xalloc(@sizeof(History) as i64) as ref History
     h.items = u.vec_new()
     h.file = u.s_dup(c.history_file)
     h.max = c.history_max

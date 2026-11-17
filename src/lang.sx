@@ -99,17 +99,20 @@ pub type Lexer = {
     indents: mut ref u.Vec
     line_start: mut i64
     depth: mut i64
+    style: mut i64
 }
 
 pub type Parser = {
     toks: mut ref u.Vec
     src: mut ref u8
     i: mut i64
+    style: mut i64
 }
 
 val g_error: mut ref u8 = none
 val g_error_line: mut i64 = 0
 val g_error_col: mut i64 = 0
+val g_style: mut i64 = 0
 
 pub fn last_error() ref u8 = trust {
     return g_error
@@ -139,7 +142,7 @@ pub fn clear_error() void = trust {
 }
 
 fn tok_new(kind: TokenKind, text: ref u8, line: i64, col: i64, start: i64, end: i64) ref Token = trust {
-    val t: mut ref Token = @alloc(@sizeof(Token)) as ref Token
+    val t: mut ref Token = u.xalloc(@sizeof(Token) as i64) as ref Token
     t.kind = kind
     t.text = text
     t.line = line
@@ -166,8 +169,180 @@ fn emit_indent(lx: mut ref Lexer, kind: TokenKind) void = trust {
     u.vec_pushp(lx.tokens, t as ref void)
 }
 
+fn is_suite_word(word: ref u8) bool = trust {
+    return u.s_eq(word, c"fn") || u.s_eq(word, c"if") || u.s_eq(word, c"elif") || u.s_eq(word, c"else") || u.s_eq(word, c"while") || u.s_eq(word, c"for") || u.s_eq(word, c"try") || u.s_eq(word, c"catch") || u.s_eq(word, c"except")
+}
+
+fn next_significant(src: ref u8, start: i64, n: i64) i64 = trust {
+    val i: mut i64 = start
+    for {
+        if i >= n {
+            return -1
+        }
+        val c: u8 = @load8(@ptradd(src, i))
+        if c == 32 || c == 9 || c == 13 || c == 10 {
+            i++
+            continue
+        }
+        if c == 35 {
+            for {
+                if i >= n {
+                    return -1
+                }
+                if @load8(@ptradd(src, i)) == 10 {
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        return i
+    }
+    return -1
+}
+
+fn scan_suite_style(src: ref u8, start: i64, n: i64) i64 = trust {
+    val i: mut i64 = start
+    val paren: mut i64 = 0
+    val bracket: mut i64 = 0
+    val brace: mut i64 = 0
+    for {
+        if i >= n {
+            if brace > 0 {
+                return 1
+            }
+            return -1
+        }
+        val c: u8 = @load8(@ptradd(src, i))
+        if c == 13 {
+            i++
+            continue
+        }
+        if c == 35 {
+            for {
+                if i >= n {
+                    break
+                }
+                if @load8(@ptradd(src, i)) == 10 {
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if c == 34 || c == 39 {
+            val quote: u8 = c
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(src, i))
+                if d == 92 {
+                    i = i + 2
+                    continue
+                }
+                i++
+                if d == quote {
+                    break
+                }
+            }
+            continue
+        }
+        if c == 40 {
+            paren++
+        } elif c == 41 {
+            if paren > 0 {
+                paren--
+            }
+        } elif c == 91 {
+            bracket++
+        } elif c == 93 {
+            if bracket > 0 {
+                bracket--
+            }
+        } elif c == 123 {
+            if paren == 0 && bracket == 0 {
+                brace++
+            }
+        } elif c == 125 {
+            if brace > 0 {
+                brace--
+                if brace == 0 {
+                    val j: i64 = next_significant(src, i + 1, n)
+                    if j < 0 {
+                        return 1
+                    }
+                    val d: u8 = @load8(@ptradd(src, j))
+                    if d == 58 || d == 46 || d == 91 || d == 40 {
+                        i = j
+                        continue
+                    }
+                    return 1
+                }
+            }
+        } elif c == 58 {
+            if paren == 0 && bracket == 0 && brace == 0 {
+                return 0
+            }
+        }
+        i++
+    }
+    return -1
+}
+
+fn detect_style(src: ref u8) i64 = trust {
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(src, i))
+        if c == 35 {
+            for {
+                if i >= n {
+                    break
+                }
+                if @load8(@ptradd(src, i)) == 10 {
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if c == 32 || c == 9 || c == 13 || c == 10 {
+            i++
+            continue
+        }
+        if !is_alpha(c) {
+            i++
+            continue
+        }
+        val start: i64 = i
+        for {
+            if i >= n {
+                break
+            }
+            val d: u8 = @load8(@ptradd(src, i))
+            if !is_alnum(d) {
+                break
+            }
+            i++
+        }
+        val word: ref u8 = u.s_ndup(@ptradd(src, start), i - start)
+        if is_suite_word(word) {
+            val style: i64 = scan_suite_style(src, i, n)
+            if style >= 0 {
+                return style
+            }
+        }
+    }
+    return 0
+}
+
 pub fn lex(src: ref u8) ref u.Vec = trust {
-    val lx: mut ref Lexer = @alloc(@sizeof(Lexer)) as ref Lexer
+    val lx: mut ref Lexer = u.xalloc(@sizeof(Lexer) as i64) as ref Lexer
     lx.src = src
     lx.len = u.s_len(src)
     lx.pos = 0
@@ -178,12 +353,15 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
     u.vec_push(lx.indents, 0)
     lx.line_start = 1
     lx.depth = 0
+    lx.style = detect_style(src)
+    g_style = lx.style
+    val brace_style: bool = lx.style != 0
     val at_line_start: mut bool = true
     for {
         if lx.pos >= lx.len {
             break
         }
-        if at_line_start && lx.depth == 0 {
+        if at_line_start && lx.depth == 0 && !brace_style {
             val width: i64 = measure_indent(lx)
             if is_blank_line(lx) {
                 skip_blank(lx)
@@ -480,11 +658,21 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
                 continue
             }
         }
-        if c == 40 || c == 91 || c == 123 {
+        if c == 40 || c == 91 {
             lx.depth = lx.depth + 1
-        } elif c == 41 || c == 93 || c == 125 {
+        } elif c == 41 || c == 93 {
             if lx.depth > 0 {
                 lx.depth = lx.depth - 1
+            }
+        } elif c == 123 {
+            if !brace_style {
+                lx.depth = lx.depth + 1
+            }
+        } elif c == 125 {
+            if !brace_style {
+                if lx.depth > 0 {
+                    lx.depth = lx.depth - 1
+                }
             }
         }
         lx.pos++
@@ -595,7 +783,7 @@ fn hex_at(s: ref u8, i: i64) i64 = trust {
 }
 
 fn node_new(kind: NodeKind, line: i64, col: i64) ref Node = trust {
-    val n: mut ref Node = @alloc(@sizeof(Node)) as ref Node
+    val n: mut ref Node = u.xalloc(@sizeof(Node) as i64) as ref Node
     n.kind = kind
     n.a = 0
     n.b = 0
@@ -651,6 +839,46 @@ fn skip_newlines(p: mut ref Parser) void = trust {
 
 fn parse_suite(p: mut ref Parser, line: i64, col: i64) ref Node = trust {
     val block: mut ref Node = node_new(NodeKind.Block, line, col)
+    if p.style != 0 {
+        val t: ref Token = cur(p)
+        if t.kind == TokenKind.Op && text_is(t, c":") {
+            set_error(t.line, t.col, c"cannot mix colon blocks with brace blocks")
+            return block
+        }
+        if !expect_op(p, c"{") {
+            return block
+        }
+        for {
+            skip_newlines(p)
+            if cur(p).kind == TokenKind.Indent || cur(p).kind == TokenKind.Dedent {
+                advance(p)
+                continue
+            }
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c";") {
+                advance(p)
+                continue
+            }
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c"}") {
+                advance(p)
+                break
+            }
+            if cur(p).kind == TokenKind.Eof {
+                set_error(cur(p).line, cur(p).col, c"unexpected end of file in block")
+                break
+            }
+            val s: ref Node = parse_statement(p)
+            if s != none {
+                u.vec_pushp(block.kids, s as ref void)
+            }
+        }
+        skip_newlines(p)
+        return block
+    }
+    val t: ref Token = cur(p)
+    if t.kind == TokenKind.Op && text_is(t, c"{") {
+        set_error(t.line, t.col, c"cannot mix brace blocks with colon blocks")
+        return block
+    }
     if !expect_op(p, c":") {
         return block
     }
@@ -829,37 +1057,37 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
     }
     n.s = u.s_dup(name.text)
     advance(p)
-    if !expect_op(p, c"(") {
-        return n
-    }
-    for {
-        if cur(p).kind == TokenKind.Op && text_is(cur(p), c")") {
-            break
-        }
-        val pt: ref Token = cur(p)
-        if pt.kind != TokenKind.Ident {
-            set_error(pt.line, pt.col, c"expected a parameter name")
-            break
-        }
-        u.vec_pushp(n.params, u.s_dup(pt.text) as ref void)
+    if cur(p).kind == TokenKind.Op && text_is(cur(p), c"(") {
         advance(p)
-        if cur(p).kind == TokenKind.Op && text_is(cur(p), c":") {
-            advance(p)
-            for {
-                if cur(p).kind == TokenKind.Op && (text_is(cur(p), c",") || text_is(cur(p), c")")) {
-                    break
-                }
-                advance(p)
+        for {
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c")") {
+                break
             }
-        }
-        if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+            val pt: ref Token = cur(p)
+            if pt.kind != TokenKind.Ident {
+                set_error(pt.line, pt.col, c"expected a parameter name")
+                break
+            }
+            u.vec_pushp(n.params, u.s_dup(pt.text) as ref void)
             advance(p)
-            continue
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c":") {
+                advance(p)
+                for {
+                    if cur(p).kind == TokenKind.Op && (text_is(cur(p), c",") || text_is(cur(p), c")")) {
+                        break
+                    }
+                    advance(p)
+                }
+            }
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+                advance(p)
+                continue
+            }
+            break
         }
-        break
-    }
-    if !expect_op(p, c")") {
-        return n
+        if !expect_op(p, c")") {
+            return n
+        }
     }
     val body: ref Node = parse_suite(p, t.line, t.col)
     u.vec_pushp(n.kids, body as ref void)
@@ -1371,10 +1599,11 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.ListLit, t.line, t.col)
         for {
+            skip_newlines(p)
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c"]") {
                 break
             }
-            if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof {
+            if cur(p).kind == TokenKind.Eof {
                 break
             }
             u.vec_pushp(n.kids, parse_expr(p) as ref void)
@@ -1393,10 +1622,11 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.DictLit, t.line, t.col)
         for {
+            skip_newlines(p)
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c"}") {
                 break
             }
-            if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof {
+            if cur(p).kind == TokenKind.Eof {
                 break
             }
             val k: ref Node = parse_expr(p)
@@ -1425,10 +1655,11 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
 pub fn parse(src: ref u8) ref Node = trust {
     clear_error()
     val toks: ref u.Vec = lex(src)
-    val p: mut ref Parser = @alloc(@sizeof(Parser)) as ref Parser
+    val p: mut ref Parser = u.xalloc(@sizeof(Parser) as i64) as ref Parser
     p.toks = toks
     p.src = src
     p.i = 0
+    p.style = g_style
     val program: mut ref Node = node_new(NodeKind.Program, 1, 1)
     for {
         skip_newlines(p)
@@ -1462,10 +1693,11 @@ pub fn parse(src: ref u8) ref Node = trust {
 pub fn parse_expr_text(src: ref u8) ref Node = trust {
     clear_error()
     val toks: ref u.Vec = lex(src)
-    val p: mut ref Parser = @alloc(@sizeof(Parser)) as ref Parser
+    val p: mut ref Parser = u.xalloc(@sizeof(Parser) as i64) as ref Parser
     p.toks = toks
     p.src = src
     p.i = 0
+    p.style = g_style
     skip_newlines(p)
     val n: ref Node = parse_expr(p)
     return n

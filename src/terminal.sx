@@ -4,12 +4,7 @@ val u = use("util.sx")
 val cfgmod = use("config.sx")
 val histmod = use("history.sx")
 val comp = use("completion.sx")
-
-extern (C, header) fn c_tcgetattr(fd: i32, t: ref Termios) i32 = "tcgetattr"
-extern (C, header) fn c_tcsetattr(fd: i32, act: i32, t: ref Termios) i32 = "tcsetattr"
-extern (C, header) fn c_ioctl(fd: i32, req: u64, ...) i32 = "ioctl"
-extern (C, header) fn c_read(fd: i32, buf: ref void, n: usize) i64 = "read"
-extern (C, header) fn c_poll(fds: ref PollFd, n: u64, timeout: i32) i32 = "poll"
+val rt = use("std/runtime")
 
 pub type Termios = {
     c_iflag: mut u32
@@ -97,7 +92,7 @@ fn const_icrnl() u32 = trust {
 
 pub fn init_terminal() void = trust {
     val t: mut Termios = @zeroed
-    if c_tcgetattr(0, @addr(t)) == 0 {
+    if rt.tcgetattr(0, @addr(t) as ref void) == 0 {
         term.orig = t
         term.have_tty = 1
     } else {
@@ -119,7 +114,7 @@ pub fn raw_mode() void = trust {
     t.c_iflag = t.c_iflag & ~(const_ixon() | const_icrnl())
     @store8(@ptradd(@addr(t.c_cc) as ref u8, 6), 1)
     @store8(@ptradd(@addr(t.c_cc) as ref u8, 5), 0)
-    c_tcsetattr(0, 0, @addr(t))
+    rt.tcsetattr(0, 0, @addr(t) as ref void)
     term.raw_active = 1
 }
 
@@ -127,13 +122,13 @@ pub fn cooked_mode() void = trust {
     if term.have_tty == 0 {
         return
     }
-    c_tcsetattr(0, 0, @addr(term.orig))
+    rt.tcsetattr(0, 0, @addr(term.orig) as ref void)
     term.raw_active = 0
 }
 
 pub fn cols() i64 = trust {
     val ws: mut WinSize = @zeroed
-    if c_ioctl(1, 21523 as u64, @addr(ws)) == 0 && ws.cols > 0 {
+    if rt.ioctl(1, 21523 as u64, @addr(ws) as ref void) == 0 && ws.cols > 0 {
         return ws.cols as i64
     }
     return 80
@@ -141,7 +136,7 @@ pub fn cols() i64 = trust {
 
 pub fn rows() i64 = trust {
     val ws: mut WinSize = @zeroed
-    if c_ioctl(1, 21523 as u64, @addr(ws)) == 0 && ws.rows > 0 {
+    if rt.ioctl(1, 21523 as u64, @addr(ws) as ref void) == 0 && ws.rows > 0 {
         return ws.rows as i64
     }
     return 24
@@ -153,7 +148,7 @@ pub fn write_s(s: ref u8) void = trust {
 
 fn read_key() i32 = trust {
     val c: mut u8 = 0
-    val n: i64 = c_read(0, @addr(c) as ref void, 1)
+    val n: i64 = rt.read(0, @addr(c) as ref void, 1)
     if n <= 0 {
         return -1
     }
@@ -165,7 +160,7 @@ fn read_key_timeout(ms: i32) i32 = trust {
     pfd.fd = 0
     pfd.events = 1
     pfd.revents = 0
-    if c_poll(@addr(pfd), 1, ms) <= 0 {
+    if rt.poll(@addr(pfd) as ref void, 1, ms) <= 0 {
         return -1
     }
     return read_key()
@@ -177,7 +172,7 @@ pub fn editor_new(
     vars: ref u.Map,
     aliases: ref u.Map
 ) ref Editor = trust {
-    val e: mut ref Editor = @alloc(@sizeof(Editor)) as ref Editor
+    val e: mut ref Editor = u.xalloc(@sizeof(Editor) as i64) as ref Editor
     e.cfg = c
     e.hist = h
     e.vars = vars
