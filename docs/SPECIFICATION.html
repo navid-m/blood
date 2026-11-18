@@ -2234,6 +2234,23 @@ status is the status of its last stage.</p>
 ID is recorded as a background job. <code>$!</code> is set to that ID. <code>jobs</code> lists
 running jobs and <code>wait</code> waits for all recorded jobs.</p>
 </div>
+<div class="paragraph">
+<p>An unquoted <code>time</code> at the beginning of a pipeline is a shell keyword. It runs
+the pipeline and then writes timings to standard error in the same shape as
+<code>bash</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>real    0m1.201s
+user    0m1.067s
+sys     0m0.133s</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The pipeline&#8217;s output is not delayed or captured. Redirections on the pipeline
+do not redirect the timing report. To run the external <code>time</code> utility, quote
+the name or use its path, for example <code>'time'</code> or <code>/usr/bin/time</code>.</p>
+</div>
 </div>
 <div class="sect2">
 <h3 id="_command_resolution">Command resolution</h3>
@@ -2345,7 +2362,7 @@ assign values.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>type NAME</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Resolve a builtin, alias, or <code>PATH</code> entry.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Resolve a shell keyword, builtin, alias, or <code>PATH</code> entry.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>which NAME</code></p></td>
@@ -2374,8 +2391,9 @@ assign values.</p></td>
 </tbody>
 </table>
 <div class="paragraph">
-<p><code>type</code> checks builtins first, then aliases, then <code>PATH</code>. It does not verify
-that a <code>PATH</code> candidate is executable. Only the first argument is used.
+<p><code>type</code> checks shell keywords first, then builtins, then aliases, then <code>PATH</code>.
+It does not verify that a <code>PATH</code> candidate is executable. Only the first
+argument is used.
 <code>source</code> and <code>cd</code> use only their first argument.</p>
 </div>
 </div>
@@ -2392,7 +2410,7 @@ top-level separator.</p>
 shell-list   = segment { connector segment } ;
 connector    = ";" | NEWLINE | "&amp;&amp;" | "||" | "&amp;" ;
 segment      = pipeline ;
-pipeline     = command { "|" command } ;
+pipeline     = [ "time" ] command { "|" command } ;
 command      = { assignment } { WORD | redirection } ;
 assignment   = NAME "=" WORD ;
 redirection  = "&lt;" WORD
@@ -4220,7 +4238,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-18 02:12:48 UTC
+Last updated 2026-11-18 02:26:35 UTC
 </div>
 </div>
 </body>

@@ -4,6 +4,7 @@ val u       = use("util.sx")
 val cfgmod  = use("config.sx")
 val histmod = use("history.sx")
 val ex      = use("exec.sx")
+val rt      = use("std/runtime")
 
 pub type STok = {
     kind: mut i64
@@ -32,6 +33,13 @@ pub type Pipeline = {
 pub type Segment = {
     text: mut ref u8
     conn: mut i64
+}
+
+type CpuTimes = {
+    utime: mut i64
+    stime: mut i64
+    cutime: mut i64
+    cstime: mut i64
 }
 
 val sh_cfg: mut ref cfgmod.Config = none
@@ -1165,11 +1173,19 @@ pub fn run_line(line: ref u8) i32 = trust {
 
 fn run_segment(text: ref u8, background: bool) i32 = trust {
     sh_error = none
-    val toks: ref u.Vec = scan_shell(text)
+    val toks: mut ref u.Vec = scan_shell(text)
     if sh_error != none {
         u.write_fd(2, u.s_cat3(c"blood: ", sh_error, c"\n"))
         sh_last_status = 2
         return 2
+    }
+    val timed: mut bool = false
+    if toks.len > 0 {
+        val head: ref STok = u.vec_p(toks, 0) as ref STok
+        if head.kind == 1 && head.quoted == 0 && u.s_eq(head.text, c"time") {
+            timed = true
+            u.vec_remove(toks, 0)
+        }
     }
     val pipe: ref Pipeline = parse_pipeline(toks)
     if sh_error != none {
@@ -1177,7 +1193,56 @@ fn run_segment(text: ref u8, background: bool) i32 = trust {
         sh_last_status = 2
         return 2
     }
+    if timed {
+        return run_timed(pipe, background)
+    }
     return run_pipeline(pipe, background)
+}
+
+fn duration_str(ms: i64) ref u8 = trust {
+    val total: i64 = ms
+    val minutes: i64 = total / 60000
+    val rem: i64 = total % 60000
+    val seconds: i64 = rem / 1000
+    val millis: i64 = rem % 1000
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, u.s_int(minutes))
+    u.buf_add(b, c"m")
+    u.buf_add(b, u.s_int(seconds))
+    u.buf_add(b, c".")
+    if millis < 10 {
+        u.buf_add(b, c"00")
+    } elif millis < 100 {
+        u.buf_add(b, c"0")
+    }
+    u.buf_add(b, u.s_int(millis))
+    u.buf_add(b, c"s")
+    return u.buf_take(b)
+}
+
+fn run_timed(pipe: ref Pipeline, background: bool) i32 = trust {
+    val before: mut CpuTimes = @zeroed
+    rt.times(@addr(before) as ref void)
+    val started: i64 = u.now_ms()
+    val status: i32 = run_pipeline(pipe, background)
+    val elapsed: i64 = u.now_ms() - started
+    val after: mut CpuTimes = @zeroed
+    rt.times(@addr(after) as ref void)
+    val user_ticks: i64 = (after.utime - before.utime) + (after.cutime - before.cutime)
+    val sys_ticks: i64 = (after.stime - before.stime) + (after.cstime - before.cstime)
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 10)
+    u.buf_add(b, c"real\t")
+    u.buf_add(b, duration_str(elapsed))
+    u.buf_ch(b, 10)
+    u.buf_add(b, c"user\t")
+    u.buf_add(b, duration_str(user_ticks * 10))
+    u.buf_ch(b, 10)
+    u.buf_add(b, c"sys\t")
+    u.buf_add(b, duration_str(sys_ticks * 10))
+    u.buf_ch(b, 10)
+    u.write_fd(2, u.buf_take(b))
+    return status
 }
 
 fn is_builtin(name: ref u8) bool = trust {
@@ -1916,7 +1981,7 @@ fn bi_help(cmd: ref Command) i32 = trust {
     if u.s_eq(topic, c"script") || u.s_eq(topic, c"language") {
         u.write_fd(
             1,
-            c"Blood scripts (.blood)\n\nBlocks use braces:\n  say \"hello {name}\"\n  name = \"world\"\n  if true {\n      say \"yes\"\n  } else {\n      say \"no\"\n  }\n  while true {\n      break\n  }\n  for item in [\"a\", \"b\"] {\n      say item\n  }\n  para for item in [\"a\", \"b\"] {\n      say item\n  }\n  fn greet(name) {\n      return \"Hello, \" + name\n  }\n  try {\n      raise \"oops\"\n  } catch err {\n      say err\n  }\n\nThe Python-like colon and indentation style is deprecated but still accepted.\nThe two block styles cannot be mixed in one file.\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n"
+            c"Blood scripts (.blood)\n\nBlocks use braces:\n  say \"hello {name}\"\n  name = \"world\"\n  if true {\n      say \"yes\"\n  } else {\n      say \"no\"\n  }\n  while true {\n      break\n  }\n  for item in [\"a\", \"b\"] {\n      say item\n  }\n  para for item in [\"a\", \"b\"] {\n      say item\n  }\n  fn greet(name) {\n      return \"Hello, \" + name\n  }\n  try {\n      raise \"oops\"\n  } catch err {\n      say err\n  }\n\nThe Python-like colon and indentation style is deprecated but still accepted.\nThe two block styles cannot be mixed in one file.\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n  time make -j8\n"
         )
         return 0
     }
@@ -2002,6 +2067,10 @@ fn bi_which(cmd: ref Command) i32 = trust {
         return 2
     }
     val name: ref u8 = argv_at(cmd, 1)
+    if u.s_eq(name, c"time") {
+        u.write_fd(1, c"time: shell keyword\n")
+        return 0
+    }
     if is_builtin(name) {
         u.write_fd(1, u.s_cat3(name, c": builtin\n", c""))
         return 0

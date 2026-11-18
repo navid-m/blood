@@ -955,6 +955,22 @@ status is the status of its last stage.
 ID is recorded as a background job. `$!` is set to that ID. `jobs` lists
 running jobs and `wait` waits for all recorded jobs.
 
+An unquoted `time` at the beginning of a pipeline is a shell keyword. It runs
+the pipeline and then writes timings to standard error in the same shape as
+`bash`:
+
+[source]
+----
+
+real    0m1.201s
+user    0m1.067s
+sys     0m0.133s
+----
+
+The pipeline's output is not delayed or captured. Redirections on the pipeline
+do not redirect the timing report. To run the external `time` utility, quote
+the name or use its path, for example `'time'` or `/usr/bin/time`.
+
 === Command resolution
 
 A command name containing `/` is passed directly to `execvp`.
@@ -998,7 +1014,7 @@ trailing newline.
 |`say ARG...` |Print arguments separated by spaces and a newline.
 |`set [NAME=VALUE...]` |With no arguments, print shell variables. Otherwise
 assign values.
-|`type NAME` |Resolve a builtin, alias, or `PATH` entry.
+|`type NAME` |Resolve a shell keyword, builtin, alias, or `PATH` entry.
 |`which NAME` |Same as `type`.
 |`jobs` |Reap finished jobs and print running background jobs.
 |`wait` |Wait for all recorded background jobs and clear the job list.
@@ -1007,8 +1023,9 @@ assign values.
 |`:` |Return 0.
 |===
 
-`type` checks builtins first, then aliases, then `PATH`. It does not verify
-that a `PATH` candidate is executable. Only the first argument is used.
+`type` checks shell keywords first, then builtins, then aliases, then `PATH`.
+It does not verify that a `PATH` candidate is executable. Only the first
+argument is used.
 `source` and `cd` use only their first argument.
 
 === Shell grammar
@@ -1022,7 +1039,7 @@ shell-input  = { shell-list } ;
 shell-list   = segment { connector segment } ;
 connector    = ";" | NEWLINE | "&&" | "||" | "&" ;
 segment      = pipeline ;
-pipeline     = command { "|" command } ;
+pipeline     = [ "time" ] command { "|" command } ;
 command      = { assignment } { WORD | redirection } ;
 assignment   = NAME "=" WORD ;
 redirection  = "<" WORD
