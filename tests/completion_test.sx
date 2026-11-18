@@ -27,6 +27,7 @@ test "completion exposes the builtin command list" {
         assert has_item(names, c"help")
         assert has_item(names, c"source")
         assert has_item(names, c"set")
+        assert has_item(names, c"cls")
         assert has_item(names, c"type")
         assert has_item(names, c"jobs")
         assert has_item(names, c"wait")
@@ -124,6 +125,37 @@ test "completion lists directories and files from the filesystem" {
         val inside: mut comp.CompResult = comp.complete(c, c"cat alpha_dir/", 14, vars, aliases)
         assert inside.items.len == 0
         comp.free_result(@addr(inside))
+
+        assert u.chdir(old) == 0
+    }
+}
+
+test "completion lists directory contents after a path" {
+    trust {
+        val root: ref u8 = c"/tmp/blood-unit-completion-path"
+        assert u.mkdir_p(u.path_join(root, c"scripts/subdir"))
+        assert u.write_file(u.path_join(root, c"scripts/alpha.sh"), c"x")
+        assert u.write_file(u.path_join(root, c"scripts/beta.sh"), c"y")
+
+        val old: ref u8 = u.cwd()
+        assert u.chdir(root) == 0
+        val c: ref cfg.Config = cfg.default_config()
+        val vars: mut ref u.Map = u.map_new()
+        val aliases: mut ref u.Map = u.map_new()
+
+        val res: mut comp.CompResult = comp.complete(c, c"./scripts/", 10, vars, aliases)
+        assert res.kind == 2
+        assert res.start == 0
+        assert res.end == 10
+        assert has_item(res.items, c"./scripts/alpha.sh")
+        assert has_item(res.items, c"./scripts/beta.sh")
+        assert has_item(res.items, c"./scripts/subdir/")
+        comp.free_result(@addr(res))
+
+        val prefixed: mut comp.CompResult = comp.complete(c, c"./scripts/a", 11, vars, aliases)
+        assert has_item(prefixed.items, c"./scripts/alpha.sh")
+        assert !has_item(prefixed.items, c"./scripts/beta.sh")
+        comp.free_result(@addr(prefixed))
 
         assert u.chdir(old) == 0
     }

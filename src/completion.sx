@@ -6,6 +6,7 @@ val cfgmod = use("config.sx")
 pub type CompResult = {
     start: mut i64
     end: mut i64
+    kind: mut i64
     items: mut ref u.Vec
 }
 
@@ -27,6 +28,7 @@ pub fn builtin_list() ref u.Vec = trust {
     add_builtin(v, c"quit")
     add_builtin(v, c"history")
     add_builtin(v, c"clear")
+    add_builtin(v, c"cls")
     add_builtin(v, c"export")
     add_builtin(v, c"unset")
     add_builtin(v, c"alias")
@@ -281,6 +283,7 @@ fn add_candidate(res: mut ref CompResult, s: ref u8) void = trust {
 }
 
 fn complete_commands(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, aliases: ref u.Map) void = trust {
+    res.kind = 1
     val names: ref u.Vec = builtin_list()
     val i: mut i64 = 0
     for {
@@ -328,6 +331,7 @@ fn complete_dirs(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config) vo
 }
 
 fn complete_env(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, vars: ref u.Map) void = trust {
+    res.kind = 3
     if vars == none {
         return
     }
@@ -348,6 +352,7 @@ fn complete_env(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, var
 }
 
 fn complete_files(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, dirs_only: bool) void = trust {
+    res.kind = 2
     val slash: i64 = last_slash(word)
     val listing: mut ref u8 = u.s_dup(c"")
     val base: mut ref u8 = u.s_dup(word)
@@ -427,6 +432,7 @@ pub fn complete(
     val res: mut ref CompResult = u.xalloc(@sizeof(CompResult) as i64) as ref CompResult
     res.start = start
     res.end = end
+    res.kind = 0
     res.items = u.vec_new()
     if c.completion_enabled == 0 {
         return res
@@ -445,7 +451,11 @@ pub fn complete(
         }
     }
     if !has_previous_word(line, start) {
-        complete_commands(res, word, c, aliases)
+        if u.s_contains(word, c"/") || u.s_starts(word, c".") || u.s_starts(word, c"~") {
+            complete_files(res, word, c, false)
+        } else {
+            complete_commands(res, word, c, aliases)
+        }
         return res
     }
     val cmd: ref u8 = first_word(line, start)

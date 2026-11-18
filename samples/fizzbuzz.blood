@@ -1,11 +1,13 @@
 # Blood sample: fizzbuzz with a for loop and elif chains.
 
-for n in range(1, 16):
-    if n % 15 == 0:
+for n in range(1, 16) {
+    if n % 15 == 0 {
         say "FizzBuzz"
-    elif n % 3 == 0:
+    } elif n % 3 == 0 {
         say "Fizz"
-    elif n % 5 == 0:
+    } elif n % 5 == 0 {
         say "Buzz"
-    else:
+    } else {
         say n
+    }
+}

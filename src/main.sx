@@ -1,4 +1,4 @@
-/// Blood — an interactive shell and small Python-like scripting language.
+/// Blood — an interactive shell and small brace-delimited scripting language.
 
 val u = use("util.sx")
 val cfgmod = use("config.sx")

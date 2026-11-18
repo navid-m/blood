@@ -3,16 +3,20 @@
 text = "the quick brown fox jumps over the lazy dog the fox"
 counts = {}
 
-for word in text.split(" "):
+for word in text.split(" ") {
     word = word.strip()
-    if word == "":
+    if word == "" {
         continue
-    if word in counts:
+    }
+    if word in counts {
         counts[word] += 1
-    else:
+    } else {
         counts[word] = 1
+    }
+}
 
 keys = counts.keys()
 keys.sort()
-for key in keys:
+for key in keys {
     say key + ": " + str(counts[key])
+}

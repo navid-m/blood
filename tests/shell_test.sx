@@ -294,6 +294,16 @@ test "run_line executes builtins and tracks status" {
     }
 }
 
+test "run_line clears the screen with clear and cls" {
+    trust {
+        init_shell()
+        assert sh.run_line(c"type clear") == 0
+        assert sh.run_line(c"type cls") == 0
+        assert sh.run_line(c"clear") == 0
+        assert sh.run_line(c"cls") == 0
+    }
+}
+
 test "run_line manages aliases" {
     trust {
         init_shell()

@@ -1,5 +1,6 @@
 # Blood sample: script arguments. Run with: blood args.blood alpha beta
 
 say "argc=" + str(len(args))
-for value in args:
+for value in args {
     say value
+}

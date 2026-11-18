@@ -1,13 +1,15 @@
 # Blood sample: raising and catching script errors.
 
-try:
+try {
     raise "something went wrong"
-catch err:
+} catch err {
     say "caught: " + err
+}
 
-try:
+try {
     value = 10 / 0
-catch err:
+} catch err {
     say "caught: " + err
+}
 
 say "still running"

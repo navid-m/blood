@@ -440,16 +440,18 @@ is used.
 === Rendering model
 
 The prompt is rendered once per command line, not once per keystroke. Each
-keystroke redraws the prompt text and the current line. Long lines are
-horizontally scrolled so that the cursor remains visible.
+keystroke redraws the prompt text, the current line, and any open completion
+menu in a single buffered write. Long lines are horizontally scrolled so that
+the cursor remains visible.
 
 Newline bytes stored in a recalled history entry are displayed as `⏎` in the
 line editor. Cursor movement traverses UTF-8 code points. Display width is
 counted in code points, not in terminal cells, so wide East Asian characters
 and combining marks are not width-corrected.
 
-The completion menu is drawn below the prompt line. The cursor is saved and
-restored around the menu, so the insertion point remains on the prompt line.
+The completion menu is drawn as a bordered rectangle below the prompt line.
+Its height is capped at ten rows and it never fills the terminal. The cursor
+is repositioned to the insertion point after each redraw.
 
 === Key bindings
 
@@ -499,11 +501,13 @@ While the menu is open:
 * Shift-Tab selects the previous candidate and previews it.
 * Enter accepts the line as previewed.
 * Any ordinary editing key closes the menu and acts on the previewed line.
-* Esc closes the menu and leaves the current line unchanged.
+* Esc closes the menu and restores the line to the state it had when the menu
+  opened. A lone Esc with no menu open is ignored.
 
-The menu is drawn as a column-major grid. At most 200 candidates are displayed,
-and the number of displayed rows is limited to fit the terminal. The selected
-candidate is highlighted with reverse video.
+The menu is drawn as a bordered rectangle with a title, in row-major order.
+At most ten rows, including the border, are used; longer candidate lists
+scroll as the selection moves. The selected candidate is highlighted with
+reverse video. Items that are wider than the menu are clipped with `…`.
 
 === Reverse incremental search
 
@@ -526,9 +530,10 @@ searches from newest to oldest.
 
 The interactive shell collects input in three situations:
 
-* A script line that begins a block, recognised by a trailing `:` on a line
-  that has the shape of a scripting statement. Subsequent lines are collected
-  until an empty line.
+* A script line that begins a block, recognised by a trailing `{` (or by the
+  deprecated trailing `:`) on a line that has the shape of a scripting
+  statement. Subsequent lines are collected until the block is balanced or,
+  for the colon style, until an empty line.
 * A line with unbalanced parentheses, brackets, braces, or quotes. Lines are
   collected until balance is restored.
 * A line ending in a backslash. The backslash-newline sequence is removed by
@@ -652,7 +657,8 @@ after whitespace or one of `|`, `&`, `;`, `<`, `>`, `(`, or `)`.
 Completion is selected as follows:
 
 * If no earlier word occurs in the current command segment, completion is for
-  command names.
+  command names. A word that contains `/` or begins with `.` or `~` is
+  completed as a path instead.
 * If the command is `cd`, `pushd`, or `popd`, completion is for directories.
 * If the command is `export`, `unset`, or `set`, completion is for shell
   variable names.
@@ -671,7 +677,9 @@ pass the executable access check are included.
 Filesystem completion splits the word at its final `/`. The directory portion
 is expanded for `~` and listed. Entries whose names begin with `.` are offered
 only when the typed basename begins with `.`. Directories receive a trailing
-`/`. Candidates preserve the typed directory prefix.
+`/`. Candidates preserve the typed directory prefix. Typing `./some/path/`
+and pressing Tab therefore lists the contents of that directory in the
+completion menu.
 
 Completion inside a quoted word is not attempted when the character before the
 cursor is `"` or `'`.
@@ -878,6 +886,7 @@ when `CODE` is omitted. A non-numeric code prints an error and uses 2.
 |`quit` |Alias for `exit`.
 |`history [-c\|-w\|N]` |Show or manage history as described above.
 |`clear` |Write the ANSI clear-screen sequence.
+|`cls` |Alias for `clear`.
 |`export [NAME=VALUE...] [NAME...]` |Export variables. With no arguments,
 print shell variables.
 |`unset NAME...` |Remove shell and environment variables.
@@ -969,7 +978,7 @@ Identifiers are case sensitive. Keyword matching is case sensitive.
 
 Spaces and tabs separate tokens. A `#` outside a string begins a comment that
 extends to the next line feed. Blank lines and comment-only lines do not affect
-indentation.
+block structure.
 
 ==== Numeric literals
 
@@ -1025,18 +1034,29 @@ executed by the shell in a child process, trailing newlines are removed, and
 the result is a string value. The completion status becomes the value of the
 script variable `status`.
 
-==== Indentation
+==== Blocks
 
-Blocks are introduced by a colon at the end of a header and by indentation.
-The lexer computes an indentation column for each non-blank logical line.
-Spaces count as one column and a tab counts as four columns. An indentation
-greater than the current level emits `INDENT`; a decrease emits one or more
-`DEDENT` tokens. Indentation must return to an enclosing level.
+Blocks are introduced by braces. The opening brace follows the header of a
+compound statement and the matching closing brace ends its body:
 
-Newlines and indentation are ignored inside unmatched `(`, `[`, and `{`
-delimiters. This permits multiline lists, dictionaries, and call arguments.
+[source]
+----
+if CONDITION {
+    BLOCK
+}
+----
 
-A semicolon `;` may separate simple statements on one line.
+Newlines and indentation are ignored inside unmatched `(` and `[` delimiters
+and inside dictionary literals. This permits multiline lists, dictionaries,
+and call arguments.
+
+A semicolon `;` may separate simple statements on one line. A single-line
+suite may also follow the opening brace.
+
+The older Python-like style, which introduced blocks with a trailing colon
+and indentation, is deprecated. It remains accepted for compatibility, but
+new scripts should use braces. A single source file must use one style
+consistently.
 
 ==== Keywords
 
@@ -1198,27 +1218,30 @@ expressions, writes a newline.
 
 [source]
 ----
-if CONDITION:
+if CONDITION {
     BLOCK
-elif CONDITION:
+} elif CONDITION {
     BLOCK
-else:
+} else {
     BLOCK
+}
 ----
 
 The first true branch is executed. `elif` is the only spelling for an
 additional condition; `else if` is not part of the language. A single-line
-suite after the colon is accepted.
+suite after the opening brace is accepted.
 
 ==== Loops
 
 [source]
 ----
-while CONDITION:
+while CONDITION {
     BLOCK
+}
 
-for NAME in EXPRESSION:
+for NAME in EXPRESSION {
     BLOCK
+}
 ----
 
 `while` reevaluates its condition before each iteration. `for` iterates over
@@ -1231,8 +1254,9 @@ There is no C-style `for`, no `do`, and no `loop` statement.
 
 [source]
 ----
-fn NAME(PARAM1, PARAM2, ...):
+fn NAME(PARAM1, PARAM2, ...) {
     BLOCK
+}
 ----
 
 Parameters are positional. Type annotations may be written after a parameter
@@ -1248,10 +1272,11 @@ body returns null. Extra arguments are ignored; missing arguments are null.
 
 [source]
 ----
-try:
+try {
     BLOCK
-catch NAME:
+} catch NAME {
     BLOCK
+}
 ----
 
 `except` may be used in place of `catch`. The catch variable is optional and
@@ -1488,8 +1513,9 @@ CMDSUB       = "`" { any-byte } "`"
 ....
 
 The lexer emits `NEWLINE`, `INDENT`, and `DEDENT` according to the indentation
-rules. It ignores newlines and indentation while the delimiter depth is
-greater than zero.
+rules. In the deprecated colon style it ignores newlines and indentation while
+the delimiter depth is greater than zero. In the brace style it emits no
+`INDENT` or `DEDENT` tokens and newlines separate statements inside braces.
 
 ==== Syntactic grammar
 
@@ -1511,7 +1537,8 @@ statement    = say-stmt
              | expression-stmt
              | SHELL ;
 
-suite        = ":" ( NEWLINE INDENT { statement } DEDENT
+suite        = "{" { NEWLINE | INDENT | DEDENT | ";" | statement } "}"
+             | ":" ( NEWLINE INDENT { statement } DEDENT
                    | inline-stmt { ";" inline-stmt } [ NEWLINE ] ) ;
 
 inline-stmt  = say-stmt | return-stmt | break-stmt | continue-stmt
@@ -1724,8 +1751,9 @@ $ blood
 └─ ❯ echo hello | tr a-z A-Z
 HELLO
 ┌─ user@host ~/src (main *)
-└─ ❯ for item in ["one", "two"]:
+└─ ❯ for item in ["one", "two"] {
   …     say item
+  … }
 ----
 
 === Command language
@@ -1762,25 +1790,29 @@ version = 1
 
 say "Welcome to {name} {version}"
 
-for item in ["one", "two", "three"]:
+for item in ["one", "two", "three"] {
     say item
+}
 
-fn greet(person):
+fn greet(person) {
     return "Hello, " + person
+}
 
 say greet("world")
 
-if version > 0:
+if version > 0 {
     say "positive"
-elif version == 0:
+} elif version == 0 {
     say "zero"
-else:
+} else {
     say "negative"
+}
 
-try:
+try {
     raise "example failure"
-catch message:
+} catch message {
     say "caught: {message}"
+}
 
 output = `printf "a\nb\n"`
 say output

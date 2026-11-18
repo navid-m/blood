@@ -1290,8 +1290,9 @@ is used.</p>
 <h3 id="_rendering_model">Rendering model</h3>
 <div class="paragraph">
 <p>The prompt is rendered once per command line, not once per keystroke. Each
-keystroke redraws the prompt text and the current line. Long lines are
-horizontally scrolled so that the cursor remains visible.</p>
+keystroke redraws the prompt text, the current line, and any open completion
+menu in a single buffered write. Long lines are horizontally scrolled so that
+the cursor remains visible.</p>
 </div>
 <div class="paragraph">
 <p>Newline bytes stored in a recalled history entry are displayed as <code>⏎</code> in the
@@ -1300,8 +1301,9 @@ counted in code points, not in terminal cells, so wide East Asian characters
 and combining marks are not width-corrected.</p>
 </div>
 <div class="paragraph">
-<p>The completion menu is drawn below the prompt line. The cursor is saved and
-restored around the menu, so the insertion point remains on the prompt line.</p>
+<p>The completion menu is drawn as a bordered rectangle below the prompt line.
+Its height is capped at ten rows and it never fills the terminal. The cursor
+is repositioned to the insertion point after each redraw.</p>
 </div>
 </div>
 <div class="sect2">
@@ -1451,14 +1453,16 @@ Otherwise the menu is opened without changing the line.</p>
 <p>Any ordinary editing key closes the menu and acts on the previewed line.</p>
 </li>
 <li>
-<p>Esc closes the menu and leaves the current line unchanged.</p>
+<p>Esc closes the menu and restores the line to the state it had when the menu
+opened. A lone Esc with no menu open is ignored.</p>
 </li>
 </ul>
 </div>
 <div class="paragraph">
-<p>The menu is drawn as a column-major grid. At most 200 candidates are displayed,
-and the number of displayed rows is limited to fit the terminal. The selected
-candidate is highlighted with reverse video.</p>
+<p>The menu is drawn as a bordered rectangle with a title, in row-major order.
+At most ten rows, including the border, are used; longer candidate lists
+scroll as the selection moves. The selected candidate is highlighted with
+reverse video. Items that are wider than the menu are clipped with <code>…</code>.</p>
 </div>
 </div>
 <div class="sect2">
@@ -1490,9 +1494,10 @@ searches from newest to oldest.</p>
 <div class="ulist">
 <ul>
 <li>
-<p>A script line that begins a block, recognised by a trailing <code>:</code> on a line
-that has the shape of a scripting statement. Subsequent lines are collected
-until an empty line.</p>
+<p>A script line that begins a block, recognised by a trailing <code>{</code> (or by the
+deprecated trailing <code>:</code>) on a line that has the shape of a scripting
+statement. Subsequent lines are collected until the block is balanced or,
+for the colon style, until an empty line.</p>
 </li>
 <li>
 <p>A line with unbalanced parentheses, brackets, braces, or quotes. Lines are
@@ -1696,7 +1701,8 @@ after whitespace or one of <code>|</code>, <code>&amp;</code>, <code>;</code>, <
 <ul>
 <li>
 <p>If no earlier word occurs in the current command segment, completion is for
-command names.</p>
+command names. A word that contains <code>/</code> or begins with <code>.</code> or <code>~</code> is
+completed as a path instead.</p>
 </li>
 <li>
 <p>If the command is <code>cd</code>, <code>pushd</code>, or <code>popd</code>, completion is for directories.</p>
@@ -1735,7 +1741,9 @@ pass the executable access check are included.</p>
 <p>Filesystem completion splits the word at its final <code>/</code>. The directory portion
 is expanded for <code>~</code> and listed. Entries whose names begin with <code>.</code> are offered
 only when the typed basename begins with <code>.</code>. Directories receive a trailing
-<code>/</code>. Candidates preserve the typed directory prefix.</p>
+<code>/</code>. Candidates preserve the typed directory prefix. Typing <code>./some/path/</code>
+and pressing Tab therefore lists the contents of that directory in the
+completion menu.</p>
 </div>
 <div class="paragraph">
 <p>Completion inside a quoted word is not attempted when the character before the
@@ -2117,6 +2125,10 @@ when <code>CODE</code> is omitted. A non-numeric code prints an error and uses 2
 <td class="tableblock halign-left valign-top"><p class="tableblock">Write the ANSI clear-screen sequence.</p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>cls</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Alias for <code>clear</code>.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>export [NAME=VALUE&#8230;&#8203;] [NAME&#8230;&#8203;]</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Export variables. With no arguments,
 print shell variables.</p></td>
@@ -2276,7 +2288,7 @@ digit  = "0".."9" ;</pre>
 <div class="paragraph">
 <p>Spaces and tabs separate tokens. A <code>#</code> outside a string begins a comment that
 extends to the next line feed. Blank lines and comment-only lines do not affect
-indentation.</p>
+block structure.</p>
 </div>
 </div>
 <div class="sect3">
@@ -2378,20 +2390,32 @@ script variable <code>status</code>.</p>
 </div>
 </div>
 <div class="sect3">
-<h4 id="_indentation">Indentation</h4>
+<h4 id="_blocks">Blocks</h4>
 <div class="paragraph">
-<p>Blocks are introduced by a colon at the end of a header and by indentation.
-The lexer computes an indentation column for each non-blank logical line.
-Spaces count as one column and a tab counts as four columns. An indentation
-greater than the current level emits <code>INDENT</code>; a decrease emits one or more
-<code>DEDENT</code> tokens. Indentation must return to an enclosing level.</p>
+<p>Blocks are introduced by braces. The opening brace follows the header of a
+compound statement and the matching closing brace ends its body:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>if CONDITION {
+    BLOCK
+}</code></pre>
+</div>
 </div>
 <div class="paragraph">
-<p>Newlines and indentation are ignored inside unmatched <code>(</code>, <code>[</code>, and <code>{</code>
-delimiters. This permits multiline lists, dictionaries, and call arguments.</p>
+<p>Newlines and indentation are ignored inside unmatched <code>(</code> and <code>[</code> delimiters
+and inside dictionary literals. This permits multiline lists, dictionaries,
+and call arguments.</p>
 </div>
 <div class="paragraph">
-<p>A semicolon <code>;</code> may separate simple statements on one line.</p>
+<p>A semicolon <code>;</code> may separate simple statements on one line. A single-line
+suite may also follow the opening brace.</p>
+</div>
+<div class="paragraph">
+<p>The older Python-like style, which introduced blocks with a trailing colon
+and indentation, is deprecated. It remains accepted for compatibility, but
+new scripts should use braces. A single source file must use one style
+consistently.</p>
 </div>
 </div>
 <div class="sect3">
@@ -2711,29 +2735,32 @@ expressions, writes a newline.</p>
 <h4 id="_conditionals">Conditionals</h4>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code>if CONDITION:
+<pre class="highlight"><code>if CONDITION {
     BLOCK
-elif CONDITION:
+} elif CONDITION {
     BLOCK
-else:
-    BLOCK</code></pre>
+} else {
+    BLOCK
+}</code></pre>
 </div>
 </div>
 <div class="paragraph">
 <p>The first true branch is executed. <code>elif</code> is the only spelling for an
 additional condition; <code>else if</code> is not part of the language. A single-line
-suite after the colon is accepted.</p>
+suite after the opening brace is accepted.</p>
 </div>
 </div>
 <div class="sect3">
 <h4 id="_loops">Loops</h4>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code>while CONDITION:
+<pre class="highlight"><code>while CONDITION {
     BLOCK
+}
 
-for NAME in EXPRESSION:
-    BLOCK</code></pre>
+for NAME in EXPRESSION {
+    BLOCK
+}</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -2749,8 +2776,9 @@ dictionary. <code>break</code> and <code>continue</code> affect the innermost lo
 <h4 id="_functions">Functions</h4>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code>fn NAME(PARAM1, PARAM2, ...):
-    BLOCK</code></pre>
+<pre class="highlight"><code>fn NAME(PARAM1, PARAM2, ...) {
+    BLOCK
+}</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -2769,10 +2797,11 @@ body returns null. Extra arguments are ignored; missing arguments are null.</p>
 <h4 id="_exceptions">Exceptions</h4>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code>try:
+<pre class="highlight"><code>try {
     BLOCK
-catch NAME:
-    BLOCK</code></pre>
+} catch NAME {
+    BLOCK
+}</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -3374,8 +3403,9 @@ CMDSUB       = "`" { any-byte } "`"
 </div>
 <div class="paragraph">
 <p>The lexer emits <code>NEWLINE</code>, <code>INDENT</code>, and <code>DEDENT</code> according to the indentation
-rules. It ignores newlines and indentation while the delimiter depth is
-greater than zero.</p>
+rules. In the deprecated colon style it ignores newlines and indentation while
+the delimiter depth is greater than zero. In the brace style it emits no
+<code>INDENT</code> or <code>DEDENT</code> tokens and newlines separate statements inside braces.</p>
 </div>
 </div>
 <div class="sect3">
@@ -3399,7 +3429,8 @@ statement    = say-stmt
              | expression-stmt
              | SHELL ;
 
-suite        = ":" ( NEWLINE INDENT { statement } DEDENT
+suite        = "{" { NEWLINE | INDENT | DEDENT | ";" | statement } "}"
+             | ":" ( NEWLINE INDENT { statement } DEDENT
                    | inline-stmt { ";" inline-stmt } [ NEWLINE ] ) ;
 
 inline-stmt  = say-stmt | return-stmt | break-stmt | continue-stmt
@@ -3719,8 +3750,9 @@ lifetime of the process or until the process exits.</p>
 └─ ❯ echo hello | tr a-z A-Z
 HELLO
 ┌─ user@host ~/src (main *)
-└─ ❯ for item in ["one", "two"]:
-  …     say item</code></pre>
+└─ ❯ for item in ["one", "two"] {
+  …     say item
+  … }</code></pre>
 </div>
 </div>
 </div>
@@ -3759,25 +3791,29 @@ version = 1
 
 say "Welcome to {name} {version}"
 
-for item in ["one", "two", "three"]:
+for item in ["one", "two", "three"] {
     say item
+}
 
-fn greet(person):
+fn greet(person) {
     return "Hello, " + person
+}
 
 say greet("world")
 
-if version &gt; 0:
+if version &gt; 0 {
     say "positive"
-elif version == 0:
+} elif version == 0 {
     say "zero"
-else:
+} else {
     say "negative"
+}
 
-try:
+try {
     raise "example failure"
-catch message:
+} catch message {
     say "caught: {message}"
+}
 
 output = `printf "a\nb\n"`
 say output
@@ -3983,7 +4019,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-17 02:13:30 UTC
+Last updated 2026-11-18 00:32:40 UTC
 </div>
 </div>
 </body>

@@ -60,28 +60,29 @@ test "lexer handles strings, escapes and command substitutions" {
     }
 }
 
-test "lexer tracks python indentation blocks" {
+test "lexer tokenizes brace blocks without indentation" {
     trust {
-        val toks: ref u.Vec = lang.lex(c"if true:\n    say \"x\"\n")
+        val toks: ref u.Vec = lang.lex(c"if true {\n    say \"x\"\n}\n")
         assert toks.len == 10
         assert token_at(toks, 0).kind == lang.TokenKind.Ident
         assert u.s_eq(token_at(toks, 0).text, c"if")
         assert token_at(toks, 1).kind == lang.TokenKind.Ident
         assert u.s_eq(token_at(toks, 1).text, c"true")
         assert token_at(toks, 2).kind == lang.TokenKind.Op
-        assert u.s_eq(token_at(toks, 2).text, c":")
+        assert u.s_eq(token_at(toks, 2).text, c"{")
         assert token_at(toks, 3).kind == lang.TokenKind.Newline
-        assert token_at(toks, 4).kind == lang.TokenKind.Indent
-        assert token_at(toks, 5).kind == lang.TokenKind.Ident
-        assert u.s_eq(token_at(toks, 5).text, c"say")
-        assert token_at(toks, 6).kind == lang.TokenKind.Str
-        assert token_at(toks, 7).kind == lang.TokenKind.Newline
-        assert token_at(toks, 8).kind == lang.TokenKind.Dedent
+        assert token_at(toks, 4).kind == lang.TokenKind.Ident
+        assert u.s_eq(token_at(toks, 4).text, c"say")
+        assert token_at(toks, 5).kind == lang.TokenKind.Str
+        assert token_at(toks, 6).kind == lang.TokenKind.Newline
+        assert token_at(toks, 7).kind == lang.TokenKind.Op
+        assert u.s_eq(token_at(toks, 7).text, c"}")
+        assert token_at(toks, 8).kind == lang.TokenKind.Newline
         assert token_at(toks, 9).kind == lang.TokenKind.Eof
 
-        val tabs: ref u.Vec = lang.lex(c"if true:\n\tsay \"x\"\n")
+        val tabs: ref u.Vec = lang.lex(c"while true {\n\tsay \"x\"\n}\n")
         assert tabs.len == 10
-        assert token_at(tabs, 4).kind == lang.TokenKind.Indent
+        assert u.s_eq(token_at(tabs, 2).text, c"{")
     }
 }
 
@@ -199,20 +200,20 @@ test "parser builds assignments, conditions and loops" {
         assert kid(compound, 0).kind == lang.NodeKind.Assign
         assert kid(compound, 0).a == 2
 
-        val cond: ref lang.Node = lang.parse(c"if a:\n  say 1\nelif b:\n  say 2\nelse:\n  say 3\n")
+        val cond: ref lang.Node = lang.parse(c"if a {\n  say 1\n} elif b {\n  say 2\n} else {\n  say 3\n}\n")
         val ifn: ref lang.Node = kid(cond, 0)
         assert ifn.kind == lang.NodeKind.If
         assert ifn.a == 2
         assert ifn.b == 1
         assert ifn.kids.len == 5
 
-        val wh: ref lang.Node = lang.parse(c"while a < 3:\n  a += 1\n")
+        val wh: ref lang.Node = lang.parse(c"while a < 3 {\n  a += 1\n}\n")
         val wn: ref lang.Node = kid(wh, 0)
         assert wn.kind == lang.NodeKind.While
         assert wn.kids.len == 2
         assert kid(wn, 0).a == lang.BinOp.Lt as i64
 
-        val fr: ref lang.Node = lang.parse(c"for item in [1, 2]:\n  say item\n")
+        val fr: ref lang.Node = lang.parse(c"for item in [1, 2] {\n  say item\n}\n")
         val forn: ref lang.Node = kid(fr, 0)
         assert forn.kind == lang.NodeKind.For
         assert u.s_eq(forn.s, c"item")
@@ -223,7 +224,7 @@ test "parser builds assignments, conditions and loops" {
 
 test "parser builds functions, returns, try and shell commands" {
     trust {
-        val fns: ref lang.Node = lang.parse(c"fn add(a, b):\n  return a + b\n")
+        val fns: ref lang.Node = lang.parse(c"fn add(a, b) {\n  return a + b\n}\n")
         val f: ref lang.Node = kid(fns, 0)
         assert f.kind == lang.NodeKind.FnDef
         assert u.s_eq(f.s, c"add")
@@ -233,7 +234,7 @@ test "parser builds functions, returns, try and shell commands" {
         assert kid(f, 0).kind == lang.NodeKind.Block
         assert kid(kid(f, 0), 0).kind == lang.NodeKind.Return
 
-        val tr: ref lang.Node = lang.parse(c"try:\n  raise \"oops\"\ncatch err:\n  say err\n")
+        val tr: ref lang.Node = lang.parse(c"try {\n  raise \"oops\"\n} catch err {\n  say err\n}\n")
         val tn: ref lang.Node = kid(tr, 0)
         assert tn.kind == lang.NodeKind.Try
         assert u.s_eq(tn.s, c"err")

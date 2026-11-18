@@ -1158,7 +1158,7 @@ fn run_segment(text: ref u8, background: bool) i32 = trust {
 }
 
 fn is_builtin(name: ref u8) bool = trust {
-    if u.s_eq(name, c"cd") || u.s_eq(name, c"pwd") || u.s_eq(name, c"exit") || u.s_eq(name, c"quit") || u.s_eq(name, c"history") || u.s_eq(name, c"clear") || u.s_eq(name, c"export") || u.s_eq(name, c"unset") || u.s_eq(name, c"alias") || u.s_eq(name, c"unalias") || u.s_eq(name, c"help") || u.s_eq(name, c"source") || u.s_eq(name, c"echo") || u.s_eq(name, c"say") || u.s_eq(name, c"set") || u.s_eq(name, c"type") || u.s_eq(name, c"which") || u.s_eq(name, c"jobs") || u.s_eq(name, c"wait") || u.s_eq(name, c".") || u.s_eq(name, c"true") || u.s_eq(name, c"false") || u.s_eq(name, c":") {
+    if u.s_eq(name, c"cd") || u.s_eq(name, c"pwd") || u.s_eq(name, c"exit") || u.s_eq(name, c"quit") || u.s_eq(name, c"history") || u.s_eq(name, c"clear") || u.s_eq(name, c"cls") || u.s_eq(name, c"export") || u.s_eq(name, c"unset") || u.s_eq(name, c"alias") || u.s_eq(name, c"unalias") || u.s_eq(name, c"help") || u.s_eq(name, c"source") || u.s_eq(name, c"echo") || u.s_eq(name, c"say") || u.s_eq(name, c"set") || u.s_eq(name, c"type") || u.s_eq(name, c"which") || u.s_eq(name, c"jobs") || u.s_eq(name, c"wait") || u.s_eq(name, c".") || u.s_eq(name, c"true") || u.s_eq(name, c"false") || u.s_eq(name, c":") {
         return true
     }
     return false
@@ -1575,7 +1575,7 @@ fn run_builtin(cmd: ref Command) i32 = trust {
     if u.s_eq(name, c"history") {
         return bi_history(cmd)
     }
-    if u.s_eq(name, c"clear") {
+    if u.s_eq(name, c"clear") || u.s_eq(name, c"cls") {
         u.write_fd(1, c"\x1b[2J\x1b[H")
         return 0
     }
@@ -1825,10 +1825,10 @@ fn bi_help(cmd: ref Command) i32 = trust {
         return 0
     }
     if u.s_eq(topic, c"script") || u.s_eq(topic, c"language") {
-        u.write_fd(1, c"Blood scripts (.blood)\n\nPython style:\n  say \"hello {name}\"\n  name = \"world\"\n  if true:\n      say \"yes\"\n  else:\n      say \"no\"\n  while true:\n      break\n  for item in [\"a\", \"b\"]:\n      say item\n  fn greet(name):\n      return \"Hello, \" + name\n  try:\n      raise \"oops\"\n  catch err:\n      say err\n\nBrace style:\n  fn main {\n    say \"hello, world\"\n    if true {\n      say \"yes\"\n    }\n    for item in [\"a\", \"b\"] {\n      say item\n    }\n  }\n  main()\n\nThe two block styles cannot be mixed in one file.\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n")
+        u.write_fd(1, c"Blood scripts (.blood)\n\nBlocks use braces:\n  say \"hello {name}\"\n  name = \"world\"\n  if true {\n      say \"yes\"\n  } else {\n      say \"no\"\n  }\n  while true {\n      break\n  }\n  for item in [\"a\", \"b\"] {\n      say item\n  }\n  fn greet(name) {\n      return \"Hello, \" + name\n  }\n  try {\n      raise \"oops\"\n  } catch err {\n      say err\n  }\n\nThe Python-like colon and indentation style is deprecated but still accepted.\nThe two block styles cannot be mixed in one file.\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n")
         return 0
     }
-    u.write_fd(1, c"Blood builtins\n\n  cd [dir]        change directory (cd - returns)\n  pwd             print working directory\n  exit [code]     leave the shell\n  history [-c|-w] command history\n  clear           clear the screen\n  export NAME=..  export a variable\n  unset NAME..    remove variables\n  alias NAME=..   define an alias\n  unalias NAME..  remove an alias\n  help [topic]    this help (topics: config, script)\n  source FILE     run a blood script\n  echo ARGS..     print arguments\n  say ARGS..      print arguments\n  type NAME       show how a command resolves\n  jobs            background jobs\n  wait            wait for background jobs\n\nInteractive keys: Ctrl-A/E/B/F/K/U/W/L, Ctrl-R history search,\nTab completion menu, Up/Down history, Ctrl-C cancel, Ctrl-D exit.\n")
+    u.write_fd(1, c"Blood builtins\n\n  cd [dir]        change directory (cd - returns)\n  pwd             print working directory\n  exit [code]     leave the shell\n  history [-c|-w] command history\n  clear           clear the screen\n  cls             clear the screen\n  export NAME=..  export a variable\n  unset NAME..    remove variables\n  alias NAME=..   define an alias\n  unalias NAME..  remove an alias\n  help [topic]    this help (topics: config, script)\n  source FILE     run a blood script\n  echo ARGS..     print arguments\n  say ARGS..      print arguments\n  type NAME       show how a command resolves\n  jobs            background jobs\n  wait            wait for background jobs\n\nInteractive keys: Ctrl-A/E/B/F/K/U/W/L, Ctrl-R history search,\nTab completion menu, Up/Down history, Ctrl-C cancel, Ctrl-D exit.\n")
     return 0
 }
 

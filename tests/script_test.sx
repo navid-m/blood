@@ -25,7 +25,7 @@ fn fake_shell(cmd: ref u8) i32 = trust {
 test "script runs arithmetic, comparison and boolean expressions" {
     trust {
         fresh()
-        val src: ref u8 = c"if 2 + 3 * 4 != 14:\n    raise \"arith\"\nif (2 + 3) * 4 != 20:\n    raise \"parens\"\nif 7 / 2 != 3:\n    raise \"division\"\nif 7 % 2 != 1:\n    raise \"modulo\"\nif not (1 < 2 and 2 <= 2 and 3 > 2 and 3 >= 3 and 1 != 2):\n    raise \"compare\"\nif not (true and not false):\n    raise \"boolean\"\nif \"abc\" == \"abc\":\n    pass\nelse:\n    raise \"string equality\"\nif \"abc\" != \"abd\":\n    pass\nelse:\n    raise \"string inequality\"\n"
+        val src: ref u8 = c"if 2 + 3 * 4 != 14 {\n    raise \"arith\"\n}\nif (2 + 3) * 4 != 20 {\n    raise \"parens\"\n}\nif 7 / 2 != 3 {\n    raise \"division\"\n}\nif 7 % 2 != 1 {\n    raise \"modulo\"\n}\nif not (1 < 2 and 2 <= 2 and 3 > 2 and 3 >= 3 and 1 != 2) {\n    raise \"compare\"\n}\nif not (true and not false) {\n    raise \"boolean\"\n}\nif \"abc\" == \"abc\" {\n    pass\n} else {\n    raise \"string equality\"\n}\nif \"abc\" != \"abd\" {\n    pass\n} else {\n    raise \"string inequality\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -33,7 +33,7 @@ test "script runs arithmetic, comparison and boolean expressions" {
 test "script supports string methods and indexing" {
     trust {
         fresh()
-        val src: ref u8 = c"s = \"  Hello World  \"\nif s.strip() != \"Hello World\":\n    raise \"strip\"\nif s.upper().strip() != \"HELLO WORLD\":\n    raise \"upper\"\nif s.lower().strip() != \"hello world\":\n    raise \"lower\"\nparts = \"a,b,c\".split(\",\")\nif len(parts) != 3:\n    raise \"split length\"\nif parts[1] != \"b\":\n    raise \"split value\"\nif \"-\".join([\"a\", \"b\", \"c\"]) != \"a-b-c\":\n    raise \"join\"\nif \"banana\".replace(\"a\", \"o\") != \"bonono\":\n    raise \"replace\"\nif \"abc\".startswith(\"ab\") != true:\n    raise \"startswith\"\nif \"abc\".endswith(\"bc\") != true:\n    raise \"endswith\"\nif \"abc\".contains(\"b\") != true:\n    raise \"contains\"\nif \"hello\"[1] != \"e\":\n    raise \"index\"\nif \"hello\"[-1] != \"o\":\n    raise \"negative index\"\nif \"hello\".chars().len() != 5:\n    raise \"chars\"\n"
+        val src: ref u8 = c"s = \"  Hello World  \"\nif s.strip() != \"Hello World\" {\n    raise \"strip\"\n}\nif s.upper().strip() != \"HELLO WORLD\" {\n    raise \"upper\"\n}\nif s.lower().strip() != \"hello world\" {\n    raise \"lower\"\n}\nparts = \"a,b,c\".split(\",\")\nif len(parts) != 3 {\n    raise \"split length\"\n}\nif parts[1] != \"b\" {\n    raise \"split value\"\n}\nif \"-\".join([\"a\", \"b\", \"c\"]) != \"a-b-c\" {\n    raise \"join\"\n}\nif \"banana\".replace(\"a\", \"o\") != \"bonono\" {\n    raise \"replace\"\n}\nif \"abc\".startswith(\"ab\") != true {\n    raise \"startswith\"\n}\nif \"abc\".endswith(\"bc\") != true {\n    raise \"endswith\"\n}\nif \"abc\".contains(\"b\") != true {\n    raise \"contains\"\n}\nif \"hello\"[1] != \"e\" {\n    raise \"index\"\n}\nif \"hello\"[-1] != \"o\" {\n    raise \"negative index\"\n}\nif \"hello\".chars().len() != 5 {\n    raise \"chars\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -41,7 +41,7 @@ test "script supports string methods and indexing" {
 test "script supports list mutation and methods" {
     trust {
         fresh()
-        val src: ref u8 = c"xs = [3, 1, 2]\nxs.append(4)\nif len(xs) != 4:\n    raise \"append\"\nxs.sort()\nif xs[0] != 1 or xs[3] != 4:\n    raise \"sort\"\nif 2 not in xs:\n    raise \"membership\"\nif xs.contains(3) != true:\n    raise \"contains\"\nif xs.join(\"-\") != \"1-2-3-4\":\n    raise \"join\"\nif xs.pop() != 4:\n    raise \"pop\"\nif xs.len() != 3:\n    raise \"len\"\nxs.insert(0, 9)\nif xs[0] != 9:\n    raise \"insert\"\nxs.remove(0)\nif xs[0] != 1:\n    raise \"remove\"\nxs[0] = 5\nif xs[0] != 5:\n    raise \"index assignment\"\nif xs[-1] != 3:\n    raise \"negative index\"\n"
+        val src: ref u8 = c"xs = [3, 1, 2]\nxs.append(4)\nif len(xs) != 4 {\n    raise \"append\"\n}\nxs.sort()\nif xs[0] != 1 or xs[3] != 4 {\n    raise \"sort\"\n}\nif 2 not in xs {\n    raise \"membership\"\n}\nif xs.contains(3) != true {\n    raise \"contains\"\n}\nif xs.join(\"-\") != \"1-2-3-4\" {\n    raise \"join\"\n}\nif xs.pop() != 4 {\n    raise \"pop\"\n}\nif xs.len() != 3 {\n    raise \"len\"\n}\nxs.insert(0, 9)\nif xs[0] != 9 {\n    raise \"insert\"\n}\nxs.remove(0)\nif xs[0] != 1 {\n    raise \"remove\"\n}\nxs[0] = 5\nif xs[0] != 5 {\n    raise \"index assignment\"\n}\nif xs[-1] != 3 {\n    raise \"negative index\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -49,7 +49,7 @@ test "script supports list mutation and methods" {
 test "script supports dictionaries and attributes" {
     trust {
         fresh()
-        val src: ref u8 = c"d = {\"a\": 1, \"b\": 2}\nif d[\"a\"] != 1:\n    raise \"index\"\nif d.get(\"z\", 9) != 9:\n    raise \"get default\"\nif d.contains(\"b\") != true:\n    raise \"contains\"\nd[\"c\"] = 3\nif len(d) != 3:\n    raise \"len\"\nif d.len() != 3:\n    raise \"method len\"\nkeys = d.keys()\nkeys.sort()\nif keys[0] != \"a\" or keys[2] != \"c\":\n    raise \"keys\"\nif len(d.values()) != 3:\n    raise \"values\"\nif len(d.items()) != 3:\n    raise \"items\"\nd.remove(\"a\")\nif d.contains(\"a\"):\n    raise \"remove\"\nd.set(\"x\", 5)\nif d[\"x\"] != 5:\n    raise \"set\"\nd.a = 9\nif d[\"a\"] != 9 or d.a != 9:\n    raise \"attribute\"\n"
+        val src: ref u8 = c"d = {\"a\": 1, \"b\": 2}\nif d[\"a\"] != 1 {\n    raise \"index\"\n}\nif d.get(\"z\", 9) != 9 {\n    raise \"get default\"\n}\nif d.contains(\"b\") != true {\n    raise \"contains\"\n}\nd[\"c\"] = 3\nif len(d) != 3 {\n    raise \"len\"\n}\nif d.len() != 3 {\n    raise \"method len\"\n}\nkeys = d.keys()\nkeys.sort()\nif keys[0] != \"a\" or keys[2] != \"c\" {\n    raise \"keys\"\n}\nif len(d.values()) != 3 {\n    raise \"values\"\n}\nif len(d.items()) != 3 {\n    raise \"items\"\n}\nd.remove(\"a\")\nif d.contains(\"a\") {\n    raise \"remove\"\n}\nd.set(\"x\", 5)\nif d[\"x\"] != 5 {\n    raise \"set\"\n}\nd.a = 9\nif d[\"a\"] != 9 or d.a != 9 {\n    raise \"attribute\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -57,7 +57,7 @@ test "script supports dictionaries and attributes" {
 test "script supports loops, break and continue" {
     trust {
         fresh()
-        val src: ref u8 = c"total = 0\nfor i in range(1, 11):\n    if i == 3:\n        continue\n    if i == 9:\n        break\n    total += i\nif total != 33:\n    raise \"for loop\"\nn = 0\nwhile n < 5:\n    n += 1\nif n != 5:\n    raise \"while loop\"\ncount = 0\nfor ch in \"abc\":\n    count += 1\nif count != 3:\n    raise \"string loop\"\nvalues = []\nfor x in [1, 2, 3]:\n    values.append(x * 2)\nif values.join(\",\") != \"2,4,6\":\n    raise \"list loop\"\n"
+        val src: ref u8 = c"total = 0\nfor i in range(1, 11) {\n    if i == 3 {\n        continue\n    }\n    if i == 9 {\n        break\n    }\n    total += i\n}\nif total != 33 {\n    raise \"for loop\"\n}\nn = 0\nwhile n < 5 {\n    n += 1\n}\nif n != 5 {\n    raise \"while loop\"\n}\ncount = 0\nfor ch in \"abc\" {\n    count += 1\n}\nif count != 3 {\n    raise \"string loop\"\n}\nvalues = []\nfor x in [1, 2, 3] {\n    values.append(x * 2)\n}\nif values.join(\",\") != \"2,4,6\" {\n    raise \"list loop\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -65,7 +65,7 @@ test "script supports loops, break and continue" {
 test "script supports functions and recursion" {
     trust {
         fresh()
-        val src: ref u8 = c"fn fact(n):\n    if n <= 1:\n        return 1\n    return n * fact(n - 1)\nif fact(5) != 120:\n    raise \"factorial\"\nfn add(a, b):\n    return a + b\nif add(2, 3) != 5:\n    raise \"add\"\nfn outer(n):\n    return add(n, fact(3))\nif outer(10) != 16:\n    raise \"nested call\"\n"
+        val src: ref u8 = c"fn fact(n) {\n    if n <= 1 {\n        return 1\n    }\n    return n * fact(n - 1)\n}\nif fact(5) != 120 {\n    raise \"factorial\"\n}\nfn add(a, b) {\n    return a + b\n}\nif add(2, 3) != 5 {\n    raise \"add\"\n}\nfn outer(n) {\n    return add(n, fact(3))\n}\nif outer(10) != 16 {\n    raise \"nested call\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -73,7 +73,7 @@ test "script supports functions and recursion" {
 test "script supports try, catch and raise" {
     trust {
         fresh()
-        val src: ref u8 = c"caught = \"\"\ntry:\n    raise \"oops\"\ncatch err:\n    caught = err\nif caught != \"oops\":\n    raise \"catch\"\ntry:\n    x = missing_value\ncatch err:\n    caught = err\nif \"undefined\" not in caught:\n    raise \"undefined variable\"\ntry:\n    z = 1 / 0\ncatch err:\n    caught = err\nif \"division\" not in caught:\n    raise \"division by zero\"\n"
+        val src: ref u8 = c"caught = \"\"\ntry {\n    raise \"oops\"\n} catch err {\n    caught = err\n}\nif caught != \"oops\" {\n    raise \"catch\"\n}\ntry {\n    x = missing_value\n} catch err {\n    caught = err\n}\nif \"undefined\" not in caught {\n    raise \"undefined variable\"\n}\ntry {\n    z = 1 / 0\n} catch err {\n    caught = err\n}\nif \"division\" not in caught {\n    raise \"division by zero\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -81,7 +81,7 @@ test "script supports try, catch and raise" {
 test "script supports string interpolation" {
     trust {
         fresh()
-        val src: ref u8 = c"name = \"world\"\nif \"hello {name}\" != \"hello world\":\n    raise \"variable\"\nexpected = chr(123) + \"braces\" + chr(125)\nif \"literal {{braces}}\" != \"literal \" + expected:\n    raise \"escaped braces\"\nif \"math {1 + 2}\" != \"math 3\":\n    raise \"expression\"\nn = 4\nif \"{n * n}\" != \"16\":\n    raise \"nested expression\"\n"
+        val src: ref u8 = c"name = \"world\"\nif \"hello {name}\" != \"hello world\" {\n    raise \"variable\"\n}\nexpected = chr(123) + \"braces\" + chr(125)\nif \"literal {{braces}}\" != \"literal \" + expected {\n    raise \"escaped braces\"\n}\nif \"math {1 + 2}\" != \"math 3\" {\n    raise \"expression\"\n}\nn = 4\nif \"{n * n}\" != \"16\" {\n    raise \"nested expression\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -101,7 +101,7 @@ test "script exposes arguments, status and exit" {
         u.vec_pushp(args, c"alpha" as ref void)
         u.vec_pushp(args, c"beta" as ref void)
         script.set_args(args)
-        val src: ref u8 = c"if len(args) != 2:\n    raise \"argc\"\nif args[0] != \"alpha\":\n    raise \"argv0\"\nif args[1] != \"beta\":\n    raise \"argv1\"\n"
+        val src: ref u8 = c"if len(args) != 2 {\n    raise \"argc\"\n}\nif args[0] != \"alpha\" {\n    raise \"argv0\"\n}\nif args[1] != \"beta\" {\n    raise \"argv1\"\n}\n"
         assert run(src) == 0
         assert run(c"exit(len(args))") == 2
         assert run(c"exit(0)") == 0
@@ -109,7 +109,7 @@ test "script exposes arguments, status and exit" {
 
         script.set_external_status(5)
         assert script.status_value() == 5
-        assert run(c"if status != 5:\n    raise \"status\"\n") == 0
+        assert run(c"if status != 5 {\n    raise \"status\"\n}\n") == 0
     }
 }
 
@@ -132,7 +132,7 @@ test "script supports command substitution hooks" {
         u.run_capture_hook = fake_capture
         u.hooks_ready = 1
 
-        val src: ref u8 = c"a = `cmd`\nif a != \"captured:cmd\":\n    raise \"backtick\"\nb = $(other)\nif b != \"captured:other\":\n    raise \"dollar\"\n"
+        val src: ref u8 = c"a = `cmd`\nif a != \"captured:cmd\" {\n    raise \"backtick\"\n}\nb = $(other)\nif b != \"captured:other\" {\n    raise \"dollar\"\n}\n"
         assert run(src) == 0
 
         u.run_capture_hook = old_hook
@@ -149,7 +149,7 @@ test "script runs shell command statements through the hook" {
         u.run_shell_hook = fake_shell
         u.hooks_ready = 1
 
-        val src: ref u8 = c"echo hello\nif status != 4:\n    raise \"status\"\n"
+        val src: ref u8 = c"echo hello\nif status != 4 {\n    raise \"status\"\n}\n"
         assert run(src) == 0
         assert g_shell_runs == 1
 
@@ -163,7 +163,7 @@ test "script file natives read, write and append" {
         fresh()
         val dir: ref u8 = c"/tmp/blood-unit-script"
         assert u.mkdir_p(dir)
-        val src: ref u8 = c"path = \"/tmp/blood-unit-script/note.txt\"\nif write_file(path, \"abc\") != true:\n    raise \"write\"\nif read_file(path) != \"abc\":\n    raise \"read\"\nif append_file(path, \"def\") != true:\n    raise \"append\"\nif read_file(path) != \"abcdef\":\n    raise \"read append\"\nif read_file(\"/tmp/blood-unit-script/missing\") != null:\n    raise \"missing\"\n"
+        val src: ref u8 = c"path = \"/tmp/blood-unit-script/note.txt\"\nif write_file(path, \"abc\") != true {\n    raise \"write\"\n}\nif read_file(path) != \"abc\" {\n    raise \"read\"\n}\nif append_file(path, \"def\") != true {\n    raise \"append\"\n}\nif read_file(path) != \"abcdef\" {\n    raise \"read append\"\n}\nif read_file(\"/tmp/blood-unit-script/missing\") != null {\n    raise \"missing\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -171,7 +171,7 @@ test "script file natives read, write and append" {
 test "script builtins convert types and aggregate values" {
     trust {
         fresh()
-        val src: ref u8 = c"if len([1, 2]) != 2:\n    raise \"len\"\nif str(42) != \"42\":\n    raise \"str\"\nif int(\"17\") != 17:\n    raise \"int\"\nif type(1) != \"int\":\n    raise \"type int\"\nif type(\"x\") != \"string\":\n    raise \"type string\"\nif type([]) != \"list\":\n    raise \"type list\"\nif type({}) != \"dict\":\n    raise \"type dict\"\nif min([3, 1, 2]) != 1:\n    raise \"min\"\nif max([3, 1, 2]) != 3:\n    raise \"max\"\nif sum([1, 2, 3]) != 6:\n    raise \"sum\"\nif abs(-4) != 4:\n    raise \"abs\"\nif ord(\"A\") != 65:\n    raise \"ord\"\nif chr(66) != \"B\":\n    raise \"chr\"\nif len(range(3)) != 3:\n    raise \"range\"\nif len(range(2, 5)) != 3:\n    raise \"range start\"\nif bool(0) != false or bool(1) != true:\n    raise \"bool\"\nif clock() <= 0:\n    raise \"clock\"\n"
+        val src: ref u8 = c"if len([1, 2]) != 2 {\n    raise \"len\"\n}\nif str(42) != \"42\" {\n    raise \"str\"\n}\nif int(\"17\") != 17 {\n    raise \"int\"\n}\nif type(1) != \"int\" {\n    raise \"type int\"\n}\nif type(\"x\") != \"string\" {\n    raise \"type string\"\n}\nif type([]) != \"list\" {\n    raise \"type list\"\n}\nif type({}) != \"dict\" {\n    raise \"type dict\"\n}\nif min([3, 1, 2]) != 1 {\n    raise \"min\"\n}\nif max([3, 1, 2]) != 3 {\n    raise \"max\"\n}\nif sum([1, 2, 3]) != 6 {\n    raise \"sum\"\n}\nif abs(-4) != 4 {\n    raise \"abs\"\n}\nif ord(\"A\") != 65 {\n    raise \"ord\"\n}\nif chr(66) != \"B\" {\n    raise \"chr\"\n}\nif len(range(3)) != 3 {\n    raise \"range\"\n}\nif len(range(2, 5)) != 3 {\n    raise \"range start\"\n}\nif bool(0) != false or bool(1) != true {\n    raise \"bool\"\n}\nif clock() <= 0 {\n    raise \"clock\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -179,8 +179,9 @@ test "script builtins convert types and aggregate values" {
 test "script detects lines that need continuation" {
     trust {
         assert script.needs_continuation(c"echo hi \\")
-        assert script.needs_continuation(c"if true:")
-        assert script.needs_continuation(c"while true:")
+        assert script.needs_continuation(c"if true {")
+        assert script.needs_continuation(c"while true {")
+        assert script.needs_continuation(c"fn main {")
         assert script.needs_continuation(c"say \"open")
         assert script.needs_continuation(c"[1, 2")
         assert script.needs_continuation(c"call(")
@@ -195,10 +196,10 @@ test "script classifies script-looking lines" {
     trust {
         assert script.looks_like_script(c"say hello")
         assert script.looks_like_script(c"say")
-        assert script.looks_like_script(c"if x:")
-        assert script.looks_like_script(c"while x:")
-        assert script.looks_like_script(c"for x in xs:")
-        assert script.looks_like_script(c"fn f():")
+        assert script.looks_like_script(c"if x {")
+        assert script.looks_like_script(c"while x {")
+        assert script.looks_like_script(c"for x in xs {")
+        assert script.looks_like_script(c"fn f() {")
         assert script.looks_like_script(c"return 1")
         assert script.looks_like_script(c"raise \"x\"")
         assert script.looks_like_script(c"x = 1")

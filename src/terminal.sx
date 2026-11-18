@@ -60,6 +60,7 @@ pub type Editor = {
     menu_start: mut i64
     menu_end: mut i64
     menu_base: mut ref u8
+    menu_kind: mut i64
     search_active: mut i64
     search_query: mut ref u8
     search_index: mut i64
@@ -195,6 +196,7 @@ pub fn editor_new(
     e.menu_start = 0
     e.menu_end = 0
     e.menu_base = u.s_dup(c"")
+    e.menu_kind = 0
     e.search_active = 0
     e.search_query = u.s_dup(c"")
     e.search_index = h.items.len - 1
@@ -358,8 +360,7 @@ fn display_width(line: ref u8, start: i64, end: i64) i64 = trust {
     return w
 }
 
-fn emit_display_segment(line: ref u8, start: i64, end: i64) void = trust {
-    val b: mut ref u.Buf = u.buf_new()
+fn emit_display_segment(b: mut ref u.Buf, line: ref u8, start: i64, end: i64) void = trust {
     val i: mut i64 = start
     for {
         if i >= end {
@@ -375,7 +376,6 @@ fn emit_display_segment(line: ref u8, start: i64, end: i64) void = trust {
         }
         i++
     }
-    write_s(u.buf_take(b))
 }
 
 fn prompt_last_width(prompt: ref u8) i64 = trust {
@@ -443,20 +443,108 @@ fn common_prefix(items: ref u.Vec) ref u8 = trust {
     return u.s_substr(first, 0, upto)
 }
 
-fn draw_menu(e: ref Editor) void = trust {
-    if e.menu_active == 0 || e.menu_items == none || e.menu_items.len == 0 {
+fn menu_label(kind: i64) ref u8 = trust {
+    if kind == 2 {
+        return c"paths"
+    }
+    if kind == 3 {
+        return c"variables"
+    }
+    return c"commands"
+}
+
+fn buf_spaces(b: mut ref u.Buf, n: i64) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        u.buf_ch(b, 32)
+        i++
+    }
+}
+
+fn buf_rule(b: mut ref u.Buf, n: i64) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        u.buf_add(b, c"─")
+        i++
+    }
+}
+
+fn buf_clipped(b: mut ref u.Buf, s: ref u8, maxw: i64) void = trust {
+    if maxw <= 0 {
         return
     }
+    val n: i64 = u.s_len(s)
+    if n == 0 {
+        return
+    }
+    if u.visible_width(s) <= maxw {
+        u.buf_add(b, s)
+        return
+    }
+    val limit: i64 = maxw - 1
+    val i: mut i64 = 0
+    val w: mut i64 = 0
+    for {
+        if i >= n || w >= limit {
+            break
+        }
+        val next: i64 = u.utf8_next(s, i, n)
+        u.buf_addn(b, @ptradd(s, i), next - i)
+        w++
+        i = next
+    }
+    u.buf_add(b, c"…")
+}
+
+fn buf_cell(b: mut ref u.Buf, item: ref u8, width: i64, selected: bool) void = trust {
+    if selected {
+        u.buf_add(b, c"\x1b[7m")
+    }
+    u.buf_ch(b, 32)
+    buf_clipped(b, item, width - 2)
+    val used: mut i64 = u.visible_width(item)
+    if used > width - 2 {
+        used = width - 2
+    }
+    buf_spaces(b, width - 1 - used)
+    if selected {
+        u.buf_add(b, c"\x1b[0m")
+    }
+}
+
+fn draw_menu_box(b: mut ref u.Buf, e: ref Editor, prompt_rows: i64) i64 = trust {
     val total: i64 = e.menu_items.len
-    val max_show: i64 = 200
-    val shown: mut i64 = total
-    if shown > max_show {
-        shown = max_show
+    if total == 0 {
+        return 0
+    }
+    val termw: i64 = cols()
+    val avail_below: i64 = rows() - prompt_rows - 1
+    if termw < 8 || avail_below < 3 {
+        return 0
+    }
+    val max_total: i64 = 10
+    val max_inner: i64 = avail_below - 2
+    val inner_cap: mut i64 = max_inner
+    if inner_cap > max_total - 2 {
+        inner_cap = max_total - 2
+    }
+    if inner_cap < 1 {
+        return 0
+    }
+    val scan: mut i64 = total
+    if scan > 512 {
+        scan = 512
     }
     val maxw: mut i64 = 1
     val i: mut i64 = 0
     for {
-        if i >= shown {
+        if i >= scan {
             break
         }
         val item: ref u8 = u.vec_p(e.menu_items, i) as ref u8
@@ -466,67 +554,89 @@ fn draw_menu(e: ref Editor) void = trust {
         }
         i++
     }
-    val termw: i64 = cols()
-    val colw: mut i64 = maxw + 3
-    if colw > termw {
-        colw = termw
+    val avail_w: i64 = termw - 2
+    val colw: mut i64 = maxw + 2
+    if colw < 6 {
+        colw = 6
     }
-    val ncols: mut i64 = termw / colw
+    if colw > avail_w {
+        colw = avail_w
+    }
+    val ncols: mut i64 = avail_w / colw
     if ncols < 1 {
         ncols = 1
     }
-    if ncols > shown {
-        ncols = shown
+    if ncols > total {
+        ncols = total
     }
-    val maxrows: i64 = rows() - 2
-    val nrows: mut i64 = (shown + ncols - 1) / ncols
-    if nrows > maxrows && maxrows > 0 {
-        nrows = maxrows
-        shown = nrows * ncols
+    val boxw: i64 = ncols * colw + 2
+    val interior: i64 = boxw - 2
+    val needed_rows: i64 = (total + ncols - 1) / ncols
+    val inner: mut i64 = needed_rows
+    if inner > inner_cap {
+        inner = inner_cap
     }
-    write_s(c"\x1b7")
-    write_s(c"\n")
+    val sel_row: mut i64 = -1
+    if e.menu_index >= 0 {
+        sel_row = e.menu_index / ncols
+    }
+    val off: mut i64 = 0
+    if sel_row >= 0 {
+        if sel_row >= inner {
+            off = sel_row - inner + 1
+        }
+    }
+    val maxoff: i64 = needed_rows - inner
+    if off > maxoff {
+        off = maxoff
+    }
+    if off < 0 {
+        off = 0
+    }
+
+    u.buf_add(b, c"\x1b[90m")
+    val label: ref u8 = u.s_cat3(menu_label(e.menu_kind), c" ", u.s_int(total))
+    val lw: i64 = u.s_len(label)
+    if interior >= lw + 4 {
+        u.buf_add(b, c"┌─ ")
+        u.buf_add(b, label)
+        u.buf_ch(b, 32)
+        buf_rule(b, interior - 3 - lw)
+    } else {
+        u.buf_add(b, c"┌")
+        buf_rule(b, interior)
+    }
+    u.buf_add(b, c"┐\x1b[0m")
+
     val r: mut i64 = 0
     for {
-        if r >= nrows {
+        if r >= inner {
             break
         }
-        val cidx: mut i64 = r
+        u.buf_add(b, c"\r\n\x1b[90m│\x1b[0m")
+        val row: i64 = off + r
+        val cidx: mut i64 = 0
         for {
-            if cidx >= shown {
+            if cidx >= ncols {
                 break
             }
-            val item: ref u8 = u.vec_p(e.menu_items, cidx) as ref u8
-            val selected: bool = cidx == e.menu_index
-            if selected {
-                write_s(c"\x1b[7m")
+            val idx: i64 = row * ncols + cidx
+            if idx < total {
+                val item: ref u8 = u.vec_p(e.menu_items, idx) as ref u8
+                buf_cell(b, item, colw, idx == e.menu_index)
+            } else {
+                buf_spaces(b, colw)
             }
-            write_s(item)
-            if selected {
-                write_s(c"\x1b[0m")
-            }
-            val pad: i64 = colw - u.visible_width(item)
-            val p: mut i64 = 0
-            for {
-                if p >= pad {
-                    break
-                }
-                write_s(c" ")
-                p++
-            }
-            cidx = cidx + nrows
+            cidx++
         }
-        write_s(c"\x1b[K")
-        if r + 1 < nrows {
-            write_s(c"\n")
-        }
+        u.buf_add(b, c"\x1b[90m│\x1b[0m")
         r++
     }
-    if total > shown {
-        write_s(c"\n")
-        write_s(u.s_cat(c"  ... ", u.s_cat(u.s_int(total - shown), c" more matches")))
-    }
-    write_s(c"\x1b8")
+
+    u.buf_add(b, c"\r\n\x1b[90m└")
+    buf_rule(b, interior)
+    u.buf_add(b, c"┘\x1b[0m")
+    return inner + 2
 }
 
 fn display_prompt(e: ref Editor, prompt: ref u8) ref u8 = trust {
@@ -542,8 +652,9 @@ fn display_prompt(e: ref Editor, prompt: ref u8) ref u8 = trust {
 
 fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
     val pr: ref u8 = display_prompt(e, prompt)
-    val rows_up: i64 = e.drawn_rows - 1
+    val prompt_row_count: i64 = prompt_rows(pr)
     if e.first_draw == 0 {
+        val rows_up: i64 = e.drawn_rows - 1
         if rows_up > 0 {
             write_s(u.s_cat3(c"\x1b[", u.s_int(rows_up), c"A"))
         }
@@ -551,7 +662,6 @@ fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
     } else {
         e.first_draw = 0
     }
-    write_s(pr)
     val pwidth: i64 = prompt_last_width(pr)
     val termw: i64 = cols()
     val avail: mut i64 = termw - pwidth - 1
@@ -583,15 +693,30 @@ fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
         w = w + nw
         end = u.utf8_next(e.line, end, e.len)
     }
-    emit_display_segment(e.line, e.view_start, end)
-    write_s(c"\x1b[J")
-    val tail_w: i64 = display_width(e.line, e.pos, end)
-    if tail_w > 0 {
-        write_s(u.s_cat3(c"\x1b[", u.s_int(tail_w), c"D"))
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, pr)
+    emit_display_segment(b, e.line, e.view_start, end)
+    u.buf_add(b, c"\x1b[J")
+    val menu_rows: mut i64 = 0
+    if e.menu_active == 1 && e.menu_items != none && e.menu_items.len > 0 {
+        u.buf_add(b, c"\r\n")
+        menu_rows = draw_menu_box(b, e, prompt_row_count)
     }
-    draw_menu(e)
-    e.drawn_rows = prompt_rows(pr)
-    write_s(c"\x1b[0m")
+    if menu_rows > 0 {
+        u.buf_add(b, u.s_cat3(c"\x1b[", u.s_int(menu_rows), c"A"))
+    }
+    u.buf_add(b, c"\r")
+    val col: mut i64 = pwidth + display_width(e.line, e.view_start, e.pos) + 1
+    if col > termw {
+        col = termw
+    }
+    if col < 1 {
+        col = 1
+    }
+    u.buf_add(b, u.s_cat3(c"\x1b[", u.s_int(col), c"G"))
+    u.buf_add(b, c"\x1b[0m")
+    write_s(u.buf_take(b))
+    e.drawn_rows = prompt_row_count
 }
 
 fn history_recall(e: mut ref Editor, up: bool) void = trust {
@@ -658,6 +783,7 @@ fn open_completion(e: mut ref Editor) void = trust {
     e.menu_start = start
     e.menu_end = end
     e.menu_base = u.s_dup(e.line)
+    e.menu_kind = res.kind
 }
 
 fn apply_menu_item(e: mut ref Editor) void = trust {
@@ -799,6 +925,16 @@ fn handle_search_key(e: mut ref Editor, k: i32) i64 = trust {
     return 1
 }
 
+fn end_input_line(e: mut ref Editor) void = trust {
+    val had_menu: bool = e.menu_active == 1
+    e.menu_active = 0
+    if had_menu {
+        write_s(c"\n\x1b[J")
+    } else {
+        write_s(c"\n")
+    }
+}
+
 pub fn readline(e: mut ref Editor, prompt: ref u8) ref u8 = trust {
     raw_mode()
     e.first_draw = 1
@@ -822,21 +958,20 @@ pub fn readline(e: mut ref Editor, prompt: ref u8) ref u8 = trust {
             continue
         }
         if k == 13 || k == 10 {
-            e.menu_active = 0
             e.hist_index = e.hist.items.len
-            write_s(c"\n")
+            end_input_line(e)
             return u.s_dup(e.line)
         }
         if k == 3 {
             e.cancelled = 1
-            e.menu_active = 0
-            write_s(c"^C\n")
+            write_s(c"^C")
+            end_input_line(e)
             return none
         }
         if k == 4 {
             if e.len == 0 {
                 e.eof = 1
-                write_s(c"\n")
+                end_input_line(e)
                 return none
             }
             ed_delete(e)
@@ -930,6 +1065,8 @@ pub fn readline(e: mut ref Editor, prompt: ref u8) ref u8 = trust {
         if k == 27 {
             if e.menu_active == 1 {
                 e.menu_active = 0
+                ed_set(e, e.menu_base)
+                e.pos = e.menu_end
                 draw(e, prompt)
                 continue
             }
