@@ -346,7 +346,7 @@ fn apply(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8) void = 
     set_int_field(c, key, value)
 }
 
-fn known_key(section: ref u8, key: ref u8) bool = trust {
+pub fn known_key(section: ref u8, key: ref u8) bool = trust {
     if u.s_eq(section, c"prompt") {
         if u.s_eq(key, c"show_username") || u.s_eq(key, c"show_hostname") || u.s_eq(key, c"show_directory") || u.s_eq(key, c"show_git") || u.s_eq(key, c"show_time") || u.s_eq(key, c"show_exit_status") || u.s_eq(key, c"show_duration") || u.s_eq(key, c"show_jobs") || u.s_eq(key, c"show_mode") || u.s_eq(key, c"two_line") || u.s_eq(key, c"git_status") {
             return true
@@ -409,6 +409,206 @@ pub fn set_value(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8)
     }
     apply(c, section, key, value)
     return true
+}
+
+pub fn possible_values(section: ref u8, key: ref u8) ref u8 = trust {
+    if u.s_eq(section, c"prompt") {
+        if u.s_eq(key, c"theme") {
+            return c"default, plain, lambda, powerline, right (right1, right_aligned), right_time (right2, right_aligned_time), hacker, dots, compact (compact_path), iconified (icons), timestamped (timestamp), doubleline (double)"
+        }
+        if u.s_eq(key, c"directory_style") {
+            return c"full, short, basename"
+        }
+    }
+    if needs_bool(section, key) {
+        return c"true (yes, on, 1), false (no, off, 0)"
+    }
+    if u.s_eq(section, c"colors") {
+        return c"default, black, red, green, yellow, blue, magenta, cyan, white, bright_black (gray, grey), bright_red, bright_green, bright_yellow, bright_blue, bright_magenta, bright_cyan, bright_white, 0-255, #RRGGBB"
+    }
+    return c""
+}
+
+fn bool_text(v: i64) ref u8 = trust {
+    if v != 0 {
+        return c"true"
+    }
+    return c"false"
+}
+
+fn color_name(color: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(color)
+    if n == 0 || u.s_eq(color, c"\x1b[39m") {
+        return c"default"
+    }
+    if u.s_eq(color, c"\x1b[30m") {
+        return c"black"
+    }
+    if u.s_eq(color, c"\x1b[31m") {
+        return c"red"
+    }
+    if u.s_eq(color, c"\x1b[32m") {
+        return c"green"
+    }
+    if u.s_eq(color, c"\x1b[33m") {
+        return c"yellow"
+    }
+    if u.s_eq(color, c"\x1b[34m") {
+        return c"blue"
+    }
+    if u.s_eq(color, c"\x1b[35m") {
+        return c"magenta"
+    }
+    if u.s_eq(color, c"\x1b[36m") {
+        return c"cyan"
+    }
+    if u.s_eq(color, c"\x1b[37m") {
+        return c"white"
+    }
+    if u.s_eq(color, c"\x1b[90m") {
+        return c"bright_black"
+    }
+    if u.s_eq(color, c"\x1b[91m") {
+        return c"bright_red"
+    }
+    if u.s_eq(color, c"\x1b[92m") {
+        return c"bright_green"
+    }
+    if u.s_eq(color, c"\x1b[93m") {
+        return c"bright_yellow"
+    }
+    if u.s_eq(color, c"\x1b[94m") {
+        return c"bright_blue"
+    }
+    if u.s_eq(color, c"\x1b[95m") {
+        return c"bright_magenta"
+    }
+    if u.s_eq(color, c"\x1b[96m") {
+        return c"bright_cyan"
+    }
+    if u.s_eq(color, c"\x1b[97m") {
+        return c"bright_white"
+    }
+    if n > 7 && u.s_starts(color, c"\x1b[38;5;") {
+        return u.s_cat(c"256:", u.s_substr(color, 7, n - 1))
+    }
+    return c"custom"
+}
+
+pub fn current_value(c: ref Config, section: ref u8, key: ref u8) ref u8 = trust {
+    if u.s_eq(section, c"prompt") {
+        if u.s_eq(key, c"theme") {
+            return c.theme
+        }
+        if u.s_eq(key, c"directory_style") {
+            return c.directory_style
+        }
+        if u.s_eq(key, c"symbol") || u.s_eq(key, c"prompt_symbol") {
+            return c.prompt_symbol
+        }
+        if u.s_eq(key, c"prompt_char") {
+            return c.prompt_char
+        }
+        if u.s_eq(key, c"separator") {
+            return c.separator
+        }
+        if u.s_eq(key, c"show_username") {
+            return bool_text(c.show_username)
+        }
+        if u.s_eq(key, c"show_hostname") {
+            return bool_text(c.show_hostname)
+        }
+        if u.s_eq(key, c"show_directory") {
+            return bool_text(c.show_directory)
+        }
+        if u.s_eq(key, c"show_git") || u.s_eq(key, c"git_status") {
+            return bool_text(c.show_git)
+        }
+        if u.s_eq(key, c"show_time") {
+            return bool_text(c.show_time)
+        }
+        if u.s_eq(key, c"show_exit_status") {
+            return bool_text(c.show_exit_status)
+        }
+        if u.s_eq(key, c"show_duration") {
+            return bool_text(c.show_duration)
+        }
+        if u.s_eq(key, c"show_jobs") {
+            return bool_text(c.show_jobs)
+        }
+        if u.s_eq(key, c"show_mode") {
+            return bool_text(c.show_mode)
+        }
+        if u.s_eq(key, c"two_line") {
+            return bool_text(c.two_line)
+        }
+    }
+    if u.s_eq(section, c"colors") {
+        if u.s_eq(key, c"primary") {
+            return color_name(c.color_primary)
+        }
+        if u.s_eq(key, c"secondary") {
+            return color_name(c.color_secondary)
+        }
+        if u.s_eq(key, c"success") {
+            return color_name(c.color_success)
+        }
+        if u.s_eq(key, c"error") {
+            return color_name(c.color_error)
+        }
+        if u.s_eq(key, c"directory") {
+            return color_name(c.color_directory)
+        }
+        if u.s_eq(key, c"git_clean") {
+            return color_name(c.color_git_clean)
+        }
+        if u.s_eq(key, c"git_dirty") {
+            return color_name(c.color_git_dirty)
+        }
+        if u.s_eq(key, c"muted") {
+            return color_name(c.color_muted)
+        }
+        if u.s_eq(key, c"warning") {
+            return color_name(c.color_warning)
+        }
+        if u.s_eq(key, c"accent") {
+            return color_name(c.color_accent)
+        }
+    }
+    if u.s_eq(section, c"history") {
+        if u.s_eq(key, c"enabled") {
+            return bool_text(c.history_enabled)
+        }
+        if u.s_eq(key, c"file") || u.s_eq(key, c"history_file") {
+            return c.history_file
+        }
+        if u.s_eq(key, c"max_entries") || u.s_eq(key, c"history_max") {
+            return u.s_int(c.history_max)
+        }
+        if u.s_eq(key, c"ignore_duplicates") {
+            return bool_text(c.history_ignore_dups)
+        }
+    }
+    if u.s_eq(section, c"completion") {
+        if u.s_eq(key, c"enabled") {
+            return bool_text(c.completion_enabled)
+        }
+        if u.s_eq(key, c"case_sensitive") {
+            return bool_text(c.completion_case_sensitive)
+        }
+    }
+    if u.s_eq(section, c"shell") {
+        if u.s_eq(key, c"default_editor") || u.s_eq(key, c"editor") {
+            return c.shell_editor
+        }
+        if u.s_eq(key, c"login_message") {
+            return bool_text(c.login_message)
+        }
+        if u.s_eq(key, c"startup_file") {
+            return c.startup_file
+        }
+    }
+    return c""
 }
 
 pub fn bloodrc_path(c: ref Config) ref u8 = trust {

@@ -28,7 +28,7 @@ fn error(msg: ref u8) void = trust {
 }
 
 fn print_help() void = trust {
-    u.write_fd(1, c"Blood escape commands\n\n  :cfg.SECTION.KEY = VALUE   update and save configuration\n  :rla                       reload configuration and .bloodrc\n  :where                     show configuration file paths\n\nExamples:\n  :cfg.prompt.theme = hacker\n  :cfg.colors.primary = red\n")
+    u.write_fd(1, c"Blood escape commands\n\n  :cfg.SECTION.KEY            show current and possible values\n  :cfg.SECTION.KEY = VALUE   update and save configuration\n  :rla                       reload configuration and .bloodrc\n  :where                     show configuration file paths\n\nExamples:\n  :cfg.prompt.theme\n  :cfg.prompt.theme = hacker\n  :cfg.colors.primary = red\n")
 }
 
 fn show_paths(c: ref cfgmod.Config) void = trust {
@@ -48,10 +48,54 @@ fn reload(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = trust {
     return 0
 }
 
+fn show_value(c: ref cfgmod.Config, body: ref u8) i32 = trust {
+    val lhs: ref u8 = u.s_trim(body)
+    val dot: i64 = u.s_index_of_char(lhs, 46, 0)
+    if dot <= 0 || dot + 1 >= u.s_len(lhs) {
+        error(c":cfg: expected SECTION.KEY")
+        return 2
+    }
+    val section: ref u8 = u.s_substr(lhs, 0, dot)
+    val key: ref u8 = u.s_substr(lhs, dot + 1, u.s_len(lhs))
+    if u.s_eq(section, c"aliases") {
+        if !u.map_has(shell.aliases(), key) {
+            error(u.s_cat3(c":cfg: alias not set: ", key, c""))
+            return 1
+        }
+        val value: ref u8 = @bitcast(u.map_get(shell.aliases(), key), ref u8)
+        u.stdout_ln(u.s_cat3(section, c".", key))
+        u.stdout_ln(u.s_cat(c"  current: ", value))
+        return 0
+    }
+    if u.s_eq(section, c"env") {
+        if !u.map_has(shell.vars(), key) {
+            error(u.s_cat3(c":cfg: variable not set: ", key, c""))
+            return 1
+        }
+        u.stdout_ln(u.s_cat3(section, c".", key))
+        u.stdout_ln(u.s_cat(c"  current: ", shell.get_var(key)))
+        return 0
+    }
+    if !cfgmod.known_key(section, key) {
+        error(u.s_cat3(c":cfg: unknown key ", section, u.s_cat(c".", key)))
+        return 2
+    }
+    val possible: ref u8 = cfgmod.possible_values(section, key)
+    u.stdout_ln(u.s_cat3(section, c".", key))
+    if u.s_len(possible) > 0 {
+        u.stdout_ln(u.s_cat(c"  values:  ", possible))
+    }
+    u.stdout_ln(u.s_cat(c"  current: ", cfgmod.current_value(c, section, key)))
+    return 0
+}
+
 fn set_config(c: mut ref cfgmod.Config, h: mut ref histmod.History, rest: ref u8) i32 = trust {
     val body: ref u8 = u.s_substr(rest, 4, u.s_len(rest))
     val eq: i64 = u.s_index_of_char(body, 61, 0)
-    if eq <= 0 {
+    if eq < 0 {
+        return show_value(c, body)
+    }
+    if eq == 0 {
         error(c":cfg: expected SECTION.KEY = VALUE")
         return 2
     }

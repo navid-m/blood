@@ -1514,6 +1514,12 @@ is not passed to the shell or scripting language.</p>
 </thead>
 <tbody>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:cfg.SECTION.KEY</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Show the current value and, for enumerated keys, all accepted
+values. Enumerated keys include <code>prompt.theme</code>, <code>prompt.directory_style</code>,
+boolean settings, and colours.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>:cfg.SECTION.KEY = VALUE</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Update a configuration key in the running session
 and immediately rewrite the corresponding line in <code>blood.ini</code>. Supports
@@ -1539,7 +1545,8 @@ run <code>.bloodrc</code> again. The prompt and colours update immediately.</p><
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code>:cfg.prompt.theme = hacker
+<pre class="highlight"><code>:cfg.prompt.theme
+:cfg.prompt.theme = hacker
 :cfg.colors.primary = red
 :cfg.history.max_entries = 500
 :cfg.aliases.ll = ls -l</code></pre>
@@ -4184,7 +4191,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-18 01:35:20 UTC
+Last updated 2026-11-18 01:41:48 UTC
 </div>
 </div>
 </body>

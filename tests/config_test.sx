@@ -175,6 +175,24 @@ test "init_bloodrc writes a prelude template once" {
     }
 }
 
+test "possible and current values are exposed for queries" {
+    trust {
+        val c: ref cfg.Config = cfg.default_config()
+        assert u.s_contains(cfg.possible_values(c"prompt", c"theme"), c"powerline")
+        assert u.s_contains(cfg.possible_values(c"prompt", c"theme"), c"right_time")
+        assert u.s_contains(cfg.possible_values(c"prompt", c"directory_style"), c"basename")
+        assert u.s_contains(cfg.possible_values(c"prompt", c"show_git"), c"true")
+        assert u.s_contains(cfg.possible_values(c"colors", c"primary"), c"#RRGGBB")
+        assert u.s_eq(cfg.possible_values(c"history", c"max_entries"), c"")
+
+        assert u.s_eq(cfg.current_value(c, c"prompt", c"theme"), c"default")
+        assert u.s_eq(cfg.current_value(c, c"prompt", c"show_git"), c"true")
+        assert u.s_eq(cfg.current_value(c, c"colors", c"primary"), c"cyan")
+        assert u.s_eq(cfg.current_value(c, c"history", c"max_entries"), c"10000")
+        assert u.s_eq(cfg.current_value(c, c"shell", c"default_editor"), c"nano")
+    }
+}
+
 test "persist_value replaces keys and creates sections" {
     trust {
         val path: ref u8 = c"/tmp/blood-unit-config/persist.ini"

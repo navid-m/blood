@@ -544,6 +544,9 @@ is not passed to the shell or scripting language.
 [cols="1,3",options="header"]
 |===
 |Command |Effect
+|`:cfg.SECTION.KEY` |Show the current value and, for enumerated keys, all accepted
+values. Enumerated keys include `prompt.theme`, `prompt.directory_style`,
+boolean settings, and colours.
 |`:cfg.SECTION.KEY = VALUE` |Update a configuration key in the running session
 and immediately rewrite the corresponding line in `blood.ini`. Supports
 `prompt`, `colors`, `history`, `completion`, `shell`, `aliases`, and `env`.
@@ -557,6 +560,7 @@ Examples:
 
 [source]
 ----
+:cfg.prompt.theme
 :cfg.prompt.theme = hacker
 :cfg.colors.primary = red
 :cfg.history.max_entries = 500

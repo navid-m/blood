@@ -110,6 +110,22 @@ test ":rla reloads config, aliases and .bloodrc" {
     }
 }
 
+test ":cfg queries enumerated and scalar values" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-escape/query.ini"
+        assert u.mkdir_p(u.path_dir(path))
+        assert u.write_file(path, c"[prompt]\ntheme = lambda\n")
+        val c: mut ref cfg.Config = setup(path)
+        val h: mut ref hist.History = new_history(c)
+        assert esc.handle(c":cfg.prompt.theme", c, h) == 0
+        assert esc.handle(c":cfg.prompt.directory_style", c, h) == 0
+        assert esc.handle(c":cfg.prompt.show_git", c, h) == 0
+        assert esc.handle(c":cfg.colors.primary", c, h) == 0
+        assert esc.handle(c":cfg.history.max_entries", c, h) == 0
+        assert esc.handle(c":cfg.prompt.nope", c, h) == 2
+    }
+}
+
 test ":where and :help succeed" {
     trust {
         val path: ref u8 = c"/tmp/blood-unit-escape/where.ini"
