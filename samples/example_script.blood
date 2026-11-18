@@ -1,0 +1,3 @@
+for x in ["whats", "up", "bro"] {
+    shell("cowsay {x}")
+}
