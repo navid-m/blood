@@ -584,9 +584,9 @@ memory primitives.</p>
 <pre class="highlight"><code>blood
 blood -c COMMAND
 blood SCRIPT.blood [ARG...]
-blood --init
-blood --version
-blood --help</code></pre>
+blood -init
+blood -version
+blood -help</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -605,20 +605,21 @@ arguments are exposed to the script as the list variable <code>args</code>. The 
 name is exposed as <code><em>file</em></code>.</p>
 </div>
 <div class="paragraph">
-<p><code>blood --init</code> writes a default configuration file at the configuration path
+<p><code>blood -init</code> writes a default configuration file at the configuration path
 if no file exists there. Parent directories are created. If the file already
 exists it is not overwritten.</p>
 </div>
 <div class="paragraph">
-<p><code>blood --version</code> and <code>blood -v</code> print the version line.</p>
+<p><code>blood -version</code> and <code>blood -v</code> print the version line.</p>
 </div>
 <div class="paragraph">
-<p><code>blood --help</code> and <code>blood -h</code> print usage information.</p>
+<p><code>blood -help</code> and <code>blood -h</code> print usage information.</p>
 </div>
 <div class="paragraph">
-<p>An unrecognised first operand beginning with <code>-</code> produces
-<code>blood: unknown option: OPTION</code> and status 2. A first operand that does not
-begin with <code>-</code> is treated as a script path.</p>
+<p>An unrecognised flag beginning with <code>-</code> produces
+<code>blood: unknown flag 'OPTION'</code> and status 2. Command-line options use the
+Plan 9 single-dash form. Parsing stops at the first positional argument, so
+script arguments beginning with <code>-</code> are passed through unchanged.</p>
 </div>
 <div class="sect2">
 <h3 id="_process_model">Process model</h3>
@@ -762,7 +763,7 @@ command. An external command interrupted by Ctrl-C normally produces status
 <div class="paragraph">
 <p>The configuration directory and the directory containing the history file are
 created at startup if they do not exist. The configuration file itself is not
-created automatically; use <code>blood --init</code>.</p>
+created automatically; use <code>blood -init</code>.</p>
 </div>
 <div class="paragraph">
 <p>Configuration is loaded once at process startup. It is not reloaded while the
@@ -1194,7 +1195,7 @@ initialises its variable table.</p>
 <div class="sect2">
 <h3 id="_default_configuration_file">Default configuration file</h3>
 <div class="paragraph">
-<p><code>blood --init</code> writes the following content when the file does not exist:</p>
+<p><code>blood -init</code> writes the following content when the file does not exist:</p>
 </div>
 <div class="listingblock">
 <div class="content">

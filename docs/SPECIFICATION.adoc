@@ -77,9 +77,9 @@ The executable is invoked as one of:
 blood
 blood -c COMMAND
 blood SCRIPT.blood [ARG...]
-blood --init
-blood --version
-blood --help
+blood -init
+blood -version
+blood -help
 ----
 
 `blood` with no operands starts an interactive shell when standard input is a
@@ -94,17 +94,18 @@ as a script. Otherwise it is executed as a shell command.
 arguments are exposed to the script as the list variable `args`. The script
 name is exposed as `__file__`.
 
-`blood --init` writes a default configuration file at the configuration path
+`blood -init` writes a default configuration file at the configuration path
 if no file exists there. Parent directories are created. If the file already
 exists it is not overwritten.
 
-`blood --version` and `blood -v` print the version line.
+`blood -version` and `blood -v` print the version line.
 
-`blood --help` and `blood -h` print usage information.
+`blood -help` and `blood -h` print usage information.
 
-An unrecognised first operand beginning with `-` produces
-`blood: unknown option: OPTION` and status 2. A first operand that does not
-begin with `-` is treated as a script path.
+An unrecognised flag beginning with `-` produces
+`blood: unknown flag 'OPTION'` and status 2. Command-line options use the
+Plan 9 single-dash form. Parsing stops at the first positional argument, so
+script arguments beginning with `-` are passed through unchanged.
 
 === Process model
 
@@ -189,7 +190,7 @@ $HOME/.config/blood/blood.ini
 
 The configuration directory and the directory containing the history file are
 created at startup if they do not exist. The configuration file itself is not
-created automatically; use `blood --init`.
+created automatically; use `blood -init`.
 
 Configuration is loaded once at process startup. It is not reloaded while the
 shell is running.
@@ -365,7 +366,7 @@ initialises its variable table.
 
 === Default configuration file
 
-`blood --init` writes the following content when the file does not exist:
+`blood -init` writes the following content when the file does not exist:
 
 [source,ini]
 ----

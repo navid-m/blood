@@ -8,6 +8,7 @@ val term = use("terminal.sx")
 val ex = use("exec.sx")
 val shell = use("shell.sx")
 val script = use("script.sx")
+val flags = use("std/flags")
 
 val VERSION: ref u8 = c"0.1.0"
 
@@ -45,8 +46,40 @@ fn print_version() void = trust {
 }
 
 fn print_help() void = trust {
-    val text: ref u8 = c"usage: blood [options] [script.blood [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  --init           write a default configuration file\n  --version        print the version\n  -h, --help       show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n"
+    val text: ref u8 = c"usage: blood [options] [script.blood [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  -init            write a default configuration file\n  -version, -v     print the version\n  -help, -h        show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n"
     u.write_fd(1, text)
+}
+
+fn list_to_vec(src: list[ref u8], start: i64) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val n: i64 = @len(src) as i64
+    val i: mut i64 = start
+    for {
+        if i >= n {
+            break
+        }
+        match @get(src, i as usize) {
+            some p => {
+                u.vec_pushp(out, p as ref void)
+            }
+            none => {}
+        }
+        i++
+    }
+    return out
+}
+
+fn vec_slice(src: ref u.Vec, start: i64) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = start
+    for {
+        if i >= src.len {
+            break
+        }
+        u.vec_pushp(out, u.vec_p(src, i))
+        i++
+    }
+    return out
 }
 
 fn ensure_config_dirs(c: ref cfgmod.Config) void = trust {
@@ -278,7 +311,6 @@ fn interactive_loop(c: ref cfgmod.Config, h: mut ref histmod.History) i32 = trus
 
 pub fn main() i32 = trust {
     val av: list[ref u8] = @args()
-    val argc: i64 = @len(av) as i64
     val c: ref cfgmod.Config = cfgmod.load_config()
     ensure_config_dirs(c)
     ex.signal_ignore(3)
@@ -291,25 +323,47 @@ pub fn main() i32 = trust {
     script.script_init()
     install_hooks()
     term.init_terminal()
-    val args_vec: mut ref u.Vec = u.vec_new()
-    val i: mut i64 = 1
-    for {
-        if i >= argc {
-            break
+    val fs_result = flags.new(c"blood", c"Blood shell and scripting language")
+    val fs: mut flags.FlagSet = @zeroed
+    match fs_result {
+        ok v => {
+            fs = v
         }
-        u.vec_pushp(args_vec, arg_at(av, i) as ref void)
-        i++
+        err _ => {
+            u.write_fd(2, c"blood: cannot initialize flags\n")
+            return 1
+        }
     }
-    val first: ref u8 = arg_at(av, 1)
-    if first != none && (u.s_eq(first, c"--version") || u.s_eq(first, c"-v")) {
+    val show_version: mut bool = false
+    val do_init: mut bool = false
+    val command: mut ref u8 = none
+    flags.bool_var(fs, c"version", c"v", @addr(show_version), c"print the version")
+    flags.bool_var(fs, c"init", none, @addr(do_init), c"write a default configuration file")
+    flags.string_var(fs, c"c", none, @addr(command), c"execute a command or script and exit")
+    flags.stop_at_positional(fs, true)
+    match flags.parse(fs, av) {
+        ok _ => {}
+        err e => {
+            if flags.is_help(e) {
+                print_help()
+                flags.destroy(fs)
+                return 0
+            }
+            u.write_fd(2, u.s_cat3(c"blood: ", flags.message(e), c"\n"))
+            flags.usage_err(fs)
+            flags.destroy(fs)
+            return 2
+        }
+    }
+    val positional: list[ref u8] = flags.args(fs)
+    val first: ref u8 = arg_at(positional, 0)
+    val all_args: ref u.Vec = list_to_vec(positional, 0)
+    flags.destroy(fs)
+    if show_version {
         print_version()
         return 0
     }
-    if first != none && (u.s_eq(first, c"--help") || u.s_eq(first, c"-h")) {
-        print_help()
-        return 0
-    }
-    if first != none && u.s_eq(first, c"--init") {
+    if do_init {
         if cfgmod.init_config_file(c.path) {
             u.stdout_ln(u.s_cat(c"wrote ", c.path))
             return 0
@@ -317,27 +371,14 @@ pub fn main() i32 = trust {
         u.write_fd(2, u.s_cat3(c"blood: cannot write ", c.path, c"\n"))
         return 1
     }
-    if first != none && u.s_eq(first, c"-c") {
-        val cmd: ref u8 = arg_at(av, 2)
-        if cmd == none {
-            u.write_fd(2, c"blood: -c requires a command\n")
-            return 2
-        }
-        val rest: mut ref u.Vec = u.vec_new()
-        val j: mut i64 = 3
-        for {
-            if j >= argc {
-                break
-            }
-            u.vec_pushp(rest, arg_at(av, j) as ref void)
-            j++
-        }
+    if command != none {
+        val rest: ref u.Vec = vec_slice(all_args, 0)
         script.set_args(rest)
         val st: mut i32 = 0
-        if script.looks_like_script(cmd) {
-            st = script.run_text(strip_shebang(cmd), false, c"-c")
+        if script.looks_like_script(command) {
+            st = script.run_text(strip_shebang(command), false, c"-c")
         } else {
-            st = shell.run_line(cmd)
+            st = shell.run_line(command)
         }
         term.cooked_mode()
         if u.script_exit_code >= 0 {
@@ -345,20 +386,8 @@ pub fn main() i32 = trust {
         }
         return st
     }
-    if first != none && u.s_len(first) > 0 && @load8(first) == 45 {
-        u.write_fd(2, u.s_cat3(c"blood: unknown option: ", first, c"\n"))
-        return 2
-    }
-    if first != none && u.s_len(first) > 0 && @load8(first) != 45 {
-        val rest: mut ref u.Vec = u.vec_new()
-        val j: mut i64 = 2
-        for {
-            if j >= argc {
-                break
-            }
-            u.vec_pushp(rest, arg_at(av, j) as ref void)
-            j++
-        }
+    if first != none {
+        val rest: ref u.Vec = vec_slice(all_args, 1)
         script.set_args(rest)
         val src: ref u8 = u.read_file(first)
         if src == none {
