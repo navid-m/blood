@@ -853,8 +853,10 @@ previously assigned value.</p>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>theme</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">string</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>default</code>. The value <code>plain</code> selects a single-line, unboxed
-prompt. Any other value selects the default two-line prompt.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>default</code>. Selects a prompt preset. Available presets are
+<code>default</code>, <code>plain</code>, <code>lambda</code>, <code>powerline</code>, <code>right</code>, <code>right_time</code>, <code>hacker</code>,
+<code>dots</code>, <code>compact</code>, <code>iconified</code>, <code>timestamped</code>, and <code>doubleline</code>. An
+unrecognised value behaves as <code>default</code>.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>show_username</code></p></td>
@@ -881,7 +883,8 @@ repository is found.</p></td>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>show_time</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">boolean</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code>. Includes <code>HH:MM:SS</code>.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code>. Includes the time. The default layout uses
+<code>HH:MM:SS</code>; presets that show time use <code>HH:MM</code>.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>show_exit_status</code></p></td>
@@ -1587,6 +1590,86 @@ yellow <code>⚙ N</code>.</p>
 <p>The plain theme always uses <code>&gt;</code> and does not print a box. It honours the
 username, hostname, directory, and Git settings. It does not render time,
 status, duration, job count, or the configured prompt character.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_prompt_presets">Prompt presets</h3>
+<div class="paragraph">
+<p>A preset is selected with <code>[prompt] theme = NAME</code>. Every preset honours the
+<code>show_*</code> toggles and the <code>[colors]</code> settings. Presets define their own glyphs
+and path style.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 66.6667%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Theme</th>
+<th class="tableblock halign-left valign-top">Layout</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>lambda</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>λ DIRECTORY BRANCH ›</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>powerline</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Coloured powerline segments for user, host, directory, branch,
+time, and indicators, followed by a second <code>❯</code> line.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>right</code> (also <code>right1</code>, <code>right_aligned</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>DIRECTORY&gt;</code> followed by a
+right-aligned <code>USER@HOST</code>. The cursor stays after the left part.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>right_time</code> (also <code>right2</code>, <code>right_aligned_time</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>DIRECTORY ❯</code> followed by
+a right-aligned branch, clean/dirty mark, and <code>HH:MM</code> time.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>hacker</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>USER :: HOST :: DIRECTORY :: BRANCH</code> followed by a <code>&gt;&gt;&gt;</code> line.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>dots</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>● USER  ● DIRECTORY  ● BRANCH</code> followed by a <code>❯</code> line.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>compact</code> (also <code>compact_path</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">A compacted home path such as
+<code>~/D/p/blood</code>, the branch, and <code>❯</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>iconified</code> (also <code>icons</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">A three-line <code>╭─ ☼ USER on HOST</code>,
+<code>├─ ⌂ DIRECTORY</code>, <code>╰─ ⎇ BRANCH ➜</code> block.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>timestamped</code> (also <code>timestamp</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>[HH:MM] USER@HOST DIRECTORY (BRANCH)</code>
+followed by a <code>$</code> line.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>doubleline</code> (also <code>double</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">A three-line <code>╔═ USER@HOST</code>,
+<code>╠═ DIRECTORY</code>, <code>╚═ BRANCH ═▶</code> block.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>The <code>powerline</code> preset converts the configured foreground colours into
+segment backgrounds and uses `` separators. It requires a font with
+Powerline glyphs.</p>
+</div>
+<div class="paragraph">
+<p>The two right-aligned presets draw their right-hand text at the terminal edge
+and then return the cursor to the end of the left-hand prompt. When the
+terminal is too narrow for both parts, the right-hand text is omitted and the
+input uses the full remaining line.</p>
 </div>
 </div>
 <div class="sect2">
@@ -4019,7 +4102,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-18 00:32:40 UTC
+Last updated 2026-11-18 01:10:46 UTC
 </div>
 </div>
 </body>

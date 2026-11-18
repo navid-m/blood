@@ -14,6 +14,11 @@ pub type GitInfo = {
     cwd: mut ref u8
 }
 
+pub type PromptParts = {
+    left: mut ref u8
+    right: mut ref u8
+}
+
 val git_cache: mut GitInfo = @zeroed
 val host_cache: mut ref u8 = none
 
@@ -172,6 +177,59 @@ fn shorten_home(dir: ref u8) ref u8 = trust {
     return u.s_dup(dir)
 }
 
+fn base_text(dir: ref u8) ref u8 = trust {
+    val short: ref u8 = shorten_home(dir)
+    if u.s_eq(short, c"/") {
+        return u.s_dup(c"/")
+    }
+    val b: ref u8 = u.path_base(short)
+    if u.s_len(b) == 0 {
+        return u.s_dup(c"/")
+    }
+    return b
+}
+
+fn full_text(dir: ref u8) ref u8 = trust {
+    return shorten_home(dir)
+}
+
+fn compact_text(dir: ref u8) ref u8 = trust {
+    val short: ref u8 = shorten_home(dir)
+    val out: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(short)
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(short, i)) == 47 {
+            val comp: ref u8 = u.s_substr(short, start, i)
+            val clen: i64 = u.s_len(comp)
+            if clen > 0 {
+                if out.len > 0 && @load8(@ptradd(out.ptr, out.len - 1)) != 47 {
+                    u.buf_ch(out, 47)
+                }
+                val last: bool = i == n
+                if last || clen <= 2 || u.s_eq(comp, c"~") || u.s_eq(comp, c".") || u.s_eq(comp, c"..") {
+                    u.buf_add(out, comp)
+                } else {
+                    val next: i64 = u.utf8_next(comp, 0, clen)
+                    u.buf_addn(out, comp, next)
+                }
+            } elif i == 0 {
+                u.buf_ch(out, 47)
+            }
+            start = i + 1
+        }
+        i++
+    }
+    if out.len == 0 {
+        return u.s_dup(dir)
+    }
+    return u.buf_take(out)
+}
+
 fn directory_text(c: ref cfgmod.Config, dir: ref u8) ref u8 = trust {
     val short: ref u8 = shorten_home(dir)
     if u.s_eq(c.directory_style, c"basename") {
@@ -223,96 +281,672 @@ fn time_text() ref u8 = trust {
     return @fmtalloc("{02d}:{02d}:{02d}", {hh, mm, ss})
 }
 
-pub fn render(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) ref u8 = trust {
+fn time_hm() ref u8 = trust {
+    val secs: mut i64 = u.now_ms() / 1000
+    val tm: ref void = rt.localtime(@addr(secs))
+    if tm == none {
+        return u.s_dup(c"")
+    }
+    val hh: i64 = (@load32(@ptradd(tm, 8)) as i64) & 0xFFFFFFFF
+    val mm: i64 = (@load32(@ptradd(tm, 4)) as i64) & 0xFFFFFFFF
+    return @fmtalloc("{02d}:{02d}", {hh, mm})
+}
+
+fn ascii_lower(s: ref u8) ref u8 = trust {
     val b: mut ref u.Buf = u.buf_new()
-    u.buf_add(b, c"\x1b[0m")
-    val plain: bool = u.s_eq(c.theme, c"plain")
-    val dir: ref u8 = u.cwd()
-    val user: ref u8 = u.username()
-    val host: ref u8 = host_name()
-    if plain {
-        if c.show_username != 0 {
-            u.buf_add(b, style(c.color_primary, user))
-            u.buf_add(b, c"@")
-            u.buf_add(b, style(c.color_secondary, host))
-            u.buf_add(b, c" ")
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
         }
-        if c.show_directory != 0 {
-            u.buf_add(b, style(c.color_directory, directory_text(c, dir)))
+        val c: u8 = @load8(@ptradd(s, i))
+        if c >= 65 && c <= 90 {
+            u.buf_ch(b, c + 32)
+        } else {
+            u.buf_ch(b, c)
         }
-        if c.show_git != 0 {
-            val gi: GitInfo = git_info(dir, true)
-            if gi.valid == 1 {
-                u.buf_add(b, c" (")
-                if gi.dirty == 1 {
-                    u.buf_add(b, style(c.color_git_dirty, gi.branch))
-                } else {
-                    u.buf_add(b, style(c.color_git_clean, gi.branch))
-                }
-                u.buf_add(b, c")")
+        i++
+    }
+    return u.buf_take(b)
+}
+
+fn make_parts(lb: mut ref u.Buf, rb: mut ref u.Buf) PromptParts = trust {
+    val p: mut PromptParts = @zeroed
+    p.left = u.buf_take(lb)
+    p.right = u.buf_take(rb)
+    return p
+}
+
+fn add_indicators(b: mut ref u.Buf, c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) void = trust {
+    if c.show_jobs != 0 && jobs > 0 {
+        u.buf_ch(b, 32)
+        u.buf_add(b, style(c.color_warning, u.s_cat(c"⚙ ", u.s_int(jobs))))
+    }
+    if c.show_exit_status != 0 && status != 0 {
+        u.buf_ch(b, 32)
+        u.buf_add(b, style(c.color_error, u.s_cat(c"✘ ", u.s_int(status as i64))))
+    }
+    if c.show_duration != 0 && duration_ms >= 500 {
+        u.buf_ch(b, 32)
+        u.buf_add(b, style(c.color_muted, u.s_cat(c"took ", duration_text(duration_ms))))
+    }
+}
+
+fn bg_escape(color: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(color)
+    if n == 5 && @load8(@ptradd(color, 4)) == 109 {
+        val c2: u8 = @load8(@ptradd(color, 2))
+        val c3: u8 = @load8(@ptradd(color, 3))
+        if c2 == 51 {
+            if c3 == 57 {
+                return c"\x1b[49m"
             }
+            val one: mut u8 = c3
+            return u.s_cat3(c"\x1b[4", u.s_ndup(@addr(one), 1), c"m")
         }
-        u.buf_add(b, c" ")
-        u.buf_add(b, style(c.color_primary, c">"))
-        u.buf_add(b, c" ")
-        return u.buf_take(b)
+        if c2 == 57 {
+            val one: mut u8 = c3
+            return u.s_cat3(c"\x1b[10", u.s_ndup(@addr(one), 1), c"m")
+        }
     }
-    if c.two_line != 0 {
-        u.buf_add(b, style(c.color_muted, c"┌─ "))
+    if n > 7 && u.s_starts(color, c"\x1b[38;5;") {
+        return u.s_cat(c"\x1b[48;5;", u.s_substr(color, 7, n - 1))
     }
+    if n > 7 && u.s_starts(color, c"\x1b[38;2;") {
+        return u.s_cat(c"\x1b[48;2;", u.s_substr(color, 7, n - 1))
+    }
+    return c"\x1b[49m"
+}
+
+fn fg_on(color: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(color)
+    if n == 5 && @load8(@ptradd(color, 4)) == 109 {
+        val c2: u8 = @load8(@ptradd(color, 2))
+        val c3: u8 = @load8(@ptradd(color, 3))
+        if c2 == 51 {
+            if c3 == 50 || c3 == 51 || c3 == 54 || c3 == 55 {
+                return c"\x1b[30m"
+            }
+            return c"\x1b[97m"
+        }
+        if c2 == 57 {
+            if c3 == 50 || c3 == 51 || c3 == 54 || c3 == 55 {
+                return c"\x1b[30m"
+            }
+            return c"\x1b[97m"
+        }
+    }
+    return c"\x1b[97m"
+}
+
+fn pl_segment(b: mut ref u.Buf, text: ref u8, color: ref u8) void = trust {
+    u.buf_add(b, bg_escape(color))
+    u.buf_add(b, fg_on(color))
+    u.buf_ch(b, 32)
+    u.buf_add(b, text)
+    u.buf_ch(b, 32)
+}
+
+fn pl_arrow(b: mut ref u.Buf, from_color: ref u8, to_color: ref u8) void = trust {
+    u.buf_add(b, from_color)
+    u.buf_add(b, bg_escape(to_color))
+    u.buf_add(b, c"\xee\x82\xb0")
+}
+
+fn pl_tail(b: mut ref u.Buf, color: ref u8) void = trust {
+    u.buf_add(b, color)
+    u.buf_add(b, c"\x1b[49m")
+    u.buf_add(b, c"\xee\x82\xb0\x1b[0m")
+}
+
+fn pl_push(texts: mut ref u.Vec, colors: mut ref u.Vec, text: ref u8, color: ref u8) void = trust {
+    u.vec_pushp(texts, text as ref void)
+    u.vec_pushp(colors, color as ref void)
+}
+
+fn is_theme(c: ref cfgmod.Config, name: ref u8) bool = trust {
+    return u.s_eq(u.s_trim(c.theme), name)
+}
+
+fn render_plain(c: ref cfgmod.Config) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
     if c.show_username != 0 {
-        u.buf_add(b, style(c.color_primary, user))
-        if c.show_hostname != 0 {
-            u.buf_add(b, style(c.color_muted, c"@"))
-            u.buf_add(b, style(c.color_secondary, host))
-        }
-        u.buf_add(b, c" ")
-    } elif c.show_hostname != 0 {
-        u.buf_add(b, style(c.color_secondary, host))
-        u.buf_add(b, c" ")
+        u.buf_add(lb, style(c.color_primary, u.username()))
+        u.buf_add(lb, c"@")
+        u.buf_add(lb, style(c.color_secondary, host_name()))
+        u.buf_add(lb, c" ")
     }
     if c.show_directory != 0 {
-        u.buf_add(b, style(c.color_directory, directory_text(c, dir)))
+        u.buf_add(lb, style(c.color_directory, directory_text(c, dir)))
     }
     if c.show_git != 0 {
         val gi: GitInfo = git_info(dir, true)
         if gi.valid == 1 {
-            u.buf_add(b, c" ")
-            u.buf_add(b, style(c.color_muted, c"on"))
-            u.buf_add(b, c" ")
+            u.buf_add(lb, c" (")
             if gi.dirty == 1 {
-                u.buf_add(b, style(c.color_git_dirty, gi.branch))
-                u.buf_add(b, style(c.color_git_dirty, c" *"))
+                u.buf_add(lb, style(c.color_git_dirty, gi.branch))
             } else {
-                u.buf_add(b, style(c.color_git_clean, gi.branch))
+                u.buf_add(lb, style(c.color_git_clean, gi.branch))
+            }
+            u.buf_add(lb, c")")
+        }
+    }
+    u.buf_add(lb, c" ")
+    u.buf_add(lb, style(c.color_primary, c">"))
+    u.buf_add(lb, c" ")
+    return make_parts(lb, rb)
+}
+
+fn render_default(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    val user: ref u8 = u.username()
+    val host: ref u8 = host_name()
+    if c.two_line != 0 {
+        u.buf_add(lb, style(c.color_muted, c"┌─ "))
+    }
+    if c.show_username != 0 {
+        u.buf_add(lb, style(c.color_primary, user))
+        if c.show_hostname != 0 {
+            u.buf_add(lb, style(c.color_muted, c"@"))
+            u.buf_add(lb, style(c.color_secondary, host))
+        }
+        u.buf_add(lb, c" ")
+    } elif c.show_hostname != 0 {
+        u.buf_add(lb, style(c.color_secondary, host))
+        u.buf_add(lb, c" ")
+    }
+    if c.show_directory != 0 {
+        u.buf_add(lb, style(c.color_directory, directory_text(c, dir)))
+    }
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            u.buf_add(lb, c" ")
+            u.buf_add(lb, style(c.color_muted, c"on"))
+            u.buf_add(lb, c" ")
+            if gi.dirty == 1 {
+                u.buf_add(lb, style(c.color_git_dirty, gi.branch))
+                u.buf_add(lb, style(c.color_git_dirty, c" *"))
+            } else {
+                u.buf_add(lb, style(c.color_git_clean, gi.branch))
             }
         }
     }
     if c.show_time != 0 {
-        u.buf_add(b, c" ")
-        u.buf_add(b, style(c.color_muted, time_text()))
+        u.buf_add(lb, c" ")
+        u.buf_add(lb, style(c.color_muted, time_text()))
+    }
+    add_indicators(lb, c, status, duration_ms, jobs)
+    if c.two_line != 0 {
+        u.buf_add(lb, c"\n")
+        u.buf_add(lb, style(c.color_muted, c"└─ "))
+        u.buf_add(lb, style(c.color_primary, c.prompt_char))
+        u.buf_add(lb, c" ")
+    } else {
+        u.buf_add(lb, c" ")
+        u.buf_add(lb, style(c.color_primary, c.prompt_char))
+        u.buf_add(lb, c" ")
+    }
+    return make_parts(lb, rb)
+}
+
+fn render_lambda(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    u.buf_add(lb, style(c.color_primary, c"λ"))
+    u.buf_ch(lb, 32)
+    if c.show_directory != 0 {
+        u.buf_add(lb, style(c.color_directory, base_text(dir)))
+        u.buf_ch(lb, 32)
+    }
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            if gi.dirty == 1 {
+                u.buf_add(lb, style(c.color_git_dirty, gi.branch))
+            } else {
+                u.buf_add(lb, style(c.color_git_clean, gi.branch))
+            }
+            u.buf_ch(lb, 32)
+        }
+    }
+    add_indicators(lb, c, status, duration_ms, jobs)
+    u.buf_add(lb, style(c.color_primary, c"›"))
+    u.buf_ch(lb, 32)
+    return make_parts(lb, rb)
+}
+
+fn render_powerline(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    val texts: mut ref u.Vec = u.vec_new()
+    val colors: mut ref u.Vec = u.vec_new()
+    if c.show_username != 0 {
+        pl_push(texts, colors, u.username(), c.color_primary)
+    }
+    if c.show_hostname != 0 {
+        pl_push(texts, colors, host_name(), c.color_secondary)
+    }
+    if c.show_directory != 0 {
+        pl_push(texts, colors, full_text(dir), c.color_directory)
+    }
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            if gi.dirty == 1 {
+                pl_push(texts, colors, gi.branch, c.color_git_dirty)
+            } else {
+                pl_push(texts, colors, gi.branch, c.color_git_clean)
+            }
+        }
+    }
+    if c.show_time != 0 {
+        pl_push(texts, colors, time_hm(), c.color_muted)
     }
     if c.show_jobs != 0 && jobs > 0 {
-        u.buf_add(b, c" ")
-        u.buf_add(b, style(c.color_warning, u.s_cat(c"⚙ ", u.s_int(jobs))))
+        pl_push(texts, colors, u.s_cat(c"⚙ ", u.s_int(jobs)), c.color_warning)
     }
     if c.show_exit_status != 0 && status != 0 {
-        u.buf_add(b, c" ")
-        u.buf_add(b, style(c.color_error, u.s_cat(c"✘ ", u.s_int(status as i64))))
+        pl_push(texts, colors, u.s_cat(c"✘ ", u.s_int(status as i64)), c.color_error)
     }
     if c.show_duration != 0 && duration_ms >= 500 {
-        u.buf_add(b, c" ")
-        u.buf_add(b, style(c.color_muted, u.s_cat(c"took ", duration_text(duration_ms))))
+        pl_push(texts, colors, u.s_cat(c"took ", duration_text(duration_ms)), c.color_muted)
     }
-    if c.two_line != 0 {
-        u.buf_add(b, c"\n")
-        u.buf_add(b, style(c.color_muted, c"└─ "))
-        u.buf_add(b, style(c.color_primary, c.prompt_char))
-        u.buf_add(b, c" ")
-    } else {
-        u.buf_add(b, c" ")
-        u.buf_add(b, style(c.color_primary, c.prompt_char))
-        u.buf_add(b, c" ")
+    val count: i64 = texts.len
+    val i: mut i64 = 0
+    for {
+        if i >= count {
+            break
+        }
+        val color: ref u8 = u.vec_p(colors, i) as ref u8
+        val text: ref u8 = u.vec_p(texts, i) as ref u8
+        pl_segment(lb, text, color)
+        if i + 1 < count {
+            pl_arrow(lb, color, u.vec_p(colors, i + 1) as ref u8)
+        }
+        i++
     }
-    return u.buf_take(b)
+    if count > 0 {
+        pl_tail(lb, u.vec_p(colors, count - 1) as ref u8)
+    }
+    u.buf_add(lb, c"\n")
+    u.buf_add(lb, style(c.color_primary, c"❯"))
+    u.buf_ch(lb, 32)
+    return make_parts(lb, rb)
+}
+
+fn render_right(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    u.buf_add(lb, style(c.color_directory, full_text(dir)))
+    u.buf_add(lb, style(c.color_primary, c">"))
+    u.buf_ch(lb, 32)
+    val wrote: mut bool = false
+    if c.show_username != 0 {
+        u.buf_add(rb, style(c.color_primary, u.username()))
+        wrote = true
+    }
+    if c.show_hostname != 0 {
+        if wrote {
+            u.buf_add(rb, style(c.color_muted, c"@"))
+        }
+        u.buf_add(rb, style(c.color_secondary, host_name()))
+        wrote = true
+    }
+    if wrote {
+        add_indicators(rb, c, status, duration_ms, jobs)
+    }
+    return make_parts(lb, rb)
+}
+
+fn render_right_time(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    u.buf_add(lb, style(c.color_directory, full_text(dir)))
+    u.buf_ch(lb, 32)
+    u.buf_add(lb, style(c.color_primary, c"❯"))
+    u.buf_ch(lb, 32)
+    val wrote: mut bool = false
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            if gi.dirty == 1 {
+                u.buf_add(rb, style(c.color_git_dirty, gi.branch))
+                u.buf_add(rb, style(c.color_git_dirty, c" ✘"))
+            } else {
+                u.buf_add(rb, style(c.color_git_clean, gi.branch))
+                u.buf_add(rb, style(c.color_git_clean, c" ✔"))
+            }
+            wrote = true
+        }
+    }
+    if c.show_time != 0 {
+        if wrote {
+            u.buf_add(rb, c"  ")
+        }
+        u.buf_add(rb, style(c.color_muted, time_hm()))
+        wrote = true
+    }
+    if wrote {
+        add_indicators(rb, c, status, duration_ms, jobs)
+    }
+    return make_parts(lb, rb)
+}
+
+fn render_hacker(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    val wrote: mut bool = false
+    if c.show_username != 0 {
+        u.buf_add(lb, style(c.color_primary, u.username()))
+        wrote = true
+    }
+    if c.show_hostname != 0 {
+        if wrote {
+            u.buf_add(lb, style(c.color_muted, c" :: "))
+        }
+        u.buf_add(lb, style(c.color_secondary, ascii_lower(host_name())))
+        wrote = true
+    }
+    if c.show_directory != 0 {
+        if wrote {
+            u.buf_add(lb, style(c.color_muted, c" :: "))
+        }
+        u.buf_add(lb, style(c.color_directory, base_text(dir)))
+        wrote = true
+    }
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            if wrote {
+                u.buf_add(lb, style(c.color_muted, c" :: "))
+            }
+            if gi.dirty == 1 {
+                u.buf_add(lb, style(c.color_git_dirty, gi.branch))
+            } else {
+                u.buf_add(lb, style(c.color_git_clean, gi.branch))
+            }
+            wrote = true
+        }
+    }
+    add_indicators(lb, c, status, duration_ms, jobs)
+    u.buf_add(lb, c"\n")
+    u.buf_add(lb, style(c.color_primary, c">>>"))
+    u.buf_ch(lb, 32)
+    return make_parts(lb, rb)
+}
+
+fn render_dots(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    val wrote: mut bool = false
+    if c.show_username != 0 {
+        u.buf_add(lb, style(c.color_primary, c"● "))
+        u.buf_add(lb, style(c.color_primary, u.username()))
+        wrote = true
+    }
+    if c.show_directory != 0 {
+        if wrote {
+            u.buf_add(lb, c"  ")
+        }
+        u.buf_add(lb, style(c.color_directory, c"● "))
+        u.buf_add(lb, style(c.color_directory, base_text(dir)))
+        wrote = true
+    }
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            if wrote {
+                u.buf_add(lb, c"  ")
+            }
+            if gi.dirty == 1 {
+                u.buf_add(lb, style(c.color_git_dirty, c"● "))
+                u.buf_add(lb, style(c.color_git_dirty, gi.branch))
+            } else {
+                u.buf_add(lb, style(c.color_git_clean, c"● "))
+                u.buf_add(lb, style(c.color_git_clean, gi.branch))
+            }
+            wrote = true
+        }
+    }
+    if wrote {
+        add_indicators(lb, c, status, duration_ms, jobs)
+        u.buf_add(lb, c"\n")
+    }
+    u.buf_add(lb, style(c.color_primary, c"❯"))
+    u.buf_ch(lb, 32)
+    return make_parts(lb, rb)
+}
+
+fn render_compact(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    u.buf_add(lb, style(c.color_directory, compact_text(dir)))
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            u.buf_add(lb, c"  ")
+            if gi.dirty == 1 {
+                u.buf_add(lb, style(c.color_git_dirty, gi.branch))
+            } else {
+                u.buf_add(lb, style(c.color_git_clean, gi.branch))
+            }
+        }
+    }
+    add_indicators(lb, c, status, duration_ms, jobs)
+    u.buf_ch(lb, 32)
+    u.buf_add(lb, style(c.color_primary, c"❯"))
+    u.buf_ch(lb, 32)
+    return make_parts(lb, rb)
+}
+
+fn render_iconified(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    u.buf_add(lb, style(c.color_muted, c"╭─ "))
+    if c.show_username != 0 {
+        u.buf_add(lb, style(c.color_accent, c"☼ "))
+        u.buf_add(lb, style(c.color_primary, u.username()))
+        if c.show_hostname != 0 {
+            u.buf_add(lb, style(c.color_muted, c" on "))
+            u.buf_add(lb, style(c.color_secondary, host_name()))
+        }
+    } elif c.show_hostname != 0 {
+        u.buf_add(lb, style(c.color_accent, c"☼ "))
+        u.buf_add(lb, style(c.color_secondary, host_name()))
+    }
+    u.buf_add(lb, c"\n")
+    u.buf_add(lb, style(c.color_muted, c"├─ "))
+    if c.show_directory != 0 {
+        u.buf_add(lb, style(c.color_accent, c"⌂ "))
+        u.buf_add(lb, style(c.color_directory, full_text(dir)))
+    }
+    u.buf_add(lb, c"\n")
+    u.buf_add(lb, style(c.color_muted, c"╰─ "))
+    val has_branch: mut bool = false
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            u.buf_add(lb, style(c.color_accent, c"⎇ "))
+            if gi.dirty == 1 {
+                u.buf_add(lb, style(c.color_git_dirty, gi.branch))
+            } else {
+                u.buf_add(lb, style(c.color_git_clean, gi.branch))
+            }
+            has_branch = true
+        }
+    }
+    add_indicators(lb, c, status, duration_ms, jobs)
+    if has_branch {
+        u.buf_ch(lb, 32)
+    }
+    u.buf_add(lb, style(c.color_primary, c"➜"))
+    u.buf_ch(lb, 32)
+    return make_parts(lb, rb)
+}
+
+fn render_timestamped(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    val wrote: mut bool = false
+    if c.show_time != 0 {
+        u.buf_add(lb, style(c.color_muted, c"["))
+        u.buf_add(lb, style(c.color_muted, time_hm()))
+        u.buf_add(lb, style(c.color_muted, c"]"))
+        wrote = true
+    }
+    if c.show_username != 0 || c.show_hostname != 0 {
+        if wrote {
+            u.buf_ch(lb, 32)
+        }
+        if c.show_username != 0 {
+            u.buf_add(lb, style(c.color_primary, u.username()))
+        }
+        if c.show_username != 0 && c.show_hostname != 0 {
+            u.buf_add(lb, style(c.color_muted, c"@"))
+        }
+        if c.show_hostname != 0 {
+            u.buf_add(lb, style(c.color_secondary, host_name()))
+        }
+        wrote = true
+    }
+    if c.show_directory != 0 {
+        if wrote {
+            u.buf_ch(lb, 32)
+        }
+        u.buf_add(lb, style(c.color_directory, full_text(dir)))
+        wrote = true
+    }
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            u.buf_add(lb, c" (")
+            if gi.dirty == 1 {
+                u.buf_add(lb, style(c.color_git_dirty, gi.branch))
+            } else {
+                u.buf_add(lb, style(c.color_git_clean, gi.branch))
+            }
+            u.buf_add(lb, c")")
+        }
+    }
+    add_indicators(lb, c, status, duration_ms, jobs)
+    u.buf_add(lb, c"\n")
+    u.buf_add(lb, style(c.color_primary, c"$"))
+    u.buf_ch(lb, 32)
+    return make_parts(lb, rb)
+}
+
+fn render_doubleline(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    val lb: mut ref u.Buf = u.buf_new()
+    val rb: mut ref u.Buf = u.buf_new()
+    u.buf_add(lb, c"\x1b[0m")
+    val dir: ref u8 = u.cwd()
+    u.buf_add(lb, style(c.color_muted, c"╔═ "))
+    if c.show_username != 0 {
+        u.buf_add(lb, style(c.color_primary, u.username()))
+        if c.show_hostname != 0 {
+            u.buf_add(lb, style(c.color_muted, c"@"))
+            u.buf_add(lb, style(c.color_secondary, host_name()))
+        }
+    } elif c.show_hostname != 0 {
+        u.buf_add(lb, style(c.color_secondary, host_name()))
+    }
+    u.buf_add(lb, c"\n")
+    u.buf_add(lb, style(c.color_muted, c"╠═ "))
+    if c.show_directory != 0 {
+        u.buf_add(lb, style(c.color_directory, full_text(dir)))
+    }
+    u.buf_add(lb, c"\n")
+    u.buf_add(lb, style(c.color_muted, c"╚═ "))
+    val has_branch: mut bool = false
+    if c.show_git != 0 {
+        val gi: GitInfo = git_info(dir, true)
+        if gi.valid == 1 {
+            if gi.dirty == 1 {
+                u.buf_add(lb, style(c.color_git_dirty, gi.branch))
+                u.buf_add(lb, style(c.color_git_dirty, c" *"))
+            } else {
+                u.buf_add(lb, style(c.color_git_clean, gi.branch))
+            }
+            has_branch = true
+        }
+    }
+    add_indicators(lb, c, status, duration_ms, jobs)
+    if has_branch {
+        u.buf_ch(lb, 32)
+    }
+    u.buf_add(lb, style(c.color_muted, c"═"))
+    u.buf_add(lb, style(c.color_primary, c"▶"))
+    u.buf_ch(lb, 32)
+    return make_parts(lb, rb)
+}
+
+pub fn render_parts(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+    if is_theme(c, c"plain") {
+        return render_plain(c)
+    }
+    if is_theme(c, c"lambda") {
+        return render_lambda(c, status, duration_ms, jobs)
+    }
+    if is_theme(c, c"powerline") {
+        return render_powerline(c, status, duration_ms, jobs)
+    }
+    if is_theme(c, c"right") || is_theme(c, c"right1") || is_theme(c, c"right_aligned") {
+        return render_right(c, status, duration_ms, jobs)
+    }
+    if is_theme(c, c"right_time") || is_theme(c, c"right2") || is_theme(c, c"right_aligned_time") {
+        return render_right_time(c, status, duration_ms, jobs)
+    }
+    if is_theme(c, c"hacker") {
+        return render_hacker(c, status, duration_ms, jobs)
+    }
+    if is_theme(c, c"dots") {
+        return render_dots(c, status, duration_ms, jobs)
+    }
+    if is_theme(c, c"compact") || is_theme(c, c"compact_path") {
+        return render_compact(c, status, duration_ms, jobs)
+    }
+    if is_theme(c, c"iconified") || is_theme(c, c"icons") {
+        return render_iconified(c, status, duration_ms, jobs)
+    }
+    if is_theme(c, c"timestamped") || is_theme(c, c"timestamp") {
+        return render_timestamped(c, status, duration_ms, jobs)
+    }
+    if is_theme(c, c"doubleline") || is_theme(c, c"double") {
+        return render_doubleline(c, status, duration_ms, jobs)
+    }
+    return render_default(c, status, duration_ms, jobs)
+}
+
+pub fn render(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) ref u8 = trust {
+    val p: PromptParts = render_parts(c, status, duration_ms, jobs)
+    if u.s_len(p.right) == 0 {
+        return p.left
+    }
+    return u.s_cat3(p.left, c" ", p.right)
 }

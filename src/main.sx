@@ -209,9 +209,9 @@ fn interactive_loop(c: ref cfgmod.Config, h: mut ref histmod.History) i32 = trus
             break
         }
         shell.reap_jobs()
-        val p: ref u8 = prompt.render(c, status as i32, duration, shell.job_count())
+        val p: prompt.PromptParts = prompt.render_parts(c, status as i32, duration, shell.job_count())
         val ed: mut ref term.Editor = term.editor_new(c, h, shell.vars(), shell.aliases())
-        val line: ref u8 = term.readline(ed, p)
+        val line: ref u8 = term.readline(ed, p.left, p.right)
         term.cooked_mode()
         if line == none {
             if term.was_cancelled(ed) {
@@ -235,7 +235,7 @@ fn interactive_loop(c: ref cfgmod.Config, h: mut ref histmod.History) i32 = trus
         if block_mode {
             for {
                 val ced: mut ref term.Editor = term.editor_new(c, h, shell.vars(), shell.aliases())
-                val next: ref u8 = term.readline(ced, prompt_continuation())
+                val next: ref u8 = term.readline(ced, prompt_continuation(), c"")
                 term.cooked_mode()
                 if next == none {
                     if term.was_cancelled(ced) {
@@ -254,7 +254,7 @@ fn interactive_loop(c: ref cfgmod.Config, h: mut ref histmod.History) i32 = trus
                     break
                 }
                 val ced: mut ref term.Editor = term.editor_new(c, h, shell.vars(), shell.aliases())
-                val next: ref u8 = term.readline(ced, prompt_continuation())
+                val next: ref u8 = term.readline(ced, prompt_continuation(), c"")
                 term.cooked_mode()
                 if next == none {
                     if term.was_cancelled(ced) {

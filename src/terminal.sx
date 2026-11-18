@@ -48,6 +48,7 @@ pub type Editor = {
     cap: mut i64
     pos: mut i64
     view_start: mut i64
+    right_prompt: mut ref u8
     hist_index: mut i64
     draft: mut ref u8
     cancelled: mut i64
@@ -184,6 +185,7 @@ pub fn editor_new(
     e.len = 0
     e.pos = 0
     e.view_start = 0
+    e.right_prompt = u.s_dup(c"")
     e.hist_index = h.items.len
     e.draft = u.s_dup(c"")
     e.cancelled = 0
@@ -664,8 +666,17 @@ fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
     }
     val pwidth: i64 = prompt_last_width(pr)
     val termw: i64 = cols()
+    val rightw: mut i64 = 0
+    if e.right_prompt != none {
+        rightw = u.visible_width(e.right_prompt)
+    }
+    if rightw > 0 && termw - pwidth - rightw - 1 < 4 {
+        rightw = 0
+    }
     val avail: mut i64 = termw - pwidth - 1
-    if avail < 10 {
+    if rightw > 0 {
+        avail = termw - pwidth - rightw - 1
+    } elif avail < 10 {
         avail = 10
     }
     if e.pos < e.view_start {
@@ -697,6 +708,11 @@ fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
     u.buf_add(b, pr)
     emit_display_segment(b, e.line, e.view_start, end)
     u.buf_add(b, c"\x1b[J")
+    if rightw > 0 {
+        u.buf_add(b, u.s_cat3(c"\x1b[", u.s_int(termw - rightw + 1), c"G"))
+        u.buf_add(b, e.right_prompt)
+        u.buf_add(b, c"\x1b[0m")
+    }
     val menu_rows: mut i64 = 0
     if e.menu_active == 1 && e.menu_items != none && e.menu_items.len > 0 {
         u.buf_add(b, c"\r\n")
@@ -935,8 +951,9 @@ fn end_input_line(e: mut ref Editor) void = trust {
     }
 }
 
-pub fn readline(e: mut ref Editor, prompt: ref u8) ref u8 = trust {
+pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust {
     raw_mode()
+    e.right_prompt = u.s_dup(right)
     e.first_draw = 1
     e.view_start = 0
     draw(e, prompt)

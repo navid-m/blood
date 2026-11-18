@@ -236,15 +236,18 @@ previously assigned value.
 [cols="1,1,3",options="header"]
 |===
 |Key |Type |Default and effect
-|`theme` |string |`default`. The value `plain` selects a single-line, unboxed
-prompt. Any other value selects the default two-line prompt.
+|`theme` |string |`default`. Selects a prompt preset. Available presets are
+`default`, `plain`, `lambda`, `powerline`, `right`, `right_time`, `hacker`,
+`dots`, `compact`, `iconified`, `timestamped`, and `doubleline`. An
+unrecognised value behaves as `default`.
 |`show_username` |boolean |`true`. Includes the user name.
 |`show_hostname` |boolean |`true`. Includes the host name, normally with `@`
 between username and host.
 |`show_directory` |boolean |`true`. Includes the current directory.
 |`show_git` |boolean |`true`. Includes Git branch and dirty state when a Git
 repository is found.
-|`show_time` |boolean |`false`. Includes `HH:MM:SS`.
+|`show_time` |boolean |`false`. Includes the time. The default layout uses
+`HH:MM:SS`; presets that show time use `HH:MM`.
 |`show_exit_status` |boolean |`true`. Includes a failure marker and status when
 the previous status is non-zero.
 |`show_duration` |boolean |`true`. Includes the duration of the previous
@@ -586,6 +589,43 @@ USER@HOST DIRECTORY (BRANCH) >
 The plain theme always uses `>` and does not print a box. It honours the
 username, hostname, directory, and Git settings. It does not render time,
 status, duration, job count, or the configured prompt character.
+
+=== Prompt presets
+
+A preset is selected with `[prompt] theme = NAME`. Every preset honours the
+`show_*` toggles and the `[colors]` settings. Presets define their own glyphs
+and path style.
+
+[cols="1,2",options="header"]
+|===
+|Theme |Layout
+|`lambda` |`λ DIRECTORY BRANCH ›`
+|`powerline` |Coloured powerline segments for user, host, directory, branch,
+time, and indicators, followed by a second `❯` line.
+|`right` (also `right1`, `right_aligned`) |`DIRECTORY>` followed by a
+right-aligned `USER@HOST`. The cursor stays after the left part.
+|`right_time` (also `right2`, `right_aligned_time`) |`DIRECTORY ❯` followed by
+a right-aligned branch, clean/dirty mark, and `HH:MM` time.
+|`hacker` |`USER :: HOST :: DIRECTORY :: BRANCH` followed by a `>>>` line.
+|`dots` |`● USER  ● DIRECTORY  ● BRANCH` followed by a `❯` line.
+|`compact` (also `compact_path`) |A compacted home path such as
+`~/D/p/blood`, the branch, and `❯`.
+|`iconified` (also `icons`) |A three-line `╭─ ☼ USER on HOST`,
+`├─ ⌂ DIRECTORY`, `╰─ ⎇ BRANCH ➜` block.
+|`timestamped` (also `timestamp`) |`[HH:MM] USER@HOST DIRECTORY (BRANCH)`
+followed by a `$` line.
+|`doubleline` (also `double`) |A three-line `╔═ USER@HOST`,
+`╠═ DIRECTORY`, `╚═ BRANCH ═▶` block.
+|===
+
+The `powerline` preset converts the configured foreground colours into
+segment backgrounds and uses `` separators. It requires a font with
+Powerline glyphs.
+
+The two right-aligned presets draw their right-hand text at the terminal edge
+and then return the cursor to the end of the left-hand prompt. When the
+terminal is too narrow for both parts, the right-hand text is omitted and the
+input uses the full remaining line.
 
 === Directory formatting
 

@@ -13,6 +13,17 @@ fn plain_config() ref cfg.Config = trust {
     return c
 }
 
+fn preset_config(name: ref u8) ref cfg.Config = trust {
+    val c: mut ref cfg.Config = cfg.default_config()
+    c.theme = u.s_dup(name)
+    c.show_git = 0
+    c.show_time = 0
+    c.show_jobs = 0
+    c.show_exit_status = 0
+    c.show_duration = 0
+    return c
+}
+
 fn shortened(dir: ref u8) ref u8 = trust {
     val home: ref u8 = u.home_dir()
     val hl: i64 = u.s_len(home)
@@ -129,5 +140,100 @@ test "prompt hides disabled sections" {
         assert !u.s_contains(out, u.path_base(u.cwd()))
         assert u.s_contains(out, c"┌─ ")
         assert u.s_contains(out, c.prompt_char)
+    }
+}
+
+test "lambda preset renders a compact one-line prompt" {
+    trust {
+        val c: ref cfg.Config = preset_config(c"lambda")
+        val out: ref u8 = prompt.render(c, 0, 0, 0)
+        assert u.s_starts(out, c"\x1b[0m")
+        assert u.s_contains(out, c"λ")
+        assert u.s_contains(out, u.path_base(u.cwd()))
+        assert u.s_contains(out, c"›")
+        assert u.s_ends_with(out, c" ")
+        assert !u.s_contains(out, c"\n")
+    }
+}
+
+test "powerline preset uses background segments and separators" {
+    trust {
+        val c: ref cfg.Config = preset_config(c"powerline")
+        val out: ref u8 = prompt.render(c, 0, 0, 0)
+        assert u.s_contains(out, c"\x1b[46m")
+        assert u.s_contains(out, c"\xee\x82\xb0")
+        assert u.s_contains(out, c"\n")
+        assert u.s_contains(out, c"❯")
+        assert u.s_contains(out, u.username())
+        assert u.s_contains(out, u.path_base(u.cwd()))
+    }
+}
+
+test "right aligned presets split the prompt into two parts" {
+    trust {
+        val c: ref cfg.Config = preset_config(c"right")
+        val a: prompt.PromptParts = prompt.render_parts(c, 0, 0, 0)
+        assert u.s_contains(a.left, u.path_base(u.cwd()))
+        assert u.s_contains(a.left, c">")
+        assert u.s_contains(a.right, u.username())
+        assert u.s_contains(a.right, c"@")
+        assert !u.s_contains(a.left, c"\n")
+
+        val c2: mut ref cfg.Config = preset_config(c"right_time")
+        c2.show_time = 1
+        val b: prompt.PromptParts = prompt.render_parts(c2, 0, 0, 0)
+        assert u.s_contains(b.left, c"❯")
+        assert u.s_contains(b.right, c":")
+        assert !u.s_contains(b.right, c"\n")
+    }
+}
+
+test "hacker, dots and compact presets use their signature glyphs" {
+    trust {
+        val hacker: ref u8 = prompt.render(preset_config(c"hacker"), 0, 0, 0)
+        assert u.s_contains(hacker, c" :: ")
+        assert u.s_contains(hacker, c">>>")
+        assert u.s_contains(hacker, c"\n")
+
+        val dots: ref u8 = prompt.render(preset_config(c"dots"), 0, 0, 0)
+        assert u.s_contains(dots, c"●")
+        assert u.s_contains(dots, c"❯")
+        assert u.s_contains(dots, c"\n")
+
+        val compact_cwd: ref u8 = c"/tmp/blood-unit-prompt/Alpha/Beta/gamma"
+        assert u.mkdir_p(compact_cwd)
+        val old: ref u8 = u.cwd()
+        assert u.chdir(compact_cwd) == 0
+        val compact: ref u8 = prompt.render(preset_config(c"compact"), 0, 0, 0)
+        assert u.s_contains(compact, c"/t/b/A/B/gamma")
+        assert u.s_contains(compact, c"❯")
+        assert !u.s_contains(compact, c"\n")
+        assert u.chdir(old) == 0
+    }
+}
+
+test "iconified, timestamped and doubleline presets render their frames" {
+    trust {
+        val iconified: ref u8 = prompt.render(preset_config(c"iconified"), 0, 0, 0)
+        assert u.s_contains(iconified, c"╭─ ")
+        assert u.s_contains(iconified, c"├─ ")
+        assert u.s_contains(iconified, c"╰─ ")
+        assert u.s_contains(iconified, c"☼ ")
+        assert u.s_contains(iconified, c"⌂ ")
+        assert u.s_contains(iconified, c"➜")
+
+        val c: mut ref cfg.Config = preset_config(c"timestamped")
+        c.show_time = 1
+        val timestamped: ref u8 = prompt.render(c, 0, 0, 0)
+        assert u.s_contains(timestamped, c"[")
+        assert u.s_contains(timestamped, c"]")
+        assert u.s_contains(timestamped, c"$")
+        assert u.s_contains(timestamped, c"\n")
+
+        val doubleline: ref u8 = prompt.render(preset_config(c"doubleline"), 0, 0, 0)
+        assert u.s_contains(doubleline, c"╔═ ")
+        assert u.s_contains(doubleline, c"╠═ ")
+        assert u.s_contains(doubleline, c"╚═ ")
+        assert u.s_contains(doubleline, c"▶")
     }
 }
