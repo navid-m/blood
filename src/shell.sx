@@ -1450,7 +1450,7 @@ fn run_single(cmd: ref Command) i32 = trust {
     if is_builtin(name) {
         return run_builtin_with_redirs(cmd)
     }
-    if u.s_ends_with(name, c".blood") && u.file_exists(name) && u.hooks_ready != 0 {
+    if (u.s_ends_with(name, c".blood") || u.s_ends_with(name, c".bx")) && u.file_exists(name) && u.hooks_ready != 0 {
         val hook: fn(ref u8) i32 = u.run_script_file_hook
         return hook(name)
     }
@@ -1981,7 +1981,7 @@ fn bi_help(cmd: ref Command) i32 = trust {
     if u.s_eq(topic, c"script") || u.s_eq(topic, c"language") {
         u.write_fd(
             1,
-            c"Blood scripts (.blood)\n\nBlocks use braces:\n  say \"hello {name}\"\n  name = \"world\"\n  if true {\n      say \"yes\"\n  } else {\n      say \"no\"\n  }\n  while true {\n      break\n  }\n  for item in [\"a\", \"b\"] {\n      say item\n  }\n  para for item in [\"a\", \"b\"] {\n      say item\n  }\n  fn greet(name) {\n      return \"Hello, \" + name\n  }\n  try {\n      raise \"oops\"\n  } catch err {\n      say err\n  }\n\nThe Python-like colon and indentation style is deprecated but still accepted.\nThe two block styles cannot be mixed in one file.\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n  time make -j8\n"
+            c"Blood scripts (.blood, .bx)\n\nBlocks use braces:\n  say \"hello {name}\"\n  name = \"world\"\n  if true {\n      say \"yes\"\n  } else {\n      say \"no\"\n  }\n  while true {\n      break\n  }\n  for item in [\"a\", \"b\"] {\n      say item\n  }\n  para for item in [\"a\", \"b\"] {\n      say item\n  }\n  fn greet(name) {\n      return \"Hello, \" + name\n  }\n  try {\n      raise \"oops\"\n  } catch err {\n      say err\n  }\n\nThe Python-like colon and indentation style is deprecated but still accepted.\nThe two block styles cannot be mixed in one file.\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n  time make -j8\n"
         )
         return 0
     }

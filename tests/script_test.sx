@@ -46,6 +46,19 @@ test "script supports list mutation and methods" {
     }
 }
 
+test "script classifies existing .blood and .bx files as commands" {
+    trust {
+        val dir: ref u8 = c"/tmp/blood-unit-script/exts"
+        assert u.mkdir_p(dir)
+        val blood_file: ref u8 = u.path_join(dir, c"sample.blood")
+        val bx_file: ref u8 = u.path_join(dir, c"sample.bx")
+        assert u.write_file(blood_file, c"say \"blood\"\n")
+        assert u.write_file(bx_file, c"say \"bx\"\n")
+        assert !script.looks_like_script(blood_file)
+        assert !script.looks_like_script(bx_file)
+    }
+}
+
 test "script supports dictionaries and attributes" {
     trust {
         fresh()

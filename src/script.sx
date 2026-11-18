@@ -2207,7 +2207,7 @@ pub fn looks_like_script(line: ref u8) bool = trust {
     if @load8(t) == 35 {
         return true
     }
-    if u.s_ends_with(t, c".blood") && !u.s_contains(t, c" ") && u.file_exists(t) {
+    if (u.s_ends_with(t, c".blood") || u.s_ends_with(t, c".bx")) && !u.s_contains(t, c" ") && u.file_exists(t) {
         return false
     }
     if u.s_starts(

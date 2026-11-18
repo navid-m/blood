@@ -33,6 +33,15 @@ fn fake_capture(cmd: ref u8) ref u8 = trust {
     return u.s_cat(c"captured:", cmd)
 }
 
+val g_script_runs: mut i64 = 0
+
+fn fake_script(path: ref u8) i32 = trust {
+    if u.s_len(path) > 0 {
+        g_script_runs = g_script_runs + 1
+    }
+    return 7
+}
+
 test "split_top separates connectors and keeps pipelines together" {
     trust {
         val segs: ref u.Vec = sh.split_top(c"a && b || c | d; e & f\n g")
@@ -267,6 +276,31 @@ test "scan_shell expands globs from the filesystem" {
         assert u.s_eq(tok_at(nomatch, 1).text, c"missing*")
 
         assert u.chdir(old) == 0
+    }
+}
+
+test "run_line dispatches .blood and .bx scripts to the script hook" {
+    trust {
+        init_shell()
+        val root: ref u8 = c"/tmp/blood-unit-shell/script-exts"
+        assert u.mkdir_p(root)
+        val blood_file: ref u8 = u.path_join(root, c"sample.blood")
+        val bx_file: ref u8 = u.path_join(root, c"sample.bx")
+        assert u.write_file(blood_file, c"say \"blood\"\n")
+        assert u.write_file(bx_file, c"say \"bx\"\n")
+
+        val old_hook: fn(ref u8) i32 = u.run_script_file_hook
+        val old_ready: i64 = u.hooks_ready
+        u.run_script_file_hook = fake_script
+        u.hooks_ready = 1
+        g_script_runs = 0
+
+        assert sh.run_line(blood_file) == 7
+        assert sh.run_line(bx_file) == 7
+        assert g_script_runs == 2
+
+        u.run_script_file_hook = old_hook
+        u.hooks_ready = old_ready
     }
 }
 

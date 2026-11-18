@@ -76,7 +76,7 @@ The executable is invoked as one of:
 ----
 blood
 blood -c COMMAND
-blood SCRIPT.blood [ARG...]
+blood SCRIPT.blood|SCRIPT.bx [ARG...]
 blood -init
 blood -version
 blood -help
@@ -90,9 +90,9 @@ end of file and executes it.
 of `COMMAND` has the shape of a scripting statement, the command is executed
 as a script. Otherwise it is executed as a shell command.
 
-`blood SCRIPT.blood ARG...` reads and executes the named script. Remaining
-arguments are exposed to the script as the list variable `args`. The script
-name is exposed as `__file__`.
+`blood SCRIPT.blood ARG...` or `blood SCRIPT.bx ARG...` reads and executes the
+named script. Remaining arguments are exposed to the script as the list
+variable `args`. The script name is exposed as `__file__`.
 
 `blood -init` writes a default configuration file at the configuration path
 if no file exists there. Parent directories are created. If the file already
@@ -1063,13 +1063,14 @@ these tokens into the structures above.
 
 === Source files
 
-A Blood script is a sequence of bytes. The conventional extension is
-`.blood`. Extensions are not enforced. A leading shebang line is treated as a
-comment because it begins with `#`.
+A Blood script is a sequence of bytes. The conventional extensions are
+`.blood` and `.bx`. Extensions are not enforced. A leading shebang line is
+treated as a comment because it begins with `#`.
 
-Scripts are executed by `blood SCRIPT.blood`, by the `source` shell builtin, by
-the script `source` function, by `startup_file`, and by the interactive shell
-when a submitted line has the shape of a script statement.
+Scripts are executed by `blood SCRIPT.blood` or `blood SCRIPT.bx`, by the
+`source` shell builtin, by the script `source` function, by `startup_file`,
+and by the interactive shell when a submitted line has the shape of a script
+statement.
 
 Interactive submissions retain their global variables and function definitions
 for the lifetime of the shell. `source` and script files executed from the
