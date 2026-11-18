@@ -235,7 +235,7 @@ fn ed_set(e: mut ref Editor, s: ref u8) void = trust {
     e.len = 0
     ed_reserve(e, n)
     if n > 0 {
-        u.mem_copy(e.line as ref void, s as ref void, n)
+        u.mem_copy(e.line as ref void, s, n)
     }
     e.len = n
     e.pos = n

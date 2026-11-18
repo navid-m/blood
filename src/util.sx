@@ -134,7 +134,7 @@ pub fn s_dup(s: ref u8) ref u8 = trust {
     if out == none {
         return none
     }
-    rt.memcpy(out as ref void, s as ref void, n as usize)
+    rt.memcpy(out, s, n as usize)
     @store8(@ptradd(out, n), 0)
     return out
 }
@@ -149,7 +149,7 @@ pub fn s_ndup(p: ref u8, n: i64) ref u8 = trust {
     if out == none {
         return none
     }
-    rt.memcpy(out as ref void, p as ref void, n as usize)
+    rt.memcpy(out, p, n as usize)
     @store8(@ptradd(out, n), 0)
     return out
 }
@@ -168,7 +168,7 @@ pub fn s_alloc(n: i64) ref u8 = trust {
 }
 
 pub fn s_free(s: ref u8) void = trust {
-    xfree(s as ref void)
+    xfree(s)
 }
 
 pub fn s_cat(a: ref u8, b: ref u8) ref u8 = trust {
@@ -179,10 +179,10 @@ pub fn s_cat(a: ref u8, b: ref u8) ref u8 = trust {
         return none
     }
     if la > 0 {
-        rt.memcpy(out as ref void, a as ref void, la as usize)
+        rt.memcpy(out, a, la as usize)
     }
     if lb > 0 {
-        rt.memcpy(@ptradd(out, la), b as ref void, lb as usize)
+        rt.memcpy(@ptradd(out, la), b, lb as usize)
     }
     @store8(@ptradd(out, la + lb), 0)
     return out
@@ -197,13 +197,13 @@ pub fn s_cat3(a: ref u8, b: ref u8, c: ref u8) ref u8 = trust {
         return none
     }
     if la > 0 {
-        rt.memcpy(out as ref void, a as ref void, la as usize)
+        rt.memcpy(out, a, la as usize)
     }
     if lb > 0 {
-        rt.memcpy(@ptradd(out, la), b as ref void, lb as usize)
+        rt.memcpy(@ptradd(out, la), b, lb as usize)
     }
     if lc > 0 {
-        rt.memcpy(@ptradd(out, la + lb), c as ref void, lc as usize)
+        rt.memcpy(@ptradd(out, la + lb), c, lc as usize)
     }
     @store8(@ptradd(out, la + lb + lc), 0)
     return out
@@ -364,7 +364,7 @@ pub fn s_uint(v: i64) ref u8 = trust {
         j++
     }
     @store8(@ptradd(out, p + digits), 0)
-    xfree(tmp as ref void)
+    xfree(tmp)
     return out
 }
 
@@ -450,7 +450,7 @@ pub fn buf_add(b: mut ref Buf, s: ref u8) void = trust {
     val n: i64 = s_len(s)
     buf_reserve(b, n)
     if n > 0 {
-        rt.memcpy(@ptradd(b.ptr, b.len) as ref void, s as ref void, n as usize)
+        rt.memcpy(@ptradd(b.ptr, b.len) as ref void, s, n as usize)
         b.len = b.len + n
         @store8(@ptradd(b.ptr, b.len), 0)
     }
@@ -461,7 +461,7 @@ pub fn buf_addn(b: mut ref Buf, s: ref u8, n: i64) void = trust {
         return
     }
     buf_reserve(b, n)
-    rt.memcpy(@ptradd(b.ptr, b.len) as ref void, s as ref void, n as usize)
+    rt.memcpy(@ptradd(b.ptr, b.len) as ref void, s, n as usize)
     b.len = b.len + n
     @store8(@ptradd(b.ptr, b.len), 0)
 }
@@ -646,7 +646,7 @@ fn map_grow(m: mut ref Map) void = trust {
             break
         }
         val e: ref MapEntry = @ptradd(
-            old_slots as ref void,
+            old_slots,
             i * @sizeof(MapEntry) as i64
         ) as ref MapEntry
         if e.used == 1 {
@@ -663,7 +663,7 @@ fn map_grow(m: mut ref Map) void = trust {
         }
         i++
     }
-    xfree(old_slots as ref void)
+    xfree(old_slots)
 }
 
 pub fn map_put(m: mut ref Map, key: ref u8, value: i64) void = trust {
@@ -889,7 +889,7 @@ pub fn read_file(path: ref u8) ref u8 = trust {
         return none
     }
     if n > 0 {
-        rt.fread(out as ref void, 1 as usize, n as usize, f)
+        rt.fread(out, 1 as usize, n as usize, f)
     }
     @store8(@ptradd(out, n), 0)
     rt.fclose(f)
@@ -903,7 +903,7 @@ pub fn write_file(path: ref u8, data: ref u8) bool = trust {
     }
     val n: i64 = s_len(data)
     if n > 0 {
-        rt.fwrite(data as ref void, 1 as usize, n as usize, f)
+        rt.fwrite(data, 1 as usize, n as usize, f)
     }
     rt.fclose(f)
     return true
@@ -916,7 +916,7 @@ pub fn append_file(path: ref u8, data: ref u8) bool = trust {
     }
     val n: i64 = s_len(data)
     if n > 0 {
-        rt.fwrite(data as ref void, 1 as usize, n as usize, f)
+        rt.fwrite(data, 1 as usize, n as usize, f)
     }
     rt.fclose(f)
     return true
@@ -970,7 +970,7 @@ pub fn visible_width(s: ref u8) i64 = trust {
         }
         val c: u8 = @load8(@ptradd(s, i))
         if c == 27 && i + 1 < n && @load8(@ptradd(s, i + 1)) == 91 {
-            i = i + 2
+            i += 2
             for {
                 if i >= n {
                     break

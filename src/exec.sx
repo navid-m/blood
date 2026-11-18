@@ -33,11 +33,11 @@ pub fn fd_dup2(oldfd: i32, newfd: i32) i32 = trust {
 }
 
 pub fn fd_read(fd: i32, buf: ref u8, n: i64) i64 = trust {
-    return rt.read(fd, buf as ref void, n as usize)
+    return rt.read(fd, buf, n as usize)
 }
 
 pub fn fd_write(fd: i32, buf: ref u8, n: i64) i64 = trust {
-    return rt.write(fd, buf as ref void, n as usize)
+    return rt.write(fd, buf, n as usize)
 }
 
 pub fn open_write(path: ref u8, append: bool) i32 = trust {
@@ -217,7 +217,7 @@ pub fn capture_argv(argv: ref u.Vec, quiet_err: bool) ref u8 = trust {
         }
         u.buf_addn(b, chunk, n)
     }
-    u.xfree(chunk as ref void)
+    u.xfree(chunk)
     fd_close(p.read_fd)
     wait_pid(pid)
     return u.buf_take(b)

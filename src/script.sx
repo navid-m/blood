@@ -67,25 +67,25 @@ pub fn v_float(f: f64) ref Value = trust {
 
 pub fn v_str(s: ref u8) ref Value = trust {
     val v: mut ref Value = v_new(4)
-    v.p = s as ref void
+    v.p = s
     return v
 }
 
 fn v_list(vec: ref u.Vec) ref Value = trust {
     val v: mut ref Value = v_new(5)
-    v.p = vec as ref void
+    v.p = vec
     return v
 }
 
 fn v_dict(m: ref u.Map) ref Value = trust {
     val v: mut ref Value = v_new(6)
-    v.p = m as ref void
+    v.p = m
     return v
 }
 
 fn v_func(f: ref Func) ref Value = trust {
     val v: mut ref Value = v_new(7)
-    v.p = f as ref void
+    v.p = f
     return v
 }
 
@@ -536,7 +536,7 @@ fn interp(raw: ref u8, env: mut ref Env) ref u8 = trust {
         if c == 123 {
             if i + 1 < n && @load8(@ptradd(raw, i + 1)) == 123 {
                 u.buf_ch(b, 123)
-                i = i + 2
+                i += 2
                 continue
             }
             val depth: mut i64 = 1
@@ -550,7 +550,7 @@ fn interp(raw: ref u8, env: mut ref Env) ref u8 = trust {
                 val d: u8 = @load8(@ptradd(raw, j))
                 if quote != 0 {
                     if d == 92 {
-                        j = j + 2
+                        j += 2
                         continue
                     }
                     if d == quote {
@@ -592,7 +592,7 @@ fn interp(raw: ref u8, env: mut ref Env) ref u8 = trust {
         }
         if c == 125 && i + 1 < n && @load8(@ptradd(raw, i + 1)) == 125 {
             u.buf_ch(b, 125)
-            i = i + 2
+            i += 2
             continue
         }
         u.buf_ch(b, c)
@@ -650,7 +650,7 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
             val k: ref u8 = key_of(eval(u.vec_p(n.kids, i) as ref lang.Node, env))
             val v: ref Value = eval(u.vec_p(n.kids, i + 1) as ref lang.Node, env)
             u.map_put(m, k, @bitcast(v, i64))
-            i = i + 2
+            i += 2
         }
         return v_dict(m)
     }
@@ -760,7 +760,7 @@ fn eval_args(n: ref lang.Node, from: i64, env: mut ref Env) ref u.Vec = trust {
             break
         }
         val v: ref Value = eval(u.vec_p(n.kids, i) as ref lang.Node, env)
-        u.vec_pushp(args, v as ref void)
+        u.vec_pushp(args, v)
         i++
     }
     return args
@@ -1418,7 +1418,7 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
 
 fn args_for(v: ref Value) ref u.Vec = trust {
     val a: mut ref u.Vec = u.vec_new()
-    u.vec_pushp(a, v as ref void)
+    u.vec_pushp(a, v)
     return a
 }
 
@@ -1438,10 +1438,10 @@ fn sort_values(vec: mut ref u.Vec) void = trust {
             if u.s_cmp(v_to_str(cur), v_to_str(key)) <= 0 {
                 break
             }
-            u.vec_setp(vec, j + 1, cur as ref void)
+            u.vec_setp(vec, j + 1, cur)
             j--
         }
-        u.vec_setp(vec, j + 1, key as ref void)
+        u.vec_setp(vec, j + 1, key)
         i++
     }
 }
@@ -1561,7 +1561,7 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
                 i = vec.len + i
             }
             if i >= 0 && i < vec.len {
-                u.vec_setp(vec, i, final as ref void)
+                u.vec_setp(vec, i, final)
             } else {
                 set_error(c"list index out of range", target.line, target.col)
             }
@@ -2184,7 +2184,7 @@ pub fn needs_continuation(line: ref u8) bool = trust {
         val c: u8 = @load8(@ptradd(t, i))
         if quote != 0 {
             if c == 92 {
-                i = i + 2
+                i += 2
                 continue
             }
             if c == quote {

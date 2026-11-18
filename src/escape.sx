@@ -38,6 +38,7 @@ fn print_help() void = trust {
         \\  :cfg.prompt.theme
         \\  :cfg.prompt.theme = hacker
         \\  :cfg.colors.primary = red
+        \\
     )
 }
 

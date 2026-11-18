@@ -98,7 +98,7 @@ fn scan_dir_into(v: mut ref u.Vec, dir: ref u8) void = trust {
         if !u.is_dir(full) && u.is_executable(full) {
             val namecopy: ref u8 = u.s_dup(name)
             if !vec_has(v, namecopy) {
-                u.vec_pushp(v, namecopy as ref void)
+                u.vec_pushp(v, namecopy)
             }
         }
     }
@@ -278,7 +278,7 @@ fn first_word(line: ref u8, end: i64) ref u8 = trust {
 
 fn add_candidate(res: mut ref CompResult, s: ref u8) void = trust {
     if !vec_has(res.items, s) {
-        u.vec_pushp(res.items, s as ref void)
+        u.vec_pushp(res.items, s)
     }
 }
 

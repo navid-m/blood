@@ -48,17 +48,17 @@ fn decode(line: ref u8) ref u8 = trust {
             val nx: u8 = @load8(@ptradd(line, i + 1))
             if nx == 110 {
                 u.buf_ch(b, 10)
-                i = i + 2
+                i += 2
                 continue
             }
             if nx == 114 {
                 u.buf_ch(b, 13)
-                i = i + 2
+                i += 2
                 continue
             }
             if nx == 92 {
                 u.buf_ch(b, 92)
-                i = i + 2
+                i += 2
                 continue
             }
         }

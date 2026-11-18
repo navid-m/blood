@@ -109,7 +109,7 @@ fn git_argv(root: ref u8) ref u.Vec = trust {
     val argv: mut ref u.Vec = u.vec_new()
     u.vec_pushp(argv, c"git" as ref void)
     u.vec_pushp(argv, c"-C" as ref void)
-    u.vec_pushp(argv, root as ref void)
+    u.vec_pushp(argv, root)
     u.vec_pushp(argv, c"status" as ref void)
     u.vec_pushp(argv, c"--porcelain" as ref void)
     u.vec_pushp(argv, c"--untracked-files=no" as ref void)
@@ -410,8 +410,8 @@ fn pl_tail(b: mut ref u.Buf, color: ref u8) void = trust {
 }
 
 fn pl_push(texts: mut ref u.Vec, colors: mut ref u.Vec, text: ref u8, color: ref u8) void = trust {
-    u.vec_pushp(texts, text as ref void)
-    u.vec_pushp(colors, color as ref void)
+    u.vec_pushp(texts, text)
+    u.vec_pushp(colors, color)
 }
 
 fn is_theme(c: ref cfgmod.Config, name: ref u8) bool = trust {

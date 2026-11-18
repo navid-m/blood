@@ -181,7 +181,7 @@ fn emit(
 
 fn emit_indent(lx: mut ref Lexer, kind: TokenKind) void = trust {
     val t: ref Token = tok_new(kind, u.s_dup(c""), lx.line, 1, lx.pos, lx.pos)
-    u.vec_pushp(lx.tokens, t as ref void)
+    u.vec_pushp(lx.tokens, t)
 }
 
 fn is_suite_word(word: ref u8) bool = trust {
@@ -272,7 +272,7 @@ fn scan_suite_style(src: ref u8, start: i64, n: i64) i64 = trust {
                 }
                 val d: u8 = @load8(@ptradd(src, i))
                 if d == 92 {
-                    i = i + 2
+                    i += 2
                     continue
                 }
                 i++
@@ -605,8 +605,8 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
                         val h2: i64 = hex_at(lx.src, lx.pos + 1)
                         if h1 >= 0 && h2 >= 0 {
                             u.buf_ch(b, (h1 * 16 + h2) as u8)
-                            lx.pos = lx.pos + 2
-                            lx.col = lx.col + 2
+                            lx.pos += 2
+                            lx.col += 2
                         }
                     } else {
                         u.buf_ch(b, e)
@@ -655,8 +655,8 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
         if c == 36 && lx.pos + 1 < lx.len && @load8(@ptradd(lx.src, lx.pos + 1)) == 40 {
             val sline: i64 = lx.line
             val scol: i64 = lx.col
-            lx.pos = lx.pos + 2
-            lx.col = lx.col + 2
+            lx.pos += 2
+            lx.col += 2
             val start: i64 = lx.pos
             val depth: mut i64 = 1
             for {
@@ -693,26 +693,26 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
             val d: u8 = @load8(@ptradd(lx.src, lx.pos + 1))
             if (c == 61 && d == 61) || (c == 33 && d == 61) || (c == 60 && d == 61) || (c == 62 && d == 61) || (c == 43 && d == 61) || (c == 45 && d == 61) || (c == 42 && d == 61) || (c == 47 && d == 61) || (c == 42 && d == 42) {
                 two = u.s_ndup(@ptradd(lx.src, lx.pos), 2)
-                lx.pos = lx.pos + 2
-                lx.col = lx.col + 2
+                lx.pos += 2
+                lx.col += 2
                 emit(lx, TokenKind.Op, two, start, lx.pos, sline, scol)
                 continue
             }
         }
         if c == 40 || c == 91 {
-            lx.depth = lx.depth + 1
+            lx.depth++
         } elif c == 41 || c == 93 {
             if lx.depth > 0 {
-                lx.depth = lx.depth - 1
+                lx.depth--
             }
         } elif c == 123 {
             if !brace_style {
-                lx.depth = lx.depth + 1
+                lx.depth++
             }
         } elif c == 125 {
             if !brace_style {
                 if lx.depth > 0 {
-                    lx.depth = lx.depth - 1
+                    lx.depth--
                 }
             }
         }
@@ -747,7 +747,7 @@ fn measure_indent(lx: ref Lexer) i64 = trust {
             width++
             i++
         } elif c == 9 {
-            width = width + 4
+            width += 4
             i++
         } else {
             break
@@ -909,7 +909,7 @@ fn parse_suite(p: mut ref Parser, line: i64, col: i64) ref Node = trust {
             }
             val s: ref Node = parse_statement(p)
             if s != none {
-                u.vec_pushp(block.kids, s as ref void)
+                u.vec_pushp(block.kids, s)
             }
         }
         skip_newlines(p)
@@ -942,7 +942,7 @@ fn parse_suite(p: mut ref Parser, line: i64, col: i64) ref Node = trust {
             }
             val s: ref Node = parse_statement(p)
             if s != none {
-                u.vec_pushp(block.kids, s as ref void)
+                u.vec_pushp(block.kids, s)
             }
             if cur(p).kind == TokenKind.Dedent || cur(p).kind == TokenKind.Eof {
                 break
@@ -959,7 +959,7 @@ fn parse_suite(p: mut ref Parser, line: i64, col: i64) ref Node = trust {
         }
         val s: ref Node = parse_statement(p)
         if s != none {
-            u.vec_pushp(block.kids, s as ref void)
+            u.vec_pushp(block.kids, s)
         }
         if cur(p).kind == TokenKind.Op && text_is(cur(p), c";") {
             advance(p)
@@ -1037,7 +1037,7 @@ fn parse_if(p: mut ref Parser) ref Node = trust {
     val n: mut ref Node = node_new(NodeKind.If, t.line, t.col)
     advance(p)
     val cond: ref Node = parse_expr(p)
-    u.vec_pushp(n.kids, cond as ref void)
+    u.vec_pushp(n.kids, cond)
     u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
     n.a = 1
     for {
@@ -1045,9 +1045,9 @@ fn parse_if(p: mut ref Parser) ref Node = trust {
             val et: ref Token = cur(p)
             advance(p)
             val cnd: ref Node = parse_expr(p)
-            u.vec_pushp(n.kids, cnd as ref void)
+            u.vec_pushp(n.kids, cnd)
             u.vec_pushp(n.kids, parse_suite(p, et.line, et.col) as ref void)
-            n.a = n.a + 1
+            n.a++
             continue
         }
         break
@@ -1066,7 +1066,7 @@ fn parse_while(p: mut ref Parser) ref Node = trust {
     val n: mut ref Node = node_new(NodeKind.While, t.line, t.col)
     advance(p)
     val cond: ref Node = parse_expr(p)
-    u.vec_pushp(n.kids, cond as ref void)
+    u.vec_pushp(n.kids, cond)
     u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
     return n
 }
@@ -1088,7 +1088,7 @@ fn parse_for(p: mut ref Parser) ref Node = trust {
         set_error(cur(p).line, cur(p).col, c"expected 'in'")
     }
     val iter: ref Node = parse_expr(p)
-    u.vec_pushp(n.kids, iter as ref void)
+    u.vec_pushp(n.kids, iter)
     u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
     return n
 }
@@ -1140,7 +1140,7 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
         }
     }
     val body: ref Node = parse_suite(p, t.line, t.col)
-    u.vec_pushp(n.kids, body as ref void)
+    u.vec_pushp(n.kids, body)
     return n
 }
 
@@ -1289,7 +1289,7 @@ fn parse_simple(p: mut ref Parser) ref Node = trust {
                 break
             }
             val e: ref Node = parse_expr(p)
-            u.vec_pushp(n.kids, e as ref void)
+            u.vec_pushp(n.kids, e)
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
                 advance(p)
                 continue
@@ -1306,7 +1306,7 @@ fn parse_simple(p: mut ref Parser) ref Node = trust {
         val n: mut ref Node = node_new(NodeKind.Return, t.line, t.col)
         if cur(p).kind != TokenKind.Newline && cur(p).kind != TokenKind.Eof && cur(p).kind != TokenKind.Dedent {
             val e: ref Node = parse_expr(p)
-            u.vec_pushp(n.kids, e as ref void)
+            u.vec_pushp(n.kids, e)
         }
         if cur(p).kind == TokenKind.Newline {
             advance(p)
@@ -1366,15 +1366,15 @@ fn parse_simple(p: mut ref Parser) ref Node = trust {
         val rhs: ref Node = parse_expr(p)
         val n: mut ref Node = node_new(NodeKind.Assign, lhs.line, lhs.col)
         n.a = op
-        u.vec_pushp(n.kids, lhs as ref void)
-        u.vec_pushp(n.kids, rhs as ref void)
+        u.vec_pushp(n.kids, lhs)
+        u.vec_pushp(n.kids, rhs)
         if cur(p).kind == TokenKind.Newline {
             advance(p)
         }
         return n
     }
     val n: mut ref Node = node_new(NodeKind.ExprStmt, lhs.line, lhs.col)
-    u.vec_pushp(n.kids, lhs as ref void)
+    u.vec_pushp(n.kids, lhs)
     if cur(p).kind == TokenKind.Newline {
         advance(p)
     }
@@ -1390,7 +1390,7 @@ fn parse_or(p: mut ref Parser) ref Node = trust {
     if keyword(cur(p), c"or") {
         val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
         n.a = 100
-        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, left)
         advance(p)
         u.vec_pushp(n.kids, parse_or(p) as ref void)
         return n
@@ -1403,7 +1403,7 @@ fn parse_and(p: mut ref Parser) ref Node = trust {
     if keyword(cur(p), c"and") {
         val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
         n.a = 101
-        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, left)
         advance(p)
         u.vec_pushp(n.kids, parse_and(p) as ref void)
         return n
@@ -1429,7 +1429,7 @@ fn parse_compare(p: mut ref Parser) ref Node = trust {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
         n.a = BinOp.In as i64
-        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, left)
         u.vec_pushp(n.kids, parse_add(p) as ref void)
         return n
     }
@@ -1438,7 +1438,7 @@ fn parse_compare(p: mut ref Parser) ref Node = trust {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
         n.a = BinOp.NotIn as i64
-        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, left)
         u.vec_pushp(n.kids, parse_add(p) as ref void)
         return n
     }
@@ -1448,7 +1448,7 @@ fn parse_compare(p: mut ref Parser) ref Node = trust {
             advance(p)
             val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
             n.a = op
-            u.vec_pushp(n.kids, left as ref void)
+            u.vec_pushp(n.kids, left)
             u.vec_pushp(n.kids, parse_add(p) as ref void)
             return n
         }
@@ -1496,7 +1496,7 @@ fn parse_add(p: mut ref Parser) ref Node = trust {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.Binary, t.line, t.col)
         n.a = op
-        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, left)
         u.vec_pushp(n.kids, parse_mul(p) as ref void)
         left = n
     }
@@ -1523,7 +1523,7 @@ fn parse_mul(p: mut ref Parser) ref Node = trust {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.Binary, t.line, t.col)
         n.a = op
-        u.vec_pushp(n.kids, left as ref void)
+        u.vec_pushp(n.kids, left)
         u.vec_pushp(n.kids, parse_unary(p) as ref void)
         left = n
     }
@@ -1557,7 +1557,7 @@ fn parse_postfix(p: mut ref Parser) ref Node = trust {
         if u.s_eq(t.text, c"(") {
             advance(p)
             val call: mut ref Node = node_new(NodeKind.Call, t.line, t.col)
-            u.vec_pushp(call.kids, node as ref void)
+            u.vec_pushp(call.kids, node)
             for {
                 if cur(p).kind == TokenKind.Op && text_is(cur(p), c")") {
                     break
@@ -1581,7 +1581,7 @@ fn parse_postfix(p: mut ref Parser) ref Node = trust {
         if u.s_eq(t.text, c"[") {
             advance(p)
             val idx: mut ref Node = node_new(NodeKind.Index, t.line, t.col)
-            u.vec_pushp(idx.kids, node as ref void)
+            u.vec_pushp(idx.kids, node)
             u.vec_pushp(idx.kids, parse_expr(p) as ref void)
             if !expect_op(p, c"]") {
                 return idx
@@ -1592,7 +1592,7 @@ fn parse_postfix(p: mut ref Parser) ref Node = trust {
         if u.s_eq(t.text, c".") {
             advance(p)
             val attr: mut ref Node = node_new(NodeKind.Attr, t.line, t.col)
-            u.vec_pushp(attr.kids, node as ref void)
+            u.vec_pushp(attr.kids, node)
             if cur(p).kind != TokenKind.Ident {
                 set_error(cur(p).line, cur(p).col, c"expected an attribute name")
                 return attr
@@ -1714,8 +1714,8 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
                 return n
             }
             val v: ref Node = parse_expr(p)
-            u.vec_pushp(n.kids, k as ref void)
-            u.vec_pushp(n.kids, v as ref void)
+            u.vec_pushp(n.kids, k)
+            u.vec_pushp(n.kids, v)
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
                 advance(p)
                 continue
@@ -1760,7 +1760,7 @@ pub fn parse(src: ref u8) ref Node = trust {
         }
         val s: ref Node = parse_statement(p)
         if s != none {
-            u.vec_pushp(program.kids, s as ref void)
+            u.vec_pushp(program.kids, s)
         }
         if g_error != none {
             break

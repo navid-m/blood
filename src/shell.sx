@@ -225,7 +225,7 @@ fn skip_double(src: ref u8, i: i64) i64 = trust {
         }
         val c: u8 = @load8(@ptradd(src, j))
         if c == 92 && j + 1 < n {
-            j = j + 2
+            j += 2
             continue
         }
         if c == 34 {
@@ -254,7 +254,7 @@ fn skip_dollar_paren(src: ref u8, start: i64) i64 = trust {
             continue
         }
         if c == 92 {
-            i = i + 2
+            i += 2
             continue
         }
         if c == 40 {
@@ -279,7 +279,7 @@ fn skip_backtick(src: ref u8, i: i64) i64 = trust {
         }
         val c: u8 = @load8(@ptradd(src, j))
         if c == 92 {
-            j = j + 2
+            j += 2
             continue
         }
         if c == 96 {
@@ -309,7 +309,7 @@ pub fn split_top(src: ref u8) ref u.Vec = trust {
             continue
         }
         if c == 92 {
-            i = i + 2
+            i += 2
             continue
         }
         if c == 96 {
@@ -349,12 +349,12 @@ pub fn split_top(src: ref u8) ref u.Vec = trust {
                 val d: u8 = @load8(@ptradd(src, i + 1))
                 if d == 38 {
                     add_segment(out, src, start, i, 2)
-                    i = i + 2
+                    i += 2
                     start = i
                     continue
                 }
                 if d == 62 {
-                    i = i + 2
+                    i += 2
                     continue
                 }
             }
@@ -370,7 +370,7 @@ pub fn split_top(src: ref u8) ref u.Vec = trust {
         if c == 124 {
             if i + 1 < n && @load8(@ptradd(src, i + 1)) == 124 {
                 add_segment(out, src, start, i, 3)
-                i = i + 2
+                i += 2
                 start = i
                 continue
             }
@@ -391,7 +391,7 @@ fn add_segment(out: mut ref u.Vec, src: ref u8, start: i64, end: i64, conn: i64)
     val seg: mut ref Segment = u.xalloc(@sizeof(Segment) as i64) as ref Segment
     seg.text = text
     seg.conn = conn
-    u.vec_pushp(out, seg as ref void)
+    u.vec_pushp(out, seg)
 }
 
 // ---------------------------------------------------------------------------
@@ -563,11 +563,11 @@ fn scan_word(src: ref u8, startpos: i64, toks: mut ref u.Vec) i64 = trust {
                     val e: u8 = @load8(@ptradd(src, i + 1))
                     if e == 34 || e == 92 || e == 36 || e == 96 {
                         u.buf_ch(b, e)
-                        i = i + 2
+                        i += 2
                         continue
                     }
                     if e == 10 {
-                        i = i + 2
+                        i += 2
                         continue
                     }
                 }
@@ -592,11 +592,11 @@ fn scan_word(src: ref u8, startpos: i64, toks: mut ref u.Vec) i64 = trust {
             if i + 1 < n {
                 val d: u8 = @load8(@ptradd(src, i + 1))
                 if d == 10 {
-                    i = i + 2
+                    i += 2
                     continue
                 }
                 u.buf_ch(b, d)
-                i = i + 2
+                i += 2
                 started = 1
             } else {
                 i++
@@ -635,7 +635,7 @@ fn scan_word(src: ref u8, startpos: i64, toks: mut ref u.Vec) i64 = trust {
                     t.text = u.vec_p(matches, k) as ref u8
                     t.quoted = 0
                     t.fd = 0
-                    u.vec_pushp(toks, t as ref void)
+                    u.vec_pushp(toks, t)
                     k++
                 }
                 return i
@@ -646,7 +646,7 @@ fn scan_word(src: ref u8, startpos: i64, toks: mut ref u.Vec) i64 = trust {
         t.text = word
         t.quoted = quoted
         t.fd = 0
-        u.vec_pushp(toks, t as ref void)
+        u.vec_pushp(toks, t)
     } else {
         u.buf_free(b)
     }
@@ -735,7 +735,7 @@ fn sort_glob(v: mut ref u.Vec) void = trust {
             u.vec_setp(v, j + 1, u.vec_p(v, j))
             j--
         }
-        u.vec_setp(v, j + 1, key as ref void)
+        u.vec_setp(v, j + 1, key)
         i++
     }
 }
@@ -784,7 +784,7 @@ fn glob_walk(pattern: ref u8, base_end: i64, out: mut ref u.Vec) void = trust {
             }
             if wildcard_match(namepat, name) {
                 val full: ref u8 = u.path_join(dirpart, name)
-                u.vec_pushp(out, full as ref void)
+                u.vec_pushp(out, full)
             }
         }
         u.dir_close(d)
@@ -899,7 +899,7 @@ fn class_match(pat: ref u8, start: i64, end: i64, c: u8) bool = trust {
             if c >= lo && c <= hi {
                 hit = true
             }
-            i = i + 3
+            i += 3
             continue
         }
         if @load8(@ptradd(pat, i)) == c {
@@ -948,7 +948,7 @@ pub fn scan_shell(src: ref u8) ref u.Vec = trust {
             t.text = c"|"
             t.quoted = 0
             t.fd = 0
-            u.vec_pushp(toks, t as ref void)
+            u.vec_pushp(toks, t)
             i++
             continue
         }
@@ -958,14 +958,14 @@ pub fn scan_shell(src: ref u8) ref u.Vec = trust {
             t.text = c"<"
             t.quoted = 0
             t.fd = 0
-            u.vec_pushp(toks, t as ref void)
+            u.vec_pushp(toks, t)
             i++
             continue
         }
         if c == 62 {
             if i + 1 < n && @load8(@ptradd(src, i + 1)) == 62 {
                 push_op(toks, 4, c">>", 0)
-                i = i + 2
+                i += 2
             } else {
                 push_op(toks, 3, c">", 0)
                 i++
@@ -975,10 +975,10 @@ pub fn scan_shell(src: ref u8) ref u.Vec = trust {
         if c == 38 && i + 1 < n && @load8(@ptradd(src, i + 1)) == 62 {
             if i + 2 < n && @load8(@ptradd(src, i + 2)) == 62 {
                 push_op(toks, 9, c"&>>", 0)
-                i = i + 3
+                i += 3
             } else {
                 push_op(toks, 8, c"&>", 0)
-                i = i + 2
+                i += 2
             }
             continue
         }
@@ -1000,16 +1000,16 @@ pub fn scan_shell(src: ref u8) ref u.Vec = trust {
                 t.text = u.s_substr(src, i + 3, e)
                 t.quoted = 0
                 t.fd = 2
-                u.vec_pushp(toks, t as ref void)
+                u.vec_pushp(toks, t)
                 i = e
                 continue
             }
             if i + 2 < n && @load8(@ptradd(src, i + 2)) == 62 {
                 push_op(toks, 7, c"2>>", 2)
-                i = i + 3
+                i += 3
             } else {
                 push_op(toks, 6, c"2>", 2)
-                i = i + 2
+                i += 2
             }
             continue
         }
@@ -1029,7 +1029,7 @@ fn push_op(toks: mut ref u.Vec, kind: i64, text: ref u8, fd: i64) void = trust {
     t.text = text
     t.quoted = 0
     t.fd = fd
-    u.vec_pushp(toks, t as ref void)
+    u.vec_pushp(toks, t)
 }
 
 // ---------------------------------------------------------------------------
@@ -1061,9 +1061,9 @@ pub fn parse_pipeline(tokens: ref u.Vec) ref Pipeline = trust {
         val t: ref STok = u.vec_p(tokens, i) as ref STok
         if t.kind == 1 {
             if cur.argv.len == 0 && is_assignment_word(t.text) {
-                u.vec_pushp(cur.assigns, t.text as ref void)
+                u.vec_pushp(cur.assigns, t.text)
             } else {
-                u.vec_pushp(cur.argv, t.text as ref void)
+                u.vec_pushp(cur.argv, t.text)
             }
             i++
             continue
@@ -1073,7 +1073,7 @@ pub fn parse_pipeline(tokens: ref u.Vec) ref Pipeline = trust {
                 error(c"syntax error: empty pipeline stage")
                 return pipe
             }
-            u.vec_pushp(pipe.cmds, cur as ref void)
+            u.vec_pushp(pipe.cmds, cur)
             cur = new_command()
             i++
             continue
@@ -1103,14 +1103,14 @@ pub fn parse_pipeline(tokens: ref u.Vec) ref Pipeline = trust {
                 }
                 r.target = (u.vec_p(tokens, i) as ref STok).text
             }
-            u.vec_pushp(cur.redirs, r as ref void)
+            u.vec_pushp(cur.redirs, r)
             i++
             continue
         }
         i++
     }
     if cur.argv.len > 0 || cur.assigns.len > 0 || cur.redirs.len > 0 {
-        u.vec_pushp(pipe.cmds, cur as ref void)
+        u.vec_pushp(pipe.cmds, cur)
     }
     return pipe
 }
@@ -1285,7 +1285,7 @@ fn run_pipeline(pipe: ref Pipeline, background: bool) i32 = trust {
         val made: ex.Pipe = ex.make_pipe()
         pp.read_fd = made.read_fd
         pp.write_fd = made.write_fd
-        u.vec_pushp(pipes, pp as ref void)
+        u.vec_pushp(pipes, pp)
         k++
     }
     val pids: mut ref u.Vec = u.vec_new()
@@ -1557,7 +1557,7 @@ fn run_builtin_with_redirs(cmd: ref Command) i32 = trust {
         if eq > 0 {
             val name: ref u8 = u.s_substr(def, 0, eq)
             val old: i64 = u.map_get(sh_vars, name)
-            u.vec_pushp(saved, name as ref void)
+            u.vec_pushp(saved, name)
             u.vec_push(saved, old)
             apply_assignment(def, false)
         }
@@ -1592,7 +1592,7 @@ fn run_builtin_with_redirs(cmd: ref Command) i32 = trust {
         } else {
             u.map_put(sh_vars, name, old)
         }
-        j = j + 2
+        j += 2
     }
     return st
 }
