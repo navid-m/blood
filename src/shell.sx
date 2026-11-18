@@ -163,6 +163,22 @@ pub fn set_last_status(s: i32) void = trust {
     sh_last_status = s as i64
 }
 
+pub fn set_alias(name: ref u8, value: ref u8) void = trust {
+    u.map_put(sh_aliases, name, @bitcast(u.s_dup(value), i64))
+}
+
+pub fn set_env(name: ref u8, value: ref u8) void = trust {
+    u.env_set(name, value)
+    u.map_put(sh_vars, name, @bitcast(u.s_dup(value), i64))
+}
+
+pub fn reload_config(c: ref cfgmod.Config, h: ref histmod.History) void = trust {
+    sh_cfg = c
+    sh_hist = h
+    sh_aliases = u.map_new()
+    seed_aliases(c)
+}
+
 fn error(msg: ref u8) void = trust {
     if sh_error == none {
         sh_error = u.s_dup(msg)
@@ -1821,14 +1837,14 @@ fn bi_help(cmd: ref Command) i32 = trust {
         topic = argv_at(cmd, 1)
     }
     if u.s_eq(topic, c"config") {
-        u.write_fd(1, c"Blood configuration: ~/.config/blood/blood.ini\n\n[prompt]\ntheme (default|plain|lambda|powerline|right|right_time|hacker|dots|compact|iconified|timestamped|doubleline), show_username, show_hostname, show_directory, show_git,\nshow_time, show_exit_status, show_duration, show_jobs, two_line,\nsymbol, prompt_char, directory_style (full|short|basename)\n\n[colors]\nprimary, secondary, success, error, directory, git_clean, git_dirty,\nmuted, warning, accent (names, 256-colour numbers, or #rrggbb)\n\n[history]\nenabled, file, max_entries, ignore_duplicates\n\n[completion]\nenabled, case_sensitive\n\n[shell]\ndefault_editor, login_message, startup_file\n\n[aliases]\nname = command\n\n[env]\nNAME = value\n")
+        u.write_fd(1, c"Blood configuration: ~/.config/blood/blood.ini\n\n[prompt]\ntheme (default|plain|lambda|powerline|right|right_time|hacker|dots|compact|iconified|timestamped|doubleline), show_username, show_hostname, show_directory, show_git,\nshow_time, show_exit_status, show_duration, show_jobs, two_line,\nsymbol, prompt_char, directory_style (full|short|basename)\n\n[colors]\nprimary, secondary, success, error, directory, git_clean, git_dirty,\nmuted, warning, accent (names, 256-colour numbers, or #rrggbb)\n\n[history]\nenabled, file, max_entries, ignore_duplicates\n\n[completion]\nenabled, case_sensitive\n\n[shell]\ndefault_editor, login_message, startup_file\n\n[aliases]\nname = command\n\n[env]\nNAME = value\n\nstartup: .bloodrc (aliases and prelude)\nescape: :cfg.SECTION.KEY = VALUE, :rla, :where\n")
         return 0
     }
     if u.s_eq(topic, c"script") || u.s_eq(topic, c"language") {
         u.write_fd(1, c"Blood scripts (.blood)\n\nBlocks use braces:\n  say \"hello {name}\"\n  name = \"world\"\n  if true {\n      say \"yes\"\n  } else {\n      say \"no\"\n  }\n  while true {\n      break\n  }\n  for item in [\"a\", \"b\"] {\n      say item\n  }\n  fn greet(name) {\n      return \"Hello, \" + name\n  }\n  try {\n      raise \"oops\"\n  } catch err {\n      say err\n  }\n\nThe Python-like colon and indentation style is deprecated but still accepted.\nThe two block styles cannot be mixed in one file.\n\nShell commands can be used directly:\n  sleep 1\n  files = `ls`\n  status\n")
         return 0
     }
-    u.write_fd(1, c"Blood builtins\n\n  cd [dir]        change directory (cd - returns)\n  pwd             print working directory\n  exit [code]     leave the shell\n  history [-c|-w] command history\n  clear           clear the screen\n  cls             clear the screen\n  export NAME=..  export a variable\n  unset NAME..    remove variables\n  alias NAME=..   define an alias\n  unalias NAME..  remove an alias\n  help [topic]    this help (topics: config, script)\n  source FILE     run a blood script\n  echo ARGS..     print arguments\n  say ARGS..      print arguments\n  type NAME       show how a command resolves\n  jobs            background jobs\n  wait            wait for background jobs\n\nInteractive keys: Ctrl-A/E/B/F/K/U/W/L, Ctrl-R history search,\nTab completion menu, Up/Down history, Ctrl-C cancel, Ctrl-D exit.\n")
+    u.write_fd(1, c"Blood builtins\n\n  cd [dir]        change directory (cd - returns)\n  pwd             print working directory\n  exit [code]     leave the shell\n  history [-c|-w] command history\n  clear           clear the screen\n  cls             clear the screen\n  export NAME=..  export a variable\n  unset NAME..    remove variables\n  alias NAME=..   define an alias\n  unalias NAME..  remove an alias\n  help [topic]    this help (topics: config, script)\n  source FILE     run a blood script\n  echo ARGS..     print arguments\n  say ARGS..      print arguments\n  type NAME       show how a command resolves\n  jobs            background jobs\n  wait            wait for background jobs\n\nInteractive keys: Ctrl-A/E/B/F/K/U/W/L, Ctrl-R history search,\nTab completion menu, Up/Down history, Ctrl-C cancel, Ctrl-D exit.\n\nEscape commands: :cfg.SECTION.KEY = VALUE, :rla, :where\n")
     return 0
 }
 

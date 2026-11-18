@@ -94,6 +94,19 @@ pub fn history_set_file(h: mut ref History, file: ref u8) void = trust {
     h.file = u.s_dup(file)
 }
 
+pub fn history_apply_config(h: mut ref History, c: ref cfgmod.Config) void = trust {
+    h.file = u.s_dup(c.history_file)
+    h.max = c.history_max
+    h.ignore_dups = c.history_ignore_dups
+    h.enabled = c.history_enabled
+    for {
+        if h.max <= 0 || h.items.len <= h.max {
+            break
+        }
+        u.vec_remove(h.items, 0)
+    }
+}
+
 pub fn history_load(h: mut ref History) void = trust {
     if h.enabled == 0 {
         return

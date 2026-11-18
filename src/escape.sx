@@ -1,0 +1,109 @@
+/// Colon-prefixed interactive escape commands.
+
+val u = use("util.sx")
+val cfgmod = use("config.sx")
+val histmod = use("history.sx")
+val shell = use("shell.sx")
+val script = use("script.sx")
+
+pub fn is_command(line: ref u8) bool = trust {
+    val t: ref u8 = u.s_trim(line)
+    return u.s_len(t) > 0 && @load8(t) == 58
+}
+
+fn strip_quotes(v: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(v)
+    if n >= 2 {
+        val a: u8 = @load8(v)
+        val b: u8 = @load8(@ptradd(v, n - 1))
+        if (a == 34 && b == 34) || (a == 39 && b == 39) {
+            return u.s_substr(v, 1, n - 1)
+        }
+    }
+    return v
+}
+
+fn error(msg: ref u8) void = trust {
+    u.write_fd(2, u.s_cat3(c"blood: ", msg, c"\n"))
+}
+
+fn print_help() void = trust {
+    u.write_fd(1, c"Blood escape commands\n\n  :cfg.SECTION.KEY = VALUE   update and save configuration\n  :rla                       reload configuration and .bloodrc\n  :where                     show configuration file paths\n\nExamples:\n  :cfg.prompt.theme = hacker\n  :cfg.colors.primary = red\n")
+}
+
+fn show_paths(c: ref cfgmod.Config) void = trust {
+    u.stdout_ln(u.s_cat(c"config:  ", c.path))
+    u.stdout_ln(u.s_cat(c"bloodrc: ", cfgmod.bloodrc_path(c)))
+}
+
+fn reload(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = trust {
+    cfgmod.reload_into(c)
+    histmod.history_apply_config(h, c)
+    shell.reload_config(c, h)
+    cfgmod.init_bloodrc(c)
+    val rc: ref u8 = cfgmod.bloodrc_path(c)
+    if u.file_exists(rc) {
+        return script.run_file(rc)
+    }
+    return 0
+}
+
+fn set_config(c: mut ref cfgmod.Config, h: mut ref histmod.History, rest: ref u8) i32 = trust {
+    val body: ref u8 = u.s_substr(rest, 4, u.s_len(rest))
+    val eq: i64 = u.s_index_of_char(body, 61, 0)
+    if eq <= 0 {
+        error(c":cfg: expected SECTION.KEY = VALUE")
+        return 2
+    }
+    val lhs: ref u8 = u.s_trim(u.s_substr(body, 0, eq))
+    val rhs: ref u8 = u.s_trim(u.s_substr(body, eq + 1, u.s_len(body)))
+    val dot: i64 = u.s_index_of_char(lhs, 46, 0)
+    if dot <= 0 || dot + 1 >= u.s_len(lhs) {
+        error(c":cfg: expected SECTION.KEY = VALUE")
+        return 2
+    }
+    val section: ref u8 = u.s_substr(lhs, 0, dot)
+    val key: ref u8 = u.s_substr(lhs, dot + 1, u.s_len(lhs))
+    val value: ref u8 = strip_quotes(rhs)
+    if u.s_eq(section, c"aliases") {
+        shell.set_alias(key, value)
+    } elif u.s_eq(section, c"env") {
+        shell.set_env(key, value)
+    } else {
+        if !cfgmod.set_value(c, section, key, value) {
+            error(u.s_cat3(c":cfg: unknown key or invalid value ", section, u.s_cat(c".", key)))
+            return 2
+        }
+    }
+    histmod.history_apply_config(h, c)
+    if !cfgmod.persist_value(c.path, section, key, value) {
+        error(c":cfg: cannot write configuration file")
+        return 1
+    }
+    return 0
+}
+
+pub fn handle(line: ref u8, c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = trust {
+    val t: ref u8 = u.s_trim(line)
+    if !is_command(t) {
+        return 0
+    }
+    val rest: ref u8 = u.s_trim(u.s_substr(t, 1, u.s_len(t)))
+    if u.s_len(rest) == 0 || u.s_eq(rest, c"help") {
+        print_help()
+        return 0
+    }
+    if u.s_eq(rest, c"where") {
+        show_paths(c)
+        return 0
+    }
+    if u.s_eq(rest, c"rla") {
+        return reload(c, h)
+    }
+    if u.s_starts(rest, c"cfg.") {
+        return set_config(c, h, rest)
+    }
+    error(u.s_cat(c"unknown escape command: ", rest))
+    print_help()
+    return 2
+}

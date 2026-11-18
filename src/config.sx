@@ -346,6 +346,208 @@ fn apply(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8) void = 
     set_int_field(c, key, value)
 }
 
+fn known_key(section: ref u8, key: ref u8) bool = trust {
+    if u.s_eq(section, c"prompt") {
+        if u.s_eq(key, c"show_username") || u.s_eq(key, c"show_hostname") || u.s_eq(key, c"show_directory") || u.s_eq(key, c"show_git") || u.s_eq(key, c"show_time") || u.s_eq(key, c"show_exit_status") || u.s_eq(key, c"show_duration") || u.s_eq(key, c"show_jobs") || u.s_eq(key, c"show_mode") || u.s_eq(key, c"two_line") || u.s_eq(key, c"git_status") {
+            return true
+        }
+        return u.s_eq(key, c"theme") || u.s_eq(key, c"symbol") || u.s_eq(key, c"prompt_symbol") || u.s_eq(key, c"prompt_char") || u.s_eq(key, c"separator") || u.s_eq(key, c"directory_style")
+    }
+    if u.s_eq(section, c"colors") {
+        return u.s_eq(key, c"primary") || u.s_eq(key, c"secondary") || u.s_eq(key, c"success") || u.s_eq(key, c"error") || u.s_eq(key, c"directory") || u.s_eq(key, c"git_clean") || u.s_eq(key, c"git_dirty") || u.s_eq(key, c"muted") || u.s_eq(key, c"warning") || u.s_eq(key, c"accent")
+    }
+    if u.s_eq(section, c"history") {
+        return u.s_eq(key, c"enabled") || u.s_eq(key, c"file") || u.s_eq(key, c"history_file") || u.s_eq(key, c"max_entries") || u.s_eq(key, c"history_max") || u.s_eq(key, c"ignore_duplicates")
+    }
+    if u.s_eq(section, c"completion") {
+        return u.s_eq(key, c"enabled") || u.s_eq(key, c"case_sensitive")
+    }
+    if u.s_eq(section, c"shell") {
+        return u.s_eq(key, c"default_editor") || u.s_eq(key, c"editor") || u.s_eq(key, c"login_message") || u.s_eq(key, c"startup_file")
+    }
+    return false
+}
+
+fn bool_value(v: ref u8) bool = trust {
+    return u.s_eq(v, c"true") || u.s_eq(v, c"yes") || u.s_eq(v, c"on") || u.s_eq(v, c"1") || u.s_eq(v, c"false") || u.s_eq(v, c"no") || u.s_eq(v, c"off") || u.s_eq(v, c"0")
+}
+
+fn needs_bool(section: ref u8, key: ref u8) bool = trust {
+    if u.s_eq(section, c"prompt") {
+        return u.s_eq(key, c"show_username") || u.s_eq(key, c"show_hostname") || u.s_eq(key, c"show_directory") || u.s_eq(key, c"show_git") || u.s_eq(key, c"show_time") || u.s_eq(key, c"show_exit_status") || u.s_eq(key, c"show_duration") || u.s_eq(key, c"show_jobs") || u.s_eq(key, c"show_mode") || u.s_eq(key, c"two_line") || u.s_eq(key, c"git_status")
+    }
+    if u.s_eq(section, c"history") {
+        return u.s_eq(key, c"enabled") || u.s_eq(key, c"ignore_duplicates")
+    }
+    if u.s_eq(section, c"completion") {
+        return u.s_eq(key, c"enabled") || u.s_eq(key, c"case_sensitive")
+    }
+    if u.s_eq(section, c"shell") {
+        return u.s_eq(key, c"login_message")
+    }
+    return false
+}
+
+fn needs_int(section: ref u8, key: ref u8) bool = trust {
+    return u.s_eq(section, c"history") && (u.s_eq(key, c"max_entries") || u.s_eq(key, c"history_max"))
+}
+
+pub fn set_value(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8) bool = trust {
+    if !known_key(section, key) {
+        return false
+    }
+    if needs_bool(section, key) && !bool_value(value) {
+        return false
+    }
+    if needs_int(section, key) {
+        match u.parse_int(value) {
+            some _ => {}
+            none => {
+                return false
+            }
+        }
+    }
+    apply(c, section, key, value)
+    return true
+}
+
+pub fn bloodrc_path(c: ref Config) ref u8 = trust {
+    return u.path_join(u.path_dir(c.path), c".bloodrc")
+}
+
+pub fn init_bloodrc(c: ref Config) bool = trust {
+    val path: ref u8 = bloodrc_path(c)
+    if u.file_exists(path) {
+        return true
+    }
+    u.mkdir_p(u.path_dir(path))
+    val text: ref u8 = c"# Blood startup file.\n# Run at the start of every interactive session.\n\n# Aliases:\n# alias ll='ls -l'\n# alias gs='git status'\n\nfn prelude() {\n    # Session setup goes here.\n}\n\nprelude()\n"
+    return u.write_file(path, text)
+}
+
+pub fn reload_into(c: mut ref Config) void = trust {
+    val d: ref Config = load_config_from(c.path)
+    c.path = d.path
+    c.theme = d.theme
+    c.show_username = d.show_username
+    c.show_hostname = d.show_hostname
+    c.show_directory = d.show_directory
+    c.show_git = d.show_git
+    c.show_time = d.show_time
+    c.show_exit_status = d.show_exit_status
+    c.show_duration = d.show_duration
+    c.show_jobs = d.show_jobs
+    c.show_mode = d.show_mode
+    c.two_line = d.two_line
+    c.directory_style = d.directory_style
+    c.prompt_symbol = d.prompt_symbol
+    c.prompt_char = d.prompt_char
+    c.separator = d.separator
+    c.color_primary = d.color_primary
+    c.color_secondary = d.color_secondary
+    c.color_success = d.color_success
+    c.color_error = d.color_error
+    c.color_directory = d.color_directory
+    c.color_git_clean = d.color_git_clean
+    c.color_git_dirty = d.color_git_dirty
+    c.color_muted = d.color_muted
+    c.color_warning = d.color_warning
+    c.color_accent = d.color_accent
+    c.history_enabled = d.history_enabled
+    c.history_file = d.history_file
+    c.history_max = d.history_max
+    c.history_ignore_dups = d.history_ignore_dups
+    c.completion_enabled = d.completion_enabled
+    c.completion_case_sensitive = d.completion_case_sensitive
+    c.shell_editor = d.shell_editor
+    c.login_message = d.login_message
+    c.startup_file = d.startup_file
+    c.alias_defs = d.alias_defs
+    c.env_defs = d.env_defs
+}
+
+pub fn persist_value(path: ref u8, section: ref u8, key: ref u8, value: ref u8) bool = trust {
+    val data: ref u8 = u.read_file(path)
+    val out: mut ref u.Buf = u.buf_new()
+    val cursec: mut ref u8 = u.s_dup(c"prompt")
+    val found_section: mut i64 = 0
+    val have_section: mut i64 = 0
+    val wrote: mut i64 = 0
+    if data != none {
+        val n: i64 = u.s_len(data)
+        val start: mut i64 = 0
+        val i: mut i64 = 0
+        for {
+            if i > n {
+                break
+            }
+            if i == n || @load8(@ptradd(data, i)) == 10 {
+                if i == n && start == n {
+                    break
+                }
+                val line: ref u8 = u.s_substr(data, start, i)
+                val t: ref u8 = u.s_trim(line)
+                if u.s_len(t) > 0 && @load8(t) == 91 {
+                    if wrote == 0 && have_section == 1 && u.s_eq(cursec, section) {
+                        u.buf_add(out, key)
+                        u.buf_add(out, c" = ")
+                        u.buf_add(out, value)
+                        u.buf_ch(out, 10)
+                        wrote = 1
+                    }
+                    val close: i64 = u.s_index_of_char(t, 93, 0)
+                    if close > 0 {
+                        cursec = u.s_substr(t, 1, close)
+                    }
+                    have_section = 1
+                    if u.s_eq(cursec, section) {
+                        found_section = 1
+                    }
+                    u.buf_add(out, line)
+                    u.buf_ch(out, 10)
+                } else {
+                    val eq: i64 = u.s_index_of_char(t, 61, 0)
+                    if u.s_eq(cursec, section) && eq > 0 {
+                        found_section = 1
+                        if wrote == 0 && u.s_eq(u.s_trim(u.s_substr(t, 0, eq)), key) {
+                            u.buf_add(out, key)
+                            u.buf_add(out, c" = ")
+                            u.buf_add(out, value)
+                            u.buf_ch(out, 10)
+                            wrote = 1
+                        } else {
+                            u.buf_add(out, line)
+                            u.buf_ch(out, 10)
+                        }
+                    } else {
+                        u.buf_add(out, line)
+                        u.buf_ch(out, 10)
+                    }
+                }
+                start = i + 1
+            }
+            i++
+        }
+    }
+    if wrote == 0 {
+        if found_section == 0 {
+            if out.len > 0 {
+                u.buf_ch(out, 10)
+            }
+            u.buf_ch(out, 91)
+            u.buf_add(out, section)
+            u.buf_ch(out, 93)
+            u.buf_ch(out, 10)
+        }
+        u.buf_add(out, key)
+        u.buf_add(out, c" = ")
+        u.buf_add(out, value)
+        u.buf_ch(out, 10)
+    }
+    u.mkdir_p(u.path_dir(path))
+    return u.write_file(path, u.buf_take(out))
+}
+
 pub fn load_config() ref Config = trust {
     return load_config_from(config_path())
 }
@@ -423,6 +625,6 @@ pub fn init_config_file(path: ref u8) bool = trust {
     if u.file_exists(path) {
         return true
     }
-    val text: ref u8 = c"# Blood shell configuration\n# See `blood help config` for the available keys.\n# Prompt themes: default, plain, lambda, powerline, right, right_time,\n# hacker, dots, compact, iconified, timestamped, doubleline.\n\n[prompt]\ntheme = default\nshow_username = true\nshow_hostname = true\nshow_directory = true\nshow_git = true\nshow_time = false\nshow_exit_status = true\nshow_duration = true\ntwo_line = true\n\n[colors]\nprimary = red\nsecondary = red\nsuccess = green\nerror = red\ndirectory = blue\ngit_clean = green\ngit_dirty = yellow\nmuted = white\n\n[history]\nenabled = true\nfile = ~/.local/share/blood/history\nmax_entries = 10000\nignore_duplicates = true\n\n[completion]\nenabled = true\ncase_sensitive = false\n\n[shell]\ndefault_editor = nano\nlogin_message = true\n"
+    val text: ref u8 = c"# Blood shell configuration\n# See `blood help config` for the available keys.\n# Startup file: .bloodrc (aliases and prelude).\n# Prompt themes: default, plain, lambda, powerline, right, right_time,\n# hacker, dots, compact, iconified, timestamped, doubleline.\n\n[prompt]\ntheme = default\nshow_username = true\nshow_hostname = true\nshow_directory = true\nshow_git = true\nshow_time = false\nshow_exit_status = true\nshow_duration = true\ntwo_line = true\n\n[colors]\nprimary = red\nsecondary = red\nsuccess = green\nerror = red\ndirectory = blue\ngit_clean = green\ngit_dirty = yellow\nmuted = white\n\n[history]\nenabled = true\nfile = ~/.local/share/blood/history\nmax_entries = 10000\nignore_duplicates = true\n\n[completion]\nenabled = true\ncase_sensitive = false\n\n[shell]\ndefault_editor = nano\nlogin_message = true\n"
     return u.write_file(path, text)
 }

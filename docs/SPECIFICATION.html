@@ -1161,6 +1161,33 @@ configuration and history loading.</p>
 </div>
 </div>
 <div class="sect3">
+<h4 id="_bloodrc"><code>.bloodrc</code></h4>
+<div class="paragraph">
+<p>Blood creates and runs <code>~/.config/blood/.bloodrc</code> for every interactive
+session. When <code>XDG_CONFIG_HOME</code> is set, the file lives beside <code>blood.ini</code>
+under that directory. The file is a normal Blood script and is created with a
+prelude stub when missing:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code># Aliases:
+# alias ll='ls -l'
+# alias gs='git status'
+
+fn prelude() {
+    # Session setup goes here.
+}
+
+prelude()</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Aliases and functions defined in <code>.bloodrc</code> are available in the interactive
+shell. The file runs at the start of an interactive session, before
+<code>startup_file</code> and <code>init.blood</code>. <code>:rla</code> reloads the file.</p>
+</div>
+</div>
+<div class="sect3">
 <h4 id="_aliases"><code>[aliases]</code></h4>
 <div class="paragraph">
 <p>Each key is an alias name and each value is its replacement text:</p>
@@ -1466,6 +1493,61 @@ opened. A lone Esc with no menu open is ignored.</p>
 At most ten rows, including the border, are used; longer candidate lists
 scroll as the selection moves. The selected candidate is highlighted with
 reverse video. Items that are wider than the menu are clipped with <code>…</code>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_escape_commands">Escape commands</h3>
+<div class="paragraph">
+<p>A line beginning with <code>:</code> at the interactive prompt is an escape command. It
+is not passed to the shell or scripting language.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 75%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Command</th>
+<th class="tableblock halign-left valign-top">Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:cfg.SECTION.KEY = VALUE</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Update a configuration key in the running session
+and immediately rewrite the corresponding line in <code>blood.ini</code>. Supports
+<code>prompt</code>, <code>colors</code>, <code>history</code>, <code>completion</code>, <code>shell</code>, <code>aliases</code>, and <code>env</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:rla</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Reload <code>blood.ini</code>, re-seed aliases and environment variables, and
+run <code>.bloodrc</code> again. The prompt and colours update immediately.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:where</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Print the paths of <code>blood.ini</code> and <code>.bloodrc</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:help</code> or <code>:</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Print the escape-command summary.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Examples:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>:cfg.prompt.theme = hacker
+:cfg.colors.primary = red
+:cfg.history.max_entries = 500
+:cfg.aliases.ll = ls -l</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Saving a key creates the <code>blood.ini</code> file and the containing section when
+needed. Existing comments and unrelated lines are preserved.</p>
 </div>
 </div>
 <div class="sect2">
@@ -4102,7 +4184,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-18 01:10:46 UTC
+Last updated 2026-11-18 01:35:20 UTC
 </div>
 </div>
 </body>

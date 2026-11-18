@@ -8,6 +8,7 @@ val term = use("terminal.sx")
 val ex = use("exec.sx")
 val shell = use("shell.sx")
 val script = use("script.sx")
+val escape = use("escape.sx")
 val flags = use("std/flags")
 
 val VERSION: ref u8 = c"0.1.0"
@@ -194,11 +195,22 @@ fn run_startup(c: ref cfgmod.Config) void = trust {
     }
 }
 
+fn run_bloodrc(c: ref cfgmod.Config) void = trust {
+    if !cfgmod.init_bloodrc(c) {
+        u.write_fd(2, c"blood: cannot create .bloodrc\n")
+        return
+    }
+    val path: ref u8 = cfgmod.bloodrc_path(c)
+    if u.file_exists(path) {
+        script.run_file(path)
+    }
+}
+
 fn prompt_continuation() ref u8 = trust {
     return c"\x1b[90m  … \x1b[0m"
 }
 
-fn interactive_loop(c: ref cfgmod.Config, h: mut ref histmod.History) i32 = trust {
+fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = trust {
     val status: mut i64 = 0
     val duration: mut i64 = 0
     val code: mut i32 = 0
@@ -221,6 +233,24 @@ fn interactive_loop(c: ref cfgmod.Config, h: mut ref histmod.History) i32 = trus
             break
         }
         if u.s_len(u.s_trim(line)) == 0 {
+            continue
+        }
+        val trimmed: ref u8 = u.s_trim(line)
+        if escape.is_command(trimmed) {
+            histmod.history_add(h, trimmed)
+            u.interrupt_flag = 0
+            val st: i32 = escape.handle(trimmed, c, h)
+            status = st as i64
+            script.set_external_status(status)
+            duration = 0
+            if u.script_exit_code >= 0 {
+                code = u.script_exit_code as i32
+                break
+            }
+            if shell.exit_requested() {
+                code = shell.exit_code()
+                break
+            }
             continue
         }
         val full: mut ref u8 = u.s_dup(line)
@@ -311,7 +341,7 @@ fn interactive_loop(c: ref cfgmod.Config, h: mut ref histmod.History) i32 = trus
 
 pub fn main() i32 = trust {
     val av: list[ref u8] = @args()
-    val c: ref cfgmod.Config = cfgmod.load_config()
+    val c: mut ref cfgmod.Config = cfgmod.load_config()
     ensure_config_dirs(c)
     ex.signal_ignore(3)
     ex.signal_handler(2, on_interrupt)
@@ -412,6 +442,7 @@ pub fn main() i32 = trust {
         return shell.run_line(src)
     }
     shell.shell_init(c, h, true)
+    run_bloodrc(c)
     run_startup(c)
     val code: i32 = interactive_loop(c, h)
     term.cooked_mode()

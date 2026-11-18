@@ -152,3 +152,49 @@ test "init_config_file writes a default file once" {
         assert u.s_eq(u.read_file(path), c"custom")
     }
 }
+
+test "init_bloodrc writes a prelude template once" {
+    trust {
+        val path: ref u8 = u.s_cat3(
+            c"/tmp/blood-unit-config/bloodrc-",
+            u.s_int(u.now_ms()),
+            c"/blood.ini"
+        )
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.path = u.s_dup(path)
+        assert cfg.init_bloodrc(c)
+        val rc: ref u8 = cfg.bloodrc_path(c)
+        assert u.file_exists(rc)
+        val text: ref u8 = u.read_file(rc)
+        assert u.s_contains(text, c"fn prelude()")
+        assert u.s_contains(text, c"prelude()")
+
+        assert u.write_file(rc, c"custom rc")
+        assert cfg.init_bloodrc(c)
+        assert u.s_eq(u.read_file(rc), c"custom rc")
+    }
+}
+
+test "persist_value replaces keys and creates sections" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-config/persist.ini"
+        assert u.mkdir_p(u.path_dir(path))
+        assert u.write_file(path, c"# keep this comment\n[prompt]\ntheme = default\nshow_git = true\n")
+
+        assert cfg.persist_value(path, c"prompt", c"theme", c"hacker")
+        assert cfg.persist_value(path, c"prompt", c"show_git", c"false")
+        assert cfg.persist_value(path, c"colors", c"primary", c"red")
+        val text: ref u8 = u.read_file(path)
+        assert u.s_contains(text, c"# keep this comment")
+        assert u.s_contains(text, c"theme = hacker")
+        assert !u.s_contains(text, c"theme = default")
+        assert u.s_contains(text, c"show_git = false")
+        assert u.s_contains(text, c"[colors]")
+        assert u.s_contains(text, c"primary = red")
+
+        val saved: ref cfg.Config = cfg.load_config_from(path)
+        assert u.s_eq(saved.theme, c"hacker")
+        assert saved.show_git == 0
+        assert u.s_eq(saved.color_primary, c"\x1b[31m")
+    }
+}

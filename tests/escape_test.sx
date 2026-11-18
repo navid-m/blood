@@ -1,0 +1,124 @@
+val u = use("../src/util.sx")
+val cfg = use("../src/config.sx")
+val hist = use("../src/history.sx")
+val sh = use("../src/shell.sx")
+val script = use("../src/script.sx")
+val esc = use("../src/escape.sx")
+
+fn setup(path: ref u8) ref cfg.Config = trust {
+    val c: mut ref cfg.Config = cfg.load_config_from(path)
+    val h: mut ref hist.History = hist.history_new(c)
+    sh.shell_init(c, h, false)
+    script.script_init()
+    u.run_shell_hook = sh.run_line
+    u.hooks_ready = 1
+    return c
+}
+
+fn new_history(c: ref cfg.Config) ref hist.History = trust {
+    return hist.history_new(c)
+}
+
+test "escape detection only accepts colon-prefixed lines" {
+    trust {
+        assert esc.is_command(c":where")
+        assert esc.is_command(c"  :cfg.prompt.theme = hacker")
+        assert !esc.is_command(c"echo :where")
+        assert !esc.is_command(c"")
+    }
+}
+
+test ":cfg updates running config and saves blood.ini" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-escape/cfg.ini"
+        assert u.mkdir_p(u.path_dir(path))
+        assert u.write_file(path, c"# keep this comment\n[prompt]\ntheme = default\nshow_git = true\n")
+        val c: mut ref cfg.Config = setup(path)
+        val h: mut ref hist.History = new_history(c)
+
+        assert esc.handle(c":cfg.prompt.theme = hacker", c, h) == 0
+        assert u.s_eq(c.theme, c"hacker")
+        assert esc.handle(c":cfg.prompt.show_git = false", c, h) == 0
+        assert c.show_git == 0
+        assert esc.handle(c":cfg.colors.primary = red", c, h) == 0
+        assert u.s_eq(c.color_primary, c"\x1b[31m")
+        assert esc.handle(c":cfg.history.max_entries = 5", c, h) == 0
+        assert c.history_max == 5
+        assert h.max == 5
+
+        val text: ref u8 = u.read_file(path)
+        assert u.s_contains(text, c"# keep this comment")
+        assert u.s_contains(text, c"theme = hacker")
+        assert u.s_contains(text, c"show_git = false")
+        assert u.s_contains(text, c"primary = red")
+        assert u.s_contains(text, c"max_entries = 5")
+
+        assert esc.handle(c":cfg.prompt.not_a_key = 1", c, h) == 2
+        assert u.s_eq(c.theme, c"hacker")
+        assert esc.handle(c":cfg.prompt.show_git = maybe", c, h) == 2
+        assert c.show_git == 0
+        assert esc.handle(c":cfg.history.max_entries = lots", c, h) == 2
+        assert c.history_max == 5
+        assert !u.s_contains(u.read_file(path), c"maybe")
+    }
+}
+
+test ":cfg updates aliases and environment at runtime" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-escape/aliases.ini"
+        assert u.mkdir_p(u.path_dir(path))
+        assert u.write_file(path, c"")
+        val c: mut ref cfg.Config = setup(path)
+        val h: mut ref hist.History = new_history(c)
+
+        assert esc.handle(c":cfg.aliases.ll = echo hello", c, h) == 0
+        assert u.map_has(sh.aliases(), c"ll")
+        assert u.s_eq(@bitcast(u.map_get(sh.aliases(), c"ll"), ref u8), c"echo hello")
+
+        assert esc.handle(c":cfg.env.BLOOD_ESCAPE = yes", c, h) == 0
+        assert u.s_eq(sh.get_var(c"BLOOD_ESCAPE"), c"yes")
+
+        val text: ref u8 = u.read_file(path)
+        assert u.s_contains(text, c"[aliases]")
+        assert u.s_contains(text, c"ll = echo hello")
+        assert u.s_contains(text, c"[env]")
+        assert u.s_contains(text, c"BLOOD_ESCAPE = yes")
+    }
+}
+
+test ":rla reloads config, aliases and .bloodrc" {
+    trust {
+        val dir: ref u8 = c"/tmp/blood-unit-escape/reload"
+        val path: ref u8 = u.path_join(dir, c"blood.ini")
+        assert u.mkdir_p(dir)
+        assert u.write_file(path, c"[prompt]\ntheme = default\n")
+        val c: mut ref cfg.Config = setup(path)
+        val h: mut ref hist.History = new_history(c)
+
+        val rc: ref u8 = u.path_join(dir, c".bloodrc")
+        assert u.write_file(rc, c"alias ll='echo reloaded'\nfn prelude() {\n    write_file(\"/tmp/blood-unit-escape/reload/prelude.txt\", \"ran\")\n}\nprelude()\n")
+        val marker: ref u8 = u.path_join(dir, c"prelude.txt")
+
+        assert esc.handle(c":rla", c, h) == 0
+        assert u.file_exists(marker)
+        assert u.s_eq(u.read_file(marker), c"ran")
+        assert u.map_has(sh.aliases(), c"ll")
+
+        assert u.write_file(path, c"[prompt]\ntheme = powerline\n")
+        assert esc.handle(c":rla", c, h) == 0
+        assert u.s_eq(c.theme, c"powerline")
+    }
+}
+
+test ":where and :help succeed" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-escape/where.ini"
+        assert u.mkdir_p(u.path_dir(path))
+        assert u.write_file(path, c"")
+        val c: mut ref cfg.Config = setup(path)
+        val h: mut ref hist.History = new_history(c)
+        assert esc.handle(c":where", c, h) == 0
+        assert esc.handle(c":help", c, h) == 0
+        assert esc.handle(c":nonsense", c, h) == 2
+    }
+}

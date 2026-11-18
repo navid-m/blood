@@ -339,6 +339,30 @@ loop when it exists. If both `startup_file` and the default startup file
 exist, both are executed in that order. Startup scripts run after
 configuration and history loading.
 
+==== `.bloodrc`
+
+Blood creates and runs `~/.config/blood/.bloodrc` for every interactive
+session. When `XDG_CONFIG_HOME` is set, the file lives beside `blood.ini`
+under that directory. The file is a normal Blood script and is created with a
+prelude stub when missing:
+
+[source]
+----
+# Aliases:
+# alias ll='ls -l'
+# alias gs='git status'
+
+fn prelude() {
+    # Session setup goes here.
+}
+
+prelude()
+----
+
+Aliases and functions defined in `.bloodrc` are available in the interactive
+shell. The file runs at the start of an interactive session, before
+`startup_file` and `init.blood`. `:rla` reloads the file.
+
 ==== `[aliases]`
 
 Each key is an alias name and each value is its replacement text:
@@ -511,6 +535,36 @@ The menu is drawn as a bordered rectangle with a title, in row-major order.
 At most ten rows, including the border, are used; longer candidate lists
 scroll as the selection moves. The selected candidate is highlighted with
 reverse video. Items that are wider than the menu are clipped with `…`.
+
+=== Escape commands
+
+A line beginning with `:` at the interactive prompt is an escape command. It
+is not passed to the shell or scripting language.
+
+[cols="1,3",options="header"]
+|===
+|Command |Effect
+|`:cfg.SECTION.KEY = VALUE` |Update a configuration key in the running session
+and immediately rewrite the corresponding line in `blood.ini`. Supports
+`prompt`, `colors`, `history`, `completion`, `shell`, `aliases`, and `env`.
+|`:rla` |Reload `blood.ini`, re-seed aliases and environment variables, and
+run `.bloodrc` again. The prompt and colours update immediately.
+|`:where` |Print the paths of `blood.ini` and `.bloodrc`.
+|`:help` or `:` |Print the escape-command summary.
+|===
+
+Examples:
+
+[source]
+----
+:cfg.prompt.theme = hacker
+:cfg.colors.primary = red
+:cfg.history.max_entries = 500
+:cfg.aliases.ll = ls -l
+----
+
+Saving a key creates the `blood.ini` file and the containing section when
+needed. Existing comments and unrelated lines are preserved.
 
 === Reverse incremental search
 
