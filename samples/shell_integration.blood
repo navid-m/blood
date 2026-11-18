@@ -1,0 +1,9 @@
+# Blood sample: shell command substitution and pipelines.
+
+lines = capture("printf 'one\ntwo\nthree\n' | wc -l")
+say "pipeline lines: " + lines.strip()
+
+listing = `printf 'alpha\nbeta\n'`
+say "captured: " + listing.strip().replace("\n", ", ")
+
+echo "shell builtin echo"

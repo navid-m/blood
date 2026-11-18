@@ -1,0 +1,154 @@
+val u = use("../src/util.sx")
+val cfg = use("../src/config.sx")
+
+fn has_item(v: ref u.Vec, value: ref u8) bool = trust {
+    val i: mut i64 = 0
+    for i < v.len {
+        if u.s_eq(u.vec_p(v, i) as ref u8, value) {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+test "default configuration is complete" {
+    trust {
+        val c: ref cfg.Config = cfg.default_config()
+        assert u.s_ends_with(c.path, c"blood.ini")
+        assert u.s_eq(c.theme, c"default")
+        assert c.show_username == 1
+        assert c.show_hostname == 1
+        assert c.show_directory == 1
+        assert c.show_git == 1
+        assert c.show_time == 0
+        assert c.show_exit_status == 1
+        assert c.show_duration == 1
+        assert c.show_jobs == 1
+        assert c.two_line == 1
+        assert u.s_eq(c.directory_style, c"full")
+        assert u.s_eq(c.prompt_char, c"❯")
+        assert u.s_eq(c.color_primary, c"\x1b[36m")
+        assert c.history_enabled == 1
+        assert c.history_max == 10000
+        assert c.history_ignore_dups == 1
+        assert c.completion_enabled == 1
+        assert c.completion_case_sensitive == 0
+        assert u.s_eq(c.shell_editor, c"nano")
+        assert c.login_message == 1
+        assert u.s_eq(c.startup_file, c"")
+        assert c.alias_defs.len == 0
+        assert c.env_defs.len == 0
+    }
+}
+
+test "missing configuration file yields defaults" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-config/missing.ini"
+        val c: ref cfg.Config = cfg.load_config_from(path)
+        assert u.s_eq(c.path, path)
+        assert u.s_eq(c.theme, c"default")
+        assert c.history_max == 10000
+        assert c.completion_enabled == 1
+    }
+}
+
+test "configuration file parses all sections" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-config/full.ini"
+        assert u.mkdir_p(u.path_dir(path))
+        val text: ref u8 = c"# sample configuration\n[prompt]\ntheme = plain\nshow_username = false\nshow_hostname = yes\nshow_directory = off\nshow_git = 0\nshow_time = on\nshow_exit_status = 1\nshow_duration = no\nshow_jobs = true\ntwo_line = false\ndirectory_style = basename\nsymbol = $\nprompt_char = >\nseparator = |\n\n[colors]\nprimary = red\nsecondary = bright_blue\nsuccess = 12\nerror = #ff8000\ndirectory = default\ngit_clean = green\ngit_dirty = yellow\nmuted = gray\nwarning = 200\naccent = bright_magenta\n\n[history]\nenabled = false\nfile = ~/history-test\nmax_entries = 5\nignore_duplicates = false\n\n[completion]\nenabled = false\ncase_sensitive = true\n\n[shell]\ndefault_editor = vim\nlogin_message = false\nstartup_file = ~/start.blood\n\n[aliases]\nll = ls -l\ngs = git status\n\n[env]\nBLOOD_UNIT = yes\n"
+        assert u.write_file(path, text)
+
+        val c: ref cfg.Config = cfg.load_config_from(path)
+        assert u.s_eq(c.theme, c"plain")
+        assert c.show_username == 0
+        assert c.show_hostname == 1
+        assert c.show_directory == 0
+        assert c.show_git == 0
+        assert c.show_time == 1
+        assert c.show_exit_status == 1
+        assert c.show_duration == 0
+        assert c.show_jobs == 1
+        assert c.two_line == 0
+        assert u.s_eq(c.directory_style, c"basename")
+        assert u.s_eq(c.prompt_symbol, c"$")
+        assert u.s_eq(c.prompt_char, c">")
+        assert u.s_eq(c.separator, c"|")
+
+        assert u.s_eq(c.color_primary, c"\x1b[31m")
+        assert u.s_eq(c.color_secondary, c"\x1b[94m")
+        assert u.s_eq(c.color_success, c"\x1b[38;5;12m")
+        assert u.s_eq(c.color_error, c"\x1b[38;2;255;128;0m")
+        assert u.s_eq(c.color_directory, c"\x1b[39m")
+        assert u.s_eq(c.color_git_clean, c"\x1b[32m")
+        assert u.s_eq(c.color_git_dirty, c"\x1b[33m")
+        assert u.s_eq(c.color_muted, c"\x1b[90m")
+        assert u.s_eq(c.color_warning, c"\x1b[38;5;200m")
+        assert u.s_eq(c.color_accent, c"\x1b[95m")
+
+        assert c.history_enabled == 0
+        assert u.s_eq(c.history_file, u.s_cat(u.home_dir(), c"/history-test"))
+        assert c.history_max == 5
+        assert c.history_ignore_dups == 0
+        assert c.completion_enabled == 0
+        assert c.completion_case_sensitive == 1
+        assert u.s_eq(c.shell_editor, c"vim")
+        assert c.login_message == 0
+        assert u.s_eq(c.startup_file, u.s_cat(u.home_dir(), c"/start.blood"))
+
+        assert c.alias_defs.len == 2
+        assert has_item(c.alias_defs, c"ll=ls -l")
+        assert has_item(c.alias_defs, c"gs=git status")
+        assert c.env_defs.len == 1
+        assert has_item(c.env_defs, c"BLOOD_UNIT=yes")
+    }
+}
+
+test "configuration strips quotes and clamps history maximum" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-config/quoted.ini"
+        assert u.mkdir_p(u.path_dir(path))
+        val text: ref u8 = c"[shell]\ndefault_editor = \"nano -w\"\n[history]\nmax_entries = -5\n"
+        assert u.write_file(path, text)
+        val c: ref cfg.Config = cfg.load_config_from(path)
+        assert u.s_eq(c.shell_editor, c"nano -w")
+        assert c.history_max == 0
+    }
+}
+
+test "unknown configuration keys leave defaults untouched" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-config/unknown.ini"
+        assert u.mkdir_p(u.path_dir(path))
+        val text: ref u8 = c"[prompt]\nunknown_key = value\n[unknown]\nother_key = other\n"
+        assert u.write_file(path, text)
+        val c: ref cfg.Config = cfg.load_config_from(path)
+        assert u.s_eq(c.theme, c"default")
+        assert c.show_username == 1
+        assert c.history_max == 10000
+    }
+}
+
+test "init_config_file writes a default file once" {
+    trust {
+        val path: ref u8 = u.s_cat3(
+            c"/tmp/blood-unit-config/generated-",
+            u.s_int(u.now_ms()),
+            c"/blood.ini"
+        )
+        assert cfg.init_config_file(path)
+        assert u.file_exists(path)
+        val text: ref u8 = u.read_file(path)
+        assert u.s_contains(text, c"# Blood shell configuration")
+        assert u.s_contains(text, c"[prompt]")
+        assert u.s_contains(text, c"[colors]")
+        assert u.s_contains(text, c"[history]")
+        assert u.s_contains(text, c"[completion]")
+        assert u.s_contains(text, c"[shell]")
+
+        assert u.write_file(path, c"custom")
+        assert cfg.init_config_file(path)
+        assert u.s_eq(u.read_file(path), c"custom")
+    }
+}

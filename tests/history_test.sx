@@ -1,0 +1,161 @@
+val u = use("../src/util.sx")
+val cfg = use("../src/config.sx")
+val hist = use("../src/history.sx")
+
+fn new_history(path: ref u8) ref hist.History = trust {
+    val c: mut ref cfg.Config = cfg.default_config()
+    c.history_file = u.s_dup(path)
+    return hist.history_new(c)
+}
+
+test "history defaults come from configuration" {
+    trust {
+        val c: mut ref cfg.Config = cfg.default_config()
+        assert c.history_enabled == 1
+        assert c.history_max == 10000
+        assert c.history_ignore_dups == 1
+        val h: mut ref hist.History = hist.history_new(c)
+        assert hist.history_len(h) == 0
+        assert h.enabled == 1
+        assert h.max == 10000
+        assert h.ignore_dups == 1
+        assert u.s_eq(h.file, c.history_file)
+    }
+}
+
+test "history adds entries, rejects blanks and suppresses duplicates" {
+    trust {
+        val h: mut ref hist.History = new_history(c"/tmp/blood-unit-history-add")
+        hist.history_add(h, c"one")
+        hist.history_add(h, c"one")
+        hist.history_add(h, c"two")
+        hist.history_add(h, c"   ")
+        hist.history_add(h, c"")
+        assert hist.history_len(h) == 2
+        assert u.s_eq(hist.history_get(h, 0), c"one")
+        assert u.s_eq(hist.history_get(h, 1), c"two")
+        assert hist.history_get(h, -1) == none
+        assert hist.history_get(h, 2) == none
+    }
+}
+
+test "history enforces the configured maximum" {
+    trust {
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.history_file = u.s_dup(c"/tmp/blood-unit-history-max")
+        c.history_max = 3
+        val h: mut ref hist.History = hist.history_new(c)
+        hist.history_add(h, c"1")
+        hist.history_add(h, c"2")
+        hist.history_add(h, c"3")
+        hist.history_add(h, c"4")
+        hist.history_add(h, c"5")
+        assert hist.history_len(h) == 3
+        assert u.s_eq(hist.history_get(h, 0), c"3")
+        assert u.s_eq(hist.history_get(h, 1), c"4")
+        assert u.s_eq(hist.history_get(h, 2), c"5")
+    }
+}
+
+test "history can keep duplicate entries" {
+    trust {
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.history_file = u.s_dup(c"/tmp/blood-unit-history-dups")
+        c.history_ignore_dups = 0
+        val h: mut ref hist.History = hist.history_new(c)
+        hist.history_add(h, c"again")
+        hist.history_add(h, c"again")
+        assert hist.history_len(h) == 2
+        assert u.s_eq(hist.history_get(h, 0), c"again")
+        assert u.s_eq(hist.history_get(h, 1), c"again")
+    }
+}
+
+test "history searches backwards and case-insensitively" {
+    trust {
+        val h: mut ref hist.History = new_history(c"/tmp/blood-unit-history-search")
+        hist.history_add(h, c"Echo Hello")
+        hist.history_add(h, c"git status")
+        hist.history_add(h, c"echo world")
+        assert hist.history_search(h, c"echo", 2) == 2
+        assert hist.history_search(h, c"ECHO", 2) == 2
+        assert hist.history_search(h, c"echo", 1) == 0
+        assert hist.history_search(h, c"hello", 2) == 0
+        assert hist.history_search(h, c"nope", 2) == -1
+        assert hist.ci_contains(c"Hello World", c"lo wo")
+        assert hist.ci_contains(c"Hello", c"")
+        assert !hist.ci_contains(c"hi", c"hello")
+    }
+}
+
+test "history saves and loads escaped entries" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-history-roundtrip"
+        val h: mut ref hist.History = new_history(path)
+        hist.history_add(h, c"echo a\\b")
+        hist.history_add(h, c"line\nbreak")
+        assert hist.history_len(h) == 2
+        hist.history_save(h)
+
+        val h2: mut ref hist.History = new_history(path)
+        hist.history_load(h2)
+        assert hist.history_len(h2) == 2
+        assert u.s_eq(hist.history_get(h2, 0), c"echo a\\b")
+        assert u.s_eq(hist.history_get(h2, 1), c"line\nbreak")
+
+        val raw: ref u8 = u.read_file(path)
+        assert u.s_contains(raw, c"\\n")
+        assert u.s_contains(raw, c"\\\\")
+    }
+}
+
+test "history load truncates to the maximum" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-history-truncate"
+        assert u.write_file(path, c"1\n2\n3\n4\n5\n")
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.history_file = u.s_dup(path)
+        c.history_max = 3
+        val h: mut ref hist.History = hist.history_new(c)
+        hist.history_load(h)
+        assert hist.history_len(h) == 3
+        assert u.s_eq(hist.history_get(h, 0), c"3")
+        assert u.s_eq(hist.history_get(h, 2), c"5")
+    }
+}
+
+test "history clear empties memory and storage" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-history-clear"
+        val h: mut ref hist.History = new_history(path)
+        hist.history_add(h, c"one")
+        hist.history_add(h, c"two")
+        hist.history_clear(h)
+        assert hist.history_len(h) == 0
+        assert u.s_eq(u.read_file(path), c"")
+    }
+}
+
+test "disabled history records nothing" {
+    trust {
+        val path: ref u8 = c"/tmp/blood-unit-history-disabled"
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.history_file = u.s_dup(path)
+        c.history_enabled = 0
+        val h: mut ref hist.History = hist.history_new(c)
+        hist.history_add(h, c"ignored")
+        hist.history_save(h)
+        assert hist.history_len(h) == 0
+        assert !u.file_exists(path)
+    }
+}
+
+test "history file can be redirected" {
+    trust {
+        val h: mut ref hist.History = new_history(c"/tmp/blood-unit-history-original")
+        hist.history_set_file(h, c"/tmp/blood-unit-history-redirected")
+        assert u.s_eq(h.file, c"/tmp/blood-unit-history-redirected")
+        hist.history_add(h, c"entry")
+        assert u.file_exists(c"/tmp/blood-unit-history-redirected")
+    }
+}

@@ -1,0 +1,133 @@
+val u = use("../src/util.sx")
+val cfg = use("../src/config.sx")
+val prompt = use("../src/prompt.sx")
+
+fn plain_config() ref cfg.Config = trust {
+    val c: mut ref cfg.Config = cfg.default_config()
+    c.theme = u.s_dup(c"plain")
+    c.show_git = 0
+    c.show_time = 0
+    c.show_jobs = 0
+    c.show_exit_status = 0
+    c.show_duration = 0
+    return c
+}
+
+fn shortened(dir: ref u8) ref u8 = trust {
+    val home: ref u8 = u.home_dir()
+    val hl: i64 = u.s_len(home)
+    if hl > 1 && u.s_starts(dir, home) {
+        if u.s_len(dir) == hl {
+            return u.s_dup(c"~")
+        }
+        if @load8(@ptradd(dir, hl)) == 47 {
+            return u.s_cat(c"~", @ptradd(dir, hl))
+        }
+    }
+    return u.s_dup(dir)
+}
+
+test "plain prompt renders user, host and directory" {
+    trust {
+        val c: mut ref cfg.Config = plain_config()
+        c.directory_style = u.s_dup(c"basename")
+        val out: ref u8 = prompt.render(c, 0, 0, 0)
+        assert u.s_contains(out, u.username())
+        assert u.s_contains(out, c"@")
+        assert u.s_contains(out, u.path_base(u.cwd()))
+        assert u.s_contains(out, c">")
+        assert u.s_ends_with(out, c" ")
+        assert u.s_starts(out, c"\x1b[0m")
+    }
+}
+
+test "plain prompt honours custom colours and directory styles" {
+    trust {
+        val c: mut ref cfg.Config = plain_config()
+        c.color_primary = u.s_dup(c"P")
+        c.color_secondary = u.s_dup(c"S")
+        c.color_directory = u.s_dup(c"D")
+        c.directory_style = u.s_dup(c"basename")
+        val out: ref u8 = prompt.render(c, 0, 0, 0)
+        assert u.s_starts(out, u.s_cat(c"\x1b[0mP", u.username()))
+        assert u.s_contains(out, c"S")
+        assert u.s_contains(out, c"D")
+        assert u.s_contains(out, u.path_base(u.cwd()))
+
+        c.directory_style = u.s_dup(c"full")
+        val full: ref u8 = prompt.render(c, 0, 0, 0)
+        assert u.s_contains(full, shortened(u.cwd()))
+
+        val short_dir: ref u8 = shortened(u.cwd())
+        val expected_short: ref u8 = u.s_cat3(
+            u.path_base(u.path_dir(short_dir)),
+            c"/",
+            u.path_base(short_dir)
+        )
+        c.directory_style = u.s_dup(c"short")
+        val short: ref u8 = prompt.render(c, 0, 0, 0)
+        assert u.s_contains(short, expected_short)
+    }
+}
+
+test "default prompt is two-line with the configured symbol" {
+    trust {
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.show_git = 0
+        c.show_time = 0
+        c.show_jobs = 0
+        c.show_exit_status = 0
+        c.show_duration = 0
+        c.prompt_char = u.s_dup(c"L")
+        val out: ref u8 = prompt.render(c, 0, 0, 0)
+        assert u.s_contains(out, c"┌─ ")
+        assert u.s_contains(out, c"└─ ")
+        assert u.s_contains(out, c"\n")
+        assert u.s_contains(out, c"L")
+        assert u.s_contains(out, u.username())
+    }
+}
+
+test "prompt reports exit status, jobs and durations" {
+    trust {
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.show_git = 0
+        c.show_time = 0
+        c.show_exit_status = 1
+        c.show_jobs = 1
+        c.show_duration = 1
+        val failed: ref u8 = prompt.render(c, 3, 0, 0)
+        assert u.s_contains(failed, c"✘ 3")
+        val jobs: ref u8 = prompt.render(c, 0, 0, 2)
+        assert u.s_contains(jobs, c"⚙ 2")
+
+        val ms: ref u8 = prompt.render(c, 0, 750, 0)
+        assert u.s_contains(ms, c"took 750ms")
+        val secs: ref u8 = prompt.render(c, 0, 1500, 0)
+        assert u.s_contains(secs, c"took 1.5s")
+        val mins: ref u8 = prompt.render(c, 0, 65000, 0)
+        assert u.s_contains(mins, c"took 1m5s")
+
+        val quiet: ref u8 = prompt.render(c, 0, 499, 0)
+        assert !u.s_contains(quiet, c"took ")
+    }
+}
+
+test "prompt hides disabled sections" {
+    trust {
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.show_username = 0
+        c.show_hostname = 0
+        c.show_directory = 0
+        c.show_git = 0
+        c.show_time = 0
+        c.show_jobs = 0
+        c.show_exit_status = 0
+        c.show_duration = 0
+        val out: ref u8 = prompt.render(c, 0, 0, 0)
+        assert !u.s_contains(out, u.username())
+        assert !u.s_contains(out, u.path_base(u.cwd()))
+        assert u.s_contains(out, c"┌─ ")
+        assert u.s_contains(out, c.prompt_char)
+    }
+}

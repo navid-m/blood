@@ -1,0 +1,11 @@
+# Blood sample: read, write and append text files.
+
+path = "/tmp/blood_sample_file_io.txt"
+write_file(path, "first line\nsecond line\n")
+
+say "contents:"
+say read_file(path).strip()
+
+append_file(path, "third line\n")
+lines = read_file(path).strip().split("\n")
+say "lines: " + str(len(lines))

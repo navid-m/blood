@@ -1,0 +1,12 @@
+# Blood sample: recursive functions and list building.
+
+fn fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+values = []
+for i in range(10):
+    values.append(fib(i))
+
+say "fibonacci: " + values.join(", ")

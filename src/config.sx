@@ -347,7 +347,12 @@ fn apply(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8) void = 
 }
 
 pub fn load_config() ref Config = trust {
+    return load_config_from(config_path())
+}
+
+pub fn load_config_from(path: ref u8) ref Config = trust {
     val c: mut ref Config = default_config()
+    c.path = u.s_dup(path)
     val data: ref u8 = u.read_file(c.path)
     if data == none {
         return c

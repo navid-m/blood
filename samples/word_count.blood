@@ -1,0 +1,18 @@
+# Blood sample: count word frequencies with a dictionary.
+
+text = "the quick brown fox jumps over the lazy dog the fox"
+counts = {}
+
+for word in text.split(" "):
+    word = word.strip()
+    if word == "":
+        continue
+    if word in counts:
+        counts[word] += 1
+    else:
+        counts[word] = 1
+
+keys = counts.keys()
+keys.sort()
+for key in keys:
+    say key + ": " + str(counts[key])

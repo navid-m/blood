@@ -1,0 +1,282 @@
+val lang = use("../src/lang.sx")
+val u = use("../src/util.sx")
+
+fn token_at(toks: ref u.Vec, i: i64) ref lang.Token = trust {
+    return u.vec_p(toks, i) as ref lang.Token
+}
+
+fn kid(n: ref lang.Node, i: i64) ref lang.Node = trust {
+    return u.vec_p(n.kids, i) as ref lang.Node
+}
+
+fn param(n: ref lang.Node, i: i64) ref u8 = trust {
+    return u.vec_p(n.params, i) as ref u8
+}
+
+test "lexer tokenizes identifiers, numbers, operators and newlines" {
+    trust {
+        val toks: ref u.Vec = lang.lex(c"x = 42\n")
+        assert toks.len == 5
+        assert token_at(toks, 0).kind == lang.TokenKind.Ident
+        assert u.s_eq(token_at(toks, 0).text, c"x")
+        assert token_at(toks, 1).kind == lang.TokenKind.Op
+        assert u.s_eq(token_at(toks, 1).text, c"=")
+        assert token_at(toks, 2).kind == lang.TokenKind.Int
+        assert u.s_eq(token_at(toks, 2).text, c"42")
+        assert token_at(toks, 3).kind == lang.TokenKind.Newline
+        assert token_at(toks, 4).kind == lang.TokenKind.Eof
+
+        val ops: ref u.Vec = lang.lex(c"a += 1 # trailing comment\n")
+        assert ops.len == 5
+        assert token_at(ops, 0).kind == lang.TokenKind.Ident
+        assert token_at(ops, 1).kind == lang.TokenKind.Op
+        assert u.s_eq(token_at(ops, 1).text, c"+=")
+        assert token_at(ops, 2).kind == lang.TokenKind.Int
+        assert token_at(ops, 3).kind == lang.TokenKind.Newline
+        assert token_at(ops, 4).kind == lang.TokenKind.Eof
+    }
+}
+
+test "lexer handles strings, escapes and command substitutions" {
+    trust {
+        val toks: ref u.Vec = lang.lex(c"\"a\\nb\"\n")
+        assert toks.len == 3
+        assert token_at(toks, 0).kind == lang.TokenKind.Str
+        assert u.s_len(token_at(toks, 0).text) == 3
+        assert @load8(@ptradd(token_at(toks, 0).text, 1)) == 10
+
+        val hex: ref u.Vec = lang.lex(c"\"\\x41\"\n")
+        assert u.s_eq(token_at(hex, 0).text, c"A")
+
+        val backtick: ref u.Vec = lang.lex(c"x = `echo hi`\n")
+        assert backtick.len == 5
+        assert token_at(backtick, 2).kind == lang.TokenKind.CmdSubst
+        assert u.s_eq(token_at(backtick, 2).text, c"echo hi")
+
+        val dollar: ref u.Vec = lang.lex(c"x = $(echo hi)\n")
+        assert dollar.len == 5
+        assert token_at(dollar, 2).kind == lang.TokenKind.CmdSubst
+        assert u.s_eq(token_at(dollar, 2).text, c"echo hi")
+    }
+}
+
+test "lexer tracks python indentation blocks" {
+    trust {
+        val toks: ref u.Vec = lang.lex(c"if true:\n    say \"x\"\n")
+        assert toks.len == 10
+        assert token_at(toks, 0).kind == lang.TokenKind.Ident
+        assert u.s_eq(token_at(toks, 0).text, c"if")
+        assert token_at(toks, 1).kind == lang.TokenKind.Ident
+        assert u.s_eq(token_at(toks, 1).text, c"true")
+        assert token_at(toks, 2).kind == lang.TokenKind.Op
+        assert u.s_eq(token_at(toks, 2).text, c":")
+        assert token_at(toks, 3).kind == lang.TokenKind.Newline
+        assert token_at(toks, 4).kind == lang.TokenKind.Indent
+        assert token_at(toks, 5).kind == lang.TokenKind.Ident
+        assert u.s_eq(token_at(toks, 5).text, c"say")
+        assert token_at(toks, 6).kind == lang.TokenKind.Str
+        assert token_at(toks, 7).kind == lang.TokenKind.Newline
+        assert token_at(toks, 8).kind == lang.TokenKind.Dedent
+        assert token_at(toks, 9).kind == lang.TokenKind.Eof
+
+        val tabs: ref u.Vec = lang.lex(c"if true:\n\tsay \"x\"\n")
+        assert tabs.len == 10
+        assert token_at(tabs, 4).kind == lang.TokenKind.Indent
+    }
+}
+
+test "lexer ignores comments and blank lines" {
+    trust {
+        val toks: ref u.Vec = lang.lex(c"# only a comment\n\n# another\n")
+        assert toks.len == 1
+        assert token_at(toks, 0).kind == lang.TokenKind.Eof
+
+        val mixed: ref u.Vec = lang.lex(c"# c\nx = 1\n\n# end\n")
+        assert mixed.len == 5
+        assert token_at(mixed, 0).kind == lang.TokenKind.Ident
+        assert u.s_eq(token_at(mixed, 0).text, c"x")
+        assert token_at(mixed, 4).kind == lang.TokenKind.Eof
+    }
+}
+
+test "parser builds arithmetic expression trees" {
+    trust {
+        val n: ref lang.Node = lang.parse_expr_text(c"1 + 2 * 3")
+        assert n.kind == lang.NodeKind.Binary
+        assert n.a == lang.BinOp.Add as i64
+        assert n.kids.len == 2
+        assert kid(n, 0).kind == lang.NodeKind.IntLit
+        assert kid(n, 0).a == 1
+        assert kid(n, 1).kind == lang.NodeKind.Binary
+        assert kid(n, 1).a == lang.BinOp.Mul as i64
+        assert kid(kid(n, 1), 0).a == 2
+        assert kid(kid(n, 1), 1).a == 3
+
+        val neg: ref lang.Node = lang.parse_expr_text(c"-x + y")
+        assert neg.kind == lang.NodeKind.Binary
+        assert neg.a == lang.BinOp.Add as i64
+        assert kid(neg, 0).kind == lang.NodeKind.Unary
+        assert kid(neg, 0).a == lang.UnOp.Neg as i64
+    }
+}
+
+test "parser builds logical, comparison and membership nodes" {
+    trust {
+        val n: ref lang.Node = lang.parse_expr_text(c"not a or b and c")
+        assert n.kind == lang.NodeKind.Binary
+        assert n.a == 100
+        assert kid(n, 0).kind == lang.NodeKind.Unary
+        assert kid(n, 0).a == lang.UnOp.Not as i64
+        assert kid(n, 1).kind == lang.NodeKind.Binary
+        assert kid(n, 1).a == 101
+
+        val cmp: ref lang.Node = lang.parse_expr_text(c"a < b")
+        assert cmp.a == lang.BinOp.Lt as i64
+
+        val mem: ref lang.Node = lang.parse_expr_text(c"x in [1, 2]")
+        assert mem.a == lang.BinOp.In as i64
+        assert kid(mem, 1).kind == lang.NodeKind.ListLit
+
+        val notmem: ref lang.Node = lang.parse_expr_text(c"x not in [1]")
+        assert notmem.a == lang.BinOp.NotIn as i64
+    }
+}
+
+test "parser builds calls, attributes, indexes and literals" {
+    trust {
+        val idx: ref lang.Node = lang.parse_expr_text(c"a.b[0]")
+        assert idx.kind == lang.NodeKind.Index
+        assert kid(idx, 0).kind == lang.NodeKind.Attr
+        assert u.s_eq(kid(idx, 0).s, c"b")
+
+        val call: ref lang.Node = lang.parse_expr_text(c"f(1, g(2))")
+        assert call.kind == lang.NodeKind.Call
+        assert call.kids.len == 3
+        assert kid(call, 0).kind == lang.NodeKind.Var
+        assert u.s_eq(kid(call, 0).s, c"f")
+        assert kid(call, 1).kind == lang.NodeKind.IntLit
+        assert kid(call, 2).kind == lang.NodeKind.Call
+
+        val list: ref lang.Node = lang.parse_expr_text(c"[1, 2, 3]")
+        assert list.kind == lang.NodeKind.ListLit
+        assert list.kids.len == 3
+
+        val dict: ref lang.Node = lang.parse_expr_text(c"{\"a\": 1, \"b\": 2}")
+        assert dict.kind == lang.NodeKind.DictLit
+        assert dict.kids.len == 4
+        assert kid(dict, 0).kind == lang.NodeKind.StrLit
+        assert u.s_eq(kid(dict, 0).s, c"a")
+
+        val s: ref lang.Node = lang.parse_expr_text(c"\"hello\"")
+        assert s.kind == lang.NodeKind.StrLit
+        assert u.s_eq(s.s, c"hello")
+
+        val b: ref lang.Node = lang.parse_expr_text(c"true")
+        assert b.kind == lang.NodeKind.BoolLit
+        assert b.a == 1
+
+        val f: ref lang.Node = lang.parse_expr_text(c"false")
+        assert f.kind == lang.NodeKind.BoolLit
+        assert f.a == 0
+
+        val nul: ref lang.Node = lang.parse_expr_text(c"null")
+        assert nul.kind == lang.NodeKind.NullLit
+    }
+}
+
+test "parser builds assignments, conditions and loops" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"x = 1\ny = x + 2\n")
+        assert prog.kind == lang.NodeKind.Program
+        assert prog.kids.len == 2
+        assert kid(prog, 0).kind == lang.NodeKind.Assign
+        assert kid(kid(prog, 0), 0).kind == lang.NodeKind.Var
+        assert u.s_eq(kid(kid(prog, 0), 0).s, c"x")
+        assert kid(kid(prog, 0), 1).a == 1
+        assert kid(prog, 1).kind == lang.NodeKind.Assign
+
+        val compound: ref lang.Node = lang.parse(c"x += 2\n")
+        assert kid(compound, 0).kind == lang.NodeKind.Assign
+        assert kid(compound, 0).a == 2
+
+        val cond: ref lang.Node = lang.parse(c"if a:\n  say 1\nelif b:\n  say 2\nelse:\n  say 3\n")
+        val ifn: ref lang.Node = kid(cond, 0)
+        assert ifn.kind == lang.NodeKind.If
+        assert ifn.a == 2
+        assert ifn.b == 1
+        assert ifn.kids.len == 5
+
+        val wh: ref lang.Node = lang.parse(c"while a < 3:\n  a += 1\n")
+        val wn: ref lang.Node = kid(wh, 0)
+        assert wn.kind == lang.NodeKind.While
+        assert wn.kids.len == 2
+        assert kid(wn, 0).a == lang.BinOp.Lt as i64
+
+        val fr: ref lang.Node = lang.parse(c"for item in [1, 2]:\n  say item\n")
+        val forn: ref lang.Node = kid(fr, 0)
+        assert forn.kind == lang.NodeKind.For
+        assert u.s_eq(forn.s, c"item")
+        assert kid(forn, 0).kind == lang.NodeKind.ListLit
+        assert kid(forn, 1).kind == lang.NodeKind.Block
+    }
+}
+
+test "parser builds functions, returns, try and shell commands" {
+    trust {
+        val fns: ref lang.Node = lang.parse(c"fn add(a, b):\n  return a + b\n")
+        val f: ref lang.Node = kid(fns, 0)
+        assert f.kind == lang.NodeKind.FnDef
+        assert u.s_eq(f.s, c"add")
+        assert f.params.len == 2
+        assert u.s_eq(param(f, 0), c"a")
+        assert u.s_eq(param(f, 1), c"b")
+        assert kid(f, 0).kind == lang.NodeKind.Block
+        assert kid(kid(f, 0), 0).kind == lang.NodeKind.Return
+
+        val tr: ref lang.Node = lang.parse(c"try:\n  raise \"oops\"\ncatch err:\n  say err\n")
+        val tn: ref lang.Node = kid(tr, 0)
+        assert tn.kind == lang.NodeKind.Try
+        assert u.s_eq(tn.s, c"err")
+        assert tn.kids.len == 2
+
+        val shell: ref lang.Node = lang.parse(c"echo hello world\n")
+        assert kid(shell, 0).kind == lang.NodeKind.ShellCmd
+        assert u.s_eq(kid(shell, 0).s, c"echo hello world")
+
+        val say: ref lang.Node = lang.parse(c"say 1, 2\n")
+        assert kid(say, 0).kind == lang.NodeKind.Say
+        assert kid(say, 0).kids.len == 2
+    }
+}
+
+test "parser accepts brace blocks" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"fn main {\n  say \"hi\"\n}\n")
+        assert prog.kids.len == 1
+        val f: ref lang.Node = kid(prog, 0)
+        assert f.kind == lang.NodeKind.FnDef
+        assert u.s_eq(f.s, c"main")
+        assert kid(f, 0).kind == lang.NodeKind.Block
+        assert kid(kid(f, 0), 0).kind == lang.NodeKind.Say
+        assert lang.last_error() == none
+    }
+}
+
+test "parser reports syntax errors with positions" {
+    trust {
+        lang.parse(c"if true\n")
+        assert lang.last_error() != none
+        assert lang.last_error_line() == 1
+        assert lang.last_error_col() == 8
+
+        lang.parse(c"say \"unterminated\n")
+        assert lang.last_error() != none
+        assert lang.last_error_line() == 1
+        assert lang.last_error_col() == 5
+
+        lang.clear_error()
+        assert lang.last_error() == none
+        assert lang.last_error_line() == 0
+        assert lang.last_error_col() == 0
+    }
+}

@@ -1,0 +1,49 @@
+val u = use("../src/util.sx")
+val ex = use("../src/exec.sx")
+
+test "status_code decodes wait status values" {
+    trust {
+        assert ex.status_code(0) == 0
+        assert ex.status_code(1 << 8) == 1
+        assert ex.status_code(127 << 8) == 127
+        assert ex.status_code(255 << 8) == 255
+        assert ex.status_code(1) == 129
+        assert ex.status_code(9) == 137
+        assert ex.status_code(15) == 143
+        assert ex.status_code((5 << 8) | 7) == 135
+    }
+}
+
+test "build_argv produces a null-terminated pointer array" {
+    trust {
+        val argv: mut ref u.Vec = u.vec_new()
+        u.vec_pushp(argv, c"echo" as ref void)
+        u.vec_pushp(argv, c"hello" as ref void)
+        val av: ref ref u8 = ex.build_argv(argv)
+        assert @load64(av as ref void) == @bitcast(u.vec_p(argv, 0), i64)
+        assert @load64(@ptradd(av as ref void, 8)) == @bitcast(u.vec_p(argv, 1), i64)
+        assert @load64(@ptradd(av as ref void, 16)) == 0
+        u.xfree(av as ref void)
+        u.vec_free(argv)
+    }
+}
+
+test "build_argv handles an empty argument vector" {
+    trust {
+        val argv: mut ref u.Vec = u.vec_new()
+        val av: ref ref u8 = ex.build_argv(argv)
+        assert @load64(av as ref void) == 0
+        u.xfree(av as ref void)
+        u.vec_free(argv)
+    }
+}
+
+test "empty argv never forks" {
+    trust {
+        val argv: mut ref u.Vec = u.vec_new()
+        assert ex.run_argv(argv) == 0
+        assert u.s_eq(ex.capture_argv(argv, false), c"")
+        u.vec_free(argv)
+        assert ex.getpid() >= 0
+    }
+}

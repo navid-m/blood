@@ -1,0 +1,3 @@
+pipeline lines: 3
+captured: alpha, beta
+shell builtin echo

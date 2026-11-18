@@ -1,0 +1,251 @@
+val u = use("../src/util.sx")
+
+fn tmp_root() ref u8 = trust {
+    return u.s_dup(c"/tmp/blood-unit-util")
+}
+
+test "string lengths, equality and comparison" {
+    trust {
+        assert u.s_len(c"") == 0
+        assert u.s_len(c"blood") == 5
+        assert u.s_eq(c"blood", c"blood")
+        assert !u.s_eq(c"blood", c"Blood")
+        assert u.s_cmp(c"abc", c"abd") < 0
+        assert u.s_cmp(c"abd", c"abc") > 0
+        assert u.s_cmp(c"same", c"same") == 0
+        assert u.s_starts(c"blood shell", c"blood")
+        assert !u.s_starts(c"blood shell", c"shell")
+        assert u.s_ends_with(c"blood shell", c"shell")
+        assert !u.s_ends_with(c"blood shell", c"blood")
+        assert u.s_contains(c"blood shell", c"d sh")
+        assert !u.s_contains(c"blood shell", c"python")
+        assert u.s_find(c"blood shell", c"shell") == 6
+        assert u.s_find(c"blood shell", c"nope") == -1
+        assert u.s_index_of_char(c"a/b/c", 47, 0) == 1
+        assert u.s_index_of_char(c"a/b/c", 47, 2) == 3
+        assert u.s_index_of_char(c"a/b/c", 47, 4) == -1
+    }
+}
+
+test "string construction, slicing and trimming" {
+    trust {
+        assert u.s_eq(u.s_cat(c"blood", c" shell"), c"blood shell")
+        assert u.s_eq(u.s_cat3(c"a", c"b", c"c"), c"abc")
+        assert u.s_eq(u.s_cat4(c"a", c"b", c"c", c"d"), c"abcd")
+        assert u.s_eq(u.s_substr(c"abcdef", 1, 4), c"bcd")
+        assert u.s_eq(u.s_substr(c"abcdef", -3, 99), c"abcdef")
+        assert u.s_eq(u.s_substr(c"abcdef", 4, 2), c"")
+        assert u.s_eq(u.s_ndup(c"abcdef", 3), c"abc")
+        assert u.s_eq(u.s_trim(c" \t\r\n blood \n"), c"blood")
+        assert u.s_eq(u.s_trim(c"   "), c"")
+    }
+}
+
+test "integer and float conversion" {
+    trust {
+        match u.parse_int(c"42") {
+            some n => {
+                assert n == 42
+            }
+            none => {
+                assert false
+            }
+        }
+        match u.parse_int(c" -17 ") {
+            some n => {
+                assert n == -17
+            }
+            none => {
+                assert false
+            }
+        }
+        match u.parse_int(c"12x") {
+            some _ => {
+                assert false
+            }
+            none => {
+                assert true
+            }
+        }
+        match u.parse_int(c"") {
+            some _ => {
+                assert false
+            }
+            none => {
+                assert true
+            }
+        }
+        match u.parse_float(c"nope") {
+            some _ => {
+                assert false
+            }
+            none => {
+                assert true
+            }
+        }
+        assert u.s_len(u.s_float(3.25)) > 0
+        assert u.s_eq(u.s_int(-123), c"-123")
+        assert u.s_eq(u.s_int(0), c"0")
+        assert u.s_eq(u.s_int(9001), c"9001")
+    }
+}
+
+test "buffers grow and take ownership" {
+    trust {
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_add(b, c"blood")
+        u.buf_ch(b, 32)
+        u.buf_add(b, c"shell")
+        u.buf_ch(b, 33)
+        u.buf_int(b, 7)
+        assert b.len == 13
+        assert u.s_eq(u.buf_view(b), c"blood shell!7")
+        u.buf_addn(b, c"abcdef", 3)
+        assert u.s_eq(u.buf_view(b), c"blood shell!7abc")
+        val out: ref u8 = u.buf_take(b)
+        assert u.s_eq(out, c"blood shell!7abc")
+        assert b.len == 0
+        assert b.cap == 0
+        u.s_free(out)
+    }
+}
+
+test "vectors store and mutate 64-bit slots" {
+    trust {
+        val v: mut ref u.Vec = u.vec_new()
+        u.vec_reserve(v, 4)
+        u.vec_push(v, 10)
+        u.vec_push(v, 20)
+        u.vec_pushp(v, c"pointer" as ref void)
+        assert v.len == 3
+        assert u.vec_gets(v, 0) == 10
+        assert u.vec_gets(v, 1) == 20
+        assert u.s_eq(u.vec_p(v, 2) as ref u8, c"pointer")
+        u.vec_sets(v, 0, 11)
+        u.vec_setp(v, 1, c"second" as ref void)
+        assert u.vec_gets(v, 0) == 11
+        assert u.s_eq(u.vec_p(v, 1) as ref u8, c"second")
+        u.vec_insert(v, 1, 99)
+        assert v.len == 4
+        assert u.vec_gets(v, 1) == 99
+        u.vec_remove(v, 1)
+        assert v.len == 3
+        assert u.vec_gets(v, 1) == @bitcast(c"second" as ref void, i64)
+        assert u.vec_pop(v) == @bitcast(c"pointer" as ref void, i64)
+        assert v.len == 2
+        u.vec_free(v)
+        assert v.len == 0
+    }
+}
+
+test "maps put, replace, delete and iterate" {
+    trust {
+        val m: mut ref u.Map = u.map_new()
+        u.map_put(m, c"alpha", 1)
+        u.map_put(m, c"beta", 2)
+        u.map_put(m, c"gamma", 3)
+        assert m.len == 3
+        assert u.map_has(m, c"alpha")
+        assert !u.map_has(m, c"delta")
+        assert u.map_get(m, c"beta") == 2
+        assert u.map_get(m, c"delta") == 0
+        u.map_put(m, c"beta", 22)
+        assert m.len == 3
+        assert u.map_get(m, c"beta") == 22
+        u.map_del(m, c"alpha")
+        assert m.len == 2
+        assert !u.map_has(m, c"alpha")
+        val seen: mut i64 = 0
+        val i: mut i64 = 0
+        for i < m.cap {
+            if u.map_used_at(m, i) {
+                seen++
+                assert u.s_len(u.map_key_at(m, i)) > 0
+            }
+            i++
+        }
+        assert seen == 2
+        u.map_free(m)
+        assert m.len == 0
+    }
+}
+
+test "path helpers join, split and normalise" {
+    trust {
+        assert u.s_eq(u.path_join(c"a", c"b"), c"a/b")
+        assert u.s_eq(u.path_join(c"a/", c"b"), c"a/b")
+        assert u.s_eq(u.path_join(c"a", c"/b"), c"/b")
+        assert u.s_eq(u.path_join(c"", c"b"), c"b")
+        assert u.s_eq(u.path_join(c"a", c""), c"a/")
+        assert u.s_eq(u.path_dir(c"/usr/bin/git"), c"/usr/bin")
+        assert u.s_eq(u.path_dir(c"file"), c".")
+        assert u.s_eq(u.path_dir(c"/file"), c"/")
+        assert u.s_eq(u.path_base(c"/usr/bin/git"), c"git")
+        assert u.s_eq(u.path_base(c"file"), c"file")
+        assert u.s_eq(u.path_base(c"/usr/bin/"), c"/usr/bin")
+    }
+}
+
+test "environment and tilde expansion" {
+    trust {
+        val home: ref u8 = u.home_dir()
+        assert u.s_len(home) > 0
+        assert u.s_eq(u.expand_tilde(c"~"), home)
+        assert u.s_eq(u.expand_tilde(c"~/scripts"), u.s_cat(home, c"/scripts"))
+        assert u.s_eq(u.expand_tilde(c"~other"), c"~other")
+        assert u.s_eq(u.expand_tilde(c"plain"), c"plain")
+    }
+}
+
+test "utf8 navigation and visible width" {
+    trust {
+        assert u.visible_width(c"blood") == 5
+        assert u.visible_width(c"\x1b[31mred\x1b[0m") == 3
+        assert u.utf8_next(c"abc", 0, 3) == 1
+        assert u.utf8_next(c"abc", 3, 3) == 3
+        assert u.utf8_prev(c"abc", 3) == 2
+        assert u.utf8_prev(c"abc", 0) == 0
+
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_ch(b, 0xC3)
+        u.buf_ch(b, 0xA9)
+        u.buf_ch(b, 33)
+        val s: ref u8 = u.buf_take(b)
+        assert u.s_len(s) == 3
+        assert u.visible_width(s) == 2
+        assert u.utf8_next(s, 0, 3) == 2
+        assert u.utf8_prev(s, 2) == 0
+        u.s_free(s)
+    }
+}
+
+test "filesystem helpers create, write and read" {
+    trust {
+        val root: ref u8 = tmp_root()
+        val nested: ref u8 = u.path_join(root, c"a/b")
+        assert u.mkdir_p(nested)
+        assert u.is_dir(nested)
+        assert u.is_dir(root)
+
+        val path: ref u8 = u.path_join(
+            nested,
+            u.s_cat3(c"note-", u.s_int(u.now_ms()), c".txt")
+        )
+        assert !u.file_exists(path)
+        assert u.write_file(path, c"first")
+        assert u.file_exists(path)
+        assert u.s_eq(u.read_file(path), c"first")
+        assert u.append_file(path, c"\nsecond")
+        assert u.s_eq(u.read_file(path), c"first\nsecond")
+        assert u.read_file(u.path_join(root, c"missing")) == none
+    }
+}
+
+test "time and user helpers return data" {
+    trust {
+        val now: i64 = u.now_ms()
+        assert now > 0
+        assert u.s_len(u.username()) > 0
+        assert u.s_len(u.cwd()) > 0
+    }
+}

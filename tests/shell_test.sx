@@ -1,0 +1,343 @@
+val u = use("../src/util.sx")
+val sh = use("../src/shell.sx")
+val cfg = use("../src/config.sx")
+val hist = use("../src/history.sx")
+
+fn init_shell() void = trust {
+    val c: ref cfg.Config = cfg.default_config()
+    val h: ref hist.History = hist.history_new(c)
+    sh.shell_init(c, h, false)
+}
+
+fn seg_at(v: ref u.Vec, i: i64) ref sh.Segment = trust {
+    return u.vec_p(v, i) as ref sh.Segment
+}
+
+fn tok_at(v: ref u.Vec, i: i64) ref sh.STok = trust {
+    return u.vec_p(v, i) as ref sh.STok
+}
+
+fn cmd_at(p: ref sh.Pipeline, i: i64) ref sh.Command = trust {
+    return u.vec_p(p.cmds, i) as ref sh.Command
+}
+
+fn redir_at(c: ref sh.Command, i: i64) ref sh.Redir = trust {
+    return u.vec_p(c.redirs, i) as ref sh.Redir
+}
+
+fn arg_at(c: ref sh.Command, i: i64) ref u8 = trust {
+    return u.vec_p(c.argv, i) as ref u8
+}
+
+fn fake_capture(cmd: ref u8) ref u8 = trust {
+    return u.s_cat(c"captured:", cmd)
+}
+
+test "split_top separates connectors and keeps pipelines together" {
+    trust {
+        val segs: ref u.Vec = sh.split_top(c"a && b || c | d; e & f\n g")
+        assert segs.len == 6
+        assert u.s_eq(seg_at(segs, 0).text, c"a")
+        assert seg_at(segs, 0).conn == 2
+        assert u.s_eq(seg_at(segs, 1).text, c"b")
+        assert seg_at(segs, 1).conn == 3
+        assert u.s_eq(seg_at(segs, 2).text, c"c | d")
+        assert seg_at(segs, 2).conn == 1
+        assert u.s_eq(seg_at(segs, 3).text, c"e")
+        assert seg_at(segs, 3).conn == 4
+        assert u.s_eq(seg_at(segs, 4).text, c"f")
+        assert seg_at(segs, 4).conn == 1
+        assert u.s_eq(seg_at(segs, 5).text, c"g")
+        assert seg_at(segs, 5).conn == 1
+
+        val trimmed: ref u.Vec = sh.split_top(c"; a ;")
+        assert trimmed.len == 1
+        assert u.s_eq(seg_at(trimmed, 0).text, c"a")
+        assert seg_at(trimmed, 0).conn == 1
+
+        val quoted: ref u.Vec = sh.split_top(c"echo 'a && b' && echo c")
+        assert quoted.len == 2
+        assert u.s_eq(seg_at(quoted, 0).text, c"echo 'a && b'")
+        assert seg_at(quoted, 0).conn == 2
+        assert u.s_eq(seg_at(quoted, 1).text, c"echo c")
+    }
+}
+
+test "scan_shell handles quotes, escapes and comments" {
+    trust {
+        val toks: ref u.Vec = sh.scan_shell(c"echo \"a b\" 'c d' plain")
+        assert toks.len == 4
+        assert u.s_eq(tok_at(toks, 0).text, c"echo")
+        assert tok_at(toks, 1).quoted == 1
+        assert u.s_eq(tok_at(toks, 1).text, c"a b")
+        assert tok_at(toks, 2).quoted == 1
+        assert u.s_eq(tok_at(toks, 2).text, c"c d")
+        assert tok_at(toks, 3).quoted == 0
+        assert u.s_eq(tok_at(toks, 3).text, c"plain")
+
+        val escaped: ref u.Vec = sh.scan_shell(c"echo a\\ b")
+        assert escaped.len == 2
+        assert u.s_eq(tok_at(escaped, 1).text, c"a b")
+
+        val empty: ref u.Vec = sh.scan_shell(c"echo '' \"\"")
+        assert empty.len == 3
+        assert u.s_eq(tok_at(empty, 1).text, c"")
+        assert u.s_eq(tok_at(empty, 2).text, c"")
+
+        val commented: ref u.Vec = sh.scan_shell(c"echo hi # this is ignored")
+        assert commented.len == 2
+        assert u.s_eq(tok_at(commented, 1).text, c"hi")
+    }
+}
+
+test "scan_shell recognizes redirection tokens" {
+    trust {
+        val toks: ref u.Vec = sh.scan_shell(
+            c"cat < in > out 2> err >> add 2>> log &> both &>> more 2>&1"
+        )
+        assert toks.len == 16
+        assert tok_at(toks, 1).kind == 5
+        assert tok_at(toks, 1).fd == 0
+        assert tok_at(toks, 3).kind == 3
+        assert tok_at(toks, 5).kind == 6
+        assert tok_at(toks, 5).fd == 2
+        assert tok_at(toks, 7).kind == 4
+        assert tok_at(toks, 9).kind == 7
+        assert tok_at(toks, 9).fd == 2
+        assert tok_at(toks, 11).kind == 8
+        assert tok_at(toks, 13).kind == 9
+        assert tok_at(toks, 15).kind == 10
+        assert tok_at(toks, 15).fd == 2
+        assert u.s_eq(tok_at(toks, 15).text, c"1")
+        assert u.s_eq(tok_at(toks, 2).text, c"in")
+        assert u.s_eq(tok_at(toks, 4).text, c"out")
+    }
+}
+
+test "parse_pipeline builds argv, assignments and redirections" {
+    trust {
+        val toks: ref u.Vec = sh.scan_shell(
+            c"FOO=bar echo \"a b\" 'c d' > out 2>> err &> both < in | wc -l"
+        )
+        val p: ref sh.Pipeline = sh.parse_pipeline(toks)
+        assert p.cmds.len == 2
+
+        val first: ref sh.Command = cmd_at(p, 0)
+        assert first.argv.len == 3
+        assert first.assigns.len == 1
+        assert u.s_eq(u.vec_p(first.assigns, 0) as ref u8, c"FOO=bar")
+        assert u.s_eq(arg_at(first, 0), c"echo")
+        assert u.s_eq(arg_at(first, 1), c"a b")
+        assert u.s_eq(arg_at(first, 2), c"c d")
+        assert first.redirs.len == 4
+
+        assert redir_at(first, 0).kind == 3
+        assert redir_at(first, 0).fd == 1
+        assert u.s_eq(redir_at(first, 0).target, c"out")
+        assert redir_at(first, 1).kind == 7
+        assert redir_at(first, 1).fd == 2
+        assert u.s_eq(redir_at(first, 1).target, c"err")
+        assert redir_at(first, 2).kind == 8
+        assert redir_at(first, 2).fd == 1
+        assert u.s_eq(redir_at(first, 2).target, c"both")
+        assert redir_at(first, 3).kind == 5
+        assert redir_at(first, 3).fd == 0
+        assert u.s_eq(redir_at(first, 3).target, c"in")
+
+        val second: ref sh.Command = cmd_at(p, 1)
+        assert second.argv.len == 2
+        assert u.s_eq(arg_at(second, 0), c"wc")
+        assert u.s_eq(arg_at(second, 1), c"-l")
+        assert second.assigns.len == 0
+        assert second.redirs.len == 0
+
+        val dup: ref sh.Pipeline = sh.parse_pipeline(sh.scan_shell(c"echo hi 2>&1"))
+        val dup_cmd: ref sh.Command = cmd_at(dup, 0)
+        assert dup_cmd.redirs.len == 1
+        assert redir_at(dup_cmd, 0).kind == 10
+        assert redir_at(dup_cmd, 0).fd == 2
+        assert redir_at(dup_cmd, 0).dupfd == 1
+
+        val assigns: ref sh.Pipeline = sh.parse_pipeline(sh.scan_shell(c"A=1 B=2"))
+        assert assigns.cmds.len == 1
+        assert cmd_at(assigns, 0).argv.len == 0
+        assert cmd_at(assigns, 0).assigns.len == 2
+
+        val only_redir: ref sh.Pipeline = sh.parse_pipeline(sh.scan_shell(c"> note"))
+        assert only_redir.cmds.len == 1
+        assert cmd_at(only_redir, 0).argv.len == 0
+        assert cmd_at(only_redir, 0).redirs.len == 1
+    }
+}
+
+test "scan_shell expands variables and special parameters" {
+    trust {
+        init_shell()
+        assert sh.run_line(c"set NAME=world") == 0
+        assert u.s_eq(sh.get_var(c"NAME"), c"world")
+
+        val toks: ref u.Vec = sh.scan_shell(c"echo $NAME ${NAME}")
+        assert toks.len == 3
+        assert u.s_eq(tok_at(toks, 1).text, c"world")
+        assert u.s_eq(tok_at(toks, 2).text, c"world")
+
+        val missing: ref u.Vec = sh.scan_shell(c"echo ${NOT_SET}")
+        assert missing.len == 2
+        assert u.s_eq(tok_at(missing, 1).text, c"")
+
+        val literal: ref u.Vec = sh.scan_shell(c"echo cost$")
+        assert literal.len == 2
+        assert u.s_eq(tok_at(literal, 1).text, c"cost$")
+
+        sh.set_last_status(7)
+        assert u.s_eq(sh.get_var(c"?"), u.s_int(7))
+        assert u.s_eq(sh.get_var(c"#"), c"0")
+        assert u.s_eq(sh.get_var(c"0"), c"blood")
+        assert u.s_len(sh.get_var(c"$")) > 0
+        assert u.s_eq(sh.get_var(c"!"), c"0")
+    }
+}
+
+test "scan_shell performs command substitution" {
+    trust {
+        val old_hook: fn(ref u8) ref u8 = u.run_capture_hook
+        val old_ready: i64 = u.hooks_ready
+        u.run_capture_hook = fake_capture
+        u.hooks_ready = 1
+
+        val toks: ref u.Vec = sh.scan_shell(c"echo `cmd one` $(cmd two)")
+        assert toks.len == 3
+        assert u.s_eq(tok_at(toks, 1).text, c"captured:cmd one")
+        assert u.s_eq(tok_at(toks, 2).text, c"captured:cmd two")
+
+        val inside: ref u.Vec = sh.scan_shell(c"echo \"pre`cmd`post\"")
+        assert inside.len == 2
+        assert u.s_eq(tok_at(inside, 1).text, c"precaptured:cmdpost")
+
+        u.run_capture_hook = old_hook
+        u.hooks_ready = old_ready
+    }
+}
+
+test "wildcard_match supports stars, questions and classes" {
+    trust {
+        assert sh.wildcard_match(c"*.txt", c"file.txt")
+        assert !sh.wildcard_match(c"*.txt", c"file.log")
+        assert sh.wildcard_match(c"*", c"")
+        assert sh.wildcard_match(c"*", c"anything")
+        assert sh.wildcard_match(c"a*b*c", c"abc")
+        assert sh.wildcard_match(c"a*b*c", c"axxbyyc")
+        assert !sh.wildcard_match(c"a*b*c", c"abx")
+        assert sh.wildcard_match(c"a?c", c"abc")
+        assert !sh.wildcard_match(c"a?c", c"ac")
+        assert !sh.wildcard_match(c"?", c"")
+        assert sh.wildcard_match(c"[a-c]x", c"bx")
+        assert !sh.wildcard_match(c"[a-c]x", c"dx")
+        assert sh.wildcard_match(c"[!0-9]", c"a")
+        assert !sh.wildcard_match(c"[!0-9]", c"7")
+        assert sh.wildcard_match(c"[^0-9]", c"a")
+        assert !sh.wildcard_match(c"[^0-9]", c"7")
+        assert sh.wildcard_match(c"literal", c"literal")
+        assert !sh.wildcard_match(c"literal", c"literals")
+    }
+}
+
+test "scan_shell expands globs from the filesystem" {
+    trust {
+        val root: ref u8 = c"/tmp/blood-unit-shell/glob"
+        assert u.mkdir_p(root)
+        assert u.write_file(u.path_join(root, c"a.txt"), c"a")
+        assert u.write_file(u.path_join(root, c"b.txt"), c"b")
+        assert u.write_file(u.path_join(root, c"c.log"), c"c")
+
+        val old: ref u8 = u.cwd()
+        assert u.chdir(root) == 0
+
+        val txt: ref u.Vec = sh.scan_shell(c"echo *.txt")
+        assert txt.len == 3
+        assert u.s_eq(tok_at(txt, 1).text, c"a.txt")
+        assert u.s_eq(tok_at(txt, 2).text, c"b.txt")
+
+        val one: ref u.Vec = sh.scan_shell(c"echo ?.log")
+        assert one.len == 2
+        assert u.s_eq(tok_at(one, 1).text, c"c.log")
+
+        val nomatch: ref u.Vec = sh.scan_shell(c"echo missing*")
+        assert nomatch.len == 2
+        assert u.s_eq(tok_at(nomatch, 1).text, c"missing*")
+
+        assert u.chdir(old) == 0
+    }
+}
+
+test "run_line executes builtins and tracks status" {
+    trust {
+        init_shell()
+        assert sh.run_line(c"true") == 0
+        assert sh.last_status() == 0
+        assert sh.run_line(c"false") == 1
+        assert sh.last_status() == 1
+        assert sh.run_line(c":") == 0
+        assert sh.run_line(c"") == 0
+        assert sh.run_line(c"   ") == 0
+
+        assert sh.run_line(c"set FOO=bar") == 0
+        assert u.s_eq(sh.get_var(c"FOO"), c"bar")
+        assert sh.run_line(c"export COUNT=5") == 0
+        assert u.s_eq(sh.get_var(c"COUNT"), c"5")
+        assert sh.run_line(c"unset FOO COUNT") == 0
+        assert u.s_eq(sh.get_var(c"FOO"), c"")
+        assert u.s_eq(sh.get_var(c"COUNT"), c"")
+
+        sh.set_last_status(9)
+        assert sh.last_status() == 9
+    }
+}
+
+test "run_line manages aliases" {
+    trust {
+        init_shell()
+        assert sh.run_line(c"alias greet='echo hello'") == 0
+        assert u.map_has(sh.aliases(), c"greet")
+        assert u.s_eq(@bitcast(u.map_get(sh.aliases(), c"greet"), ref u8), c"echo hello")
+
+        assert sh.run_line(c"alias short=\"echo hi\"") == 0
+        assert u.s_eq(@bitcast(u.map_get(sh.aliases(), c"short"), ref u8), c"echo hi")
+
+        assert sh.run_line(c"unalias greet") == 0
+        assert !u.map_has(sh.aliases(), c"greet")
+        assert u.map_has(sh.aliases(), c"short")
+
+        assert sh.run_line(c"unalias -a") == 0
+        assert sh.aliases().len == 0
+    }
+}
+
+test "run_line changes directories and reports exit" {
+    trust {
+        init_shell()
+        val old: ref u8 = u.cwd()
+        val target: ref u8 = c"/tmp/blood-unit-shell/cd"
+        assert u.mkdir_p(target)
+        assert sh.run_line(u.s_cat(c"cd ", target)) == 0
+        assert u.s_eq(u.cwd(), target)
+        assert u.s_eq(sh.get_var(c"PWD"), target)
+        assert u.s_eq(sh.get_var(c"OLDPWD"), old)
+        assert u.chdir(old) == 0
+
+        assert sh.run_line(c"exit 7") == 7
+        assert sh.exit_requested()
+        assert sh.exit_code() == 7
+    }
+}
+
+test "run_line honours &&, || and sequencing gates" {
+    trust {
+        init_shell()
+        assert sh.run_line(c"true && false") == 1
+        assert sh.run_line(c"false || true") == 0
+        assert sh.run_line(c"false && true") == 1
+        assert sh.run_line(c"false; true") == 0
+        assert sh.run_line(c"true; false; true") == 0
+    }
+}

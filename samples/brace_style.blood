@@ -1,0 +1,16 @@
+# Blood sample: the brace block style.
+
+fn greet(name) {
+    return "hello, " + name
+}
+
+fn main() {
+    say greet("brace style")
+    total = 0
+    for n in range(1, 6) {
+        total += n
+    }
+    say "total=" + str(total)
+}
+
+main()

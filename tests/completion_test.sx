@@ -1,0 +1,141 @@
+val u = use("../src/util.sx")
+val cfg = use("../src/config.sx")
+val comp = use("../src/completion.sx")
+
+fn has_item(v: ref u.Vec, value: ref u8) bool = trust {
+    val i: mut i64 = 0
+    for i < v.len {
+        if u.s_eq(u.vec_p(v, i) as ref u8, value) {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+test "completion exposes the builtin command list" {
+    trust {
+        val names: ref u.Vec = comp.builtin_list()
+        assert names.len >= 15
+        assert has_item(names, c"cd")
+        assert has_item(names, c"pwd")
+        assert has_item(names, c"echo")
+        assert has_item(names, c"exit")
+        assert has_item(names, c"export")
+        assert has_item(names, c"alias")
+        assert has_item(names, c"unalias")
+        assert has_item(names, c"help")
+        assert has_item(names, c"source")
+        assert has_item(names, c"set")
+        assert has_item(names, c"type")
+        assert has_item(names, c"jobs")
+        assert has_item(names, c"wait")
+        assert !has_item(names, c"definitely-not-a-builtin")
+    }
+}
+
+test "completion completes builtin command prefixes" {
+    trust {
+        val c: ref cfg.Config = cfg.default_config()
+        val vars: mut ref u.Map = u.map_new()
+        val aliases: mut ref u.Map = u.map_new()
+        val res: mut comp.CompResult = comp.complete(c, c"ec", 2, vars, aliases)
+        assert res.start == 0
+        assert res.end == 2
+        assert has_item(res.items, c"echo")
+        assert !has_item(res.items, c"cd")
+        comp.free_result(@addr(res))
+    }
+}
+
+test "completion honours case sensitivity and enabled flag" {
+    trust {
+        val c: mut ref cfg.Config = cfg.default_config()
+        val vars: mut ref u.Map = u.map_new()
+        val aliases: mut ref u.Map = u.map_new()
+
+        c.completion_case_sensitive = 0
+        val insensitive: mut comp.CompResult = comp.complete(c, c"EC", 2, vars, aliases)
+        assert has_item(insensitive.items, c"echo")
+        comp.free_result(@addr(insensitive))
+
+        c.completion_case_sensitive = 1
+        val sensitive: mut comp.CompResult = comp.complete(c, c"EC", 2, vars, aliases)
+        assert !has_item(sensitive.items, c"echo")
+        comp.free_result(@addr(sensitive))
+
+        c.completion_enabled = 0
+        val disabled: mut comp.CompResult = comp.complete(c, c"ec", 2, vars, aliases)
+        assert disabled.items.len == 0
+        comp.free_result(@addr(disabled))
+    }
+}
+
+test "completion includes aliases and environment variables" {
+    trust {
+        val c: ref cfg.Config = cfg.default_config()
+        val vars: mut ref u.Map = u.map_new()
+        val aliases: mut ref u.Map = u.map_new()
+        u.map_put(vars, c"BLOOD_TEST_VAR", 1)
+        u.map_put(aliases, c"gst", @bitcast(c"git status", i64))
+
+        val alias_res: mut comp.CompResult = comp.complete(c, c"g", 1, vars, aliases)
+        assert has_item(alias_res.items, c"gst")
+        comp.free_result(@addr(alias_res))
+
+        val env_res: mut comp.CompResult = comp.complete(
+            c,
+            c"export BLOOD",
+            12,
+            vars,
+            aliases
+        )
+        assert has_item(env_res.items, c"BLOOD_TEST_VAR")
+        comp.free_result(@addr(env_res))
+    }
+}
+
+test "completion lists directories and files from the filesystem" {
+    trust {
+        val root: ref u8 = c"/tmp/blood-unit-completion"
+        assert u.mkdir_p(u.path_join(root, c"alpha_dir"))
+        assert u.write_file(u.path_join(root, c"alpha_file.txt"), c"x")
+        assert u.write_file(u.path_join(root, c"beta.txt"), c"y")
+
+        val old: ref u8 = u.cwd()
+        assert u.chdir(root) == 0
+        val c: ref cfg.Config = cfg.default_config()
+        val vars: mut ref u.Map = u.map_new()
+        val aliases: mut ref u.Map = u.map_new()
+
+        val dirs: mut comp.CompResult = comp.complete(c, c"cd al", 5, vars, aliases)
+        assert dirs.start == 3
+        assert dirs.end == 5
+        assert has_item(dirs.items, c"alpha_dir/")
+        assert !has_item(dirs.items, c"alpha_file.txt")
+        comp.free_result(@addr(dirs))
+
+        val files: mut comp.CompResult = comp.complete(c, c"cat al", 6, vars, aliases)
+        assert files.start == 4
+        assert files.end == 6
+        assert has_item(files.items, c"alpha_file.txt")
+        comp.free_result(@addr(files))
+
+        val inside: mut comp.CompResult = comp.complete(c, c"cat alpha_dir/", 14, vars, aliases)
+        assert inside.items.len == 0
+        comp.free_result(@addr(inside))
+
+        assert u.chdir(old) == 0
+    }
+}
+
+test "completion ignores cursor positions inside quotes" {
+    trust {
+        val c: ref cfg.Config = cfg.default_config()
+        val vars: mut ref u.Map = u.map_new()
+        val aliases: mut ref u.Map = u.map_new()
+        val res: mut comp.CompResult = comp.complete(c, c"echo \"", 6, vars, aliases)
+        assert res.items.len == 0
+        comp.free_result(@addr(res))
+    }
+}
