@@ -141,7 +141,14 @@ pub fn clear_error() void = trust {
     g_error_col = 0
 }
 
-fn tok_new(kind: TokenKind, text: ref u8, line: i64, col: i64, start: i64, end: i64) ref Token = trust {
+fn tok_new(
+    kind: TokenKind,
+    text: ref u8,
+    line: i64,
+    col: i64,
+    start: i64,
+    end: i64
+) ref Token = trust {
     val t: mut ref Token = u.xalloc(@sizeof(Token) as i64) as ref Token
     t.kind = kind
     t.text = text
@@ -160,7 +167,15 @@ fn last_kind(lx: ref Lexer) TokenKind = trust {
     return t.kind
 }
 
-fn emit(lx: mut ref Lexer, kind: TokenKind, text: ref u8, start: i64, end: i64, line: i64, col: i64) void = trust {
+fn emit(
+    lx: mut ref Lexer,
+    kind: TokenKind,
+    text: ref u8,
+    start: i64,
+    end: i64,
+    line: i64,
+    col: i64
+) void = trust {
     u.vec_pushp(lx.tokens, tok_new(kind, text, line, col, start, end) as ref void)
 }
 
@@ -170,7 +185,25 @@ fn emit_indent(lx: mut ref Lexer, kind: TokenKind) void = trust {
 }
 
 fn is_suite_word(word: ref u8) bool = trust {
-    return u.s_eq(word, c"fn") || u.s_eq(word, c"if") || u.s_eq(word, c"elif") || u.s_eq(word, c"else") || u.s_eq(word, c"while") || u.s_eq(word, c"for") || u.s_eq(word, c"try") || u.s_eq(word, c"catch") || u.s_eq(word, c"except")
+    return u.s_eq(
+        word,
+        c"fn"
+    ) || u.s_eq(
+        word,
+        c"if"
+    ) || u.s_eq(
+        word,
+        c"elif"
+    ) || u.s_eq(
+        word,
+        c"else"
+    ) || u.s_eq(
+        word,
+        c"while"
+    ) || u.s_eq(
+        word,
+        c"for"
+    ) || u.s_eq(word, c"try") || u.s_eq(word, c"catch") || u.s_eq(word, c"except")
 }
 
 fn next_significant(src: ref u8, start: i64, n: i64) i64 = trust {
@@ -438,7 +471,15 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
                 lx.pos++
                 lx.col++
             }
-            emit(lx, TokenKind.Ident, u.s_ndup(@ptradd(lx.src, start), lx.pos - start), start, lx.pos, sline, scol)
+            emit(
+                lx,
+                TokenKind.Ident,
+                u.s_ndup(@ptradd(lx.src, start), lx.pos - start),
+                start,
+                lx.pos,
+                sline,
+                scol
+            )
             continue
         }
         if c >= 48 && c <= 57 {
@@ -940,7 +981,10 @@ fn is_compound(t: ref Token) bool = trust {
     if t.kind != TokenKind.Ident {
         return false
     }
-    return keyword(t, c"if") || keyword(t, c"while") || keyword(t, c"for") || keyword(t, c"fn") || keyword(t, c"try")
+    return keyword(
+        t,
+        c"if"
+    ) || keyword(t, c"while") || keyword(t, c"for") || keyword(t, c"fn") || keyword(t, c"try")
 }
 
 fn parse_shell_cmd(p: mut ref Parser, t: ref Token) ref Node = trust {
@@ -964,7 +1008,10 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
     if t.kind == TokenKind.Eof || t.kind == TokenKind.Dedent {
         return none
     }
-    if t.kind == TokenKind.Op && (u.s_eq(t.text, c"/") || u.s_eq(t.text, c".") || u.s_eq(t.text, c"~")) {
+    if t.kind == TokenKind.Op && (u.s_eq(
+            t.text,
+            c"/"
+        ) || u.s_eq(t.text, c".") || u.s_eq(t.text, c"~")) {
         return parse_shell_cmd(p, t)
     }
     if keyword(t, c"if") {
@@ -1073,7 +1120,10 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c":") {
                 advance(p)
                 for {
-                    if cur(p).kind == TokenKind.Op && (text_is(cur(p), c",") || text_is(cur(p), c")")) {
+                    if cur(p).kind == TokenKind.Op && (text_is(
+                            cur(p),
+                            c","
+                        ) || text_is(cur(p), c")")) {
                         break
                     }
                     advance(p)
@@ -1142,7 +1192,16 @@ fn starts_shell(p: ref Parser) bool = trust {
     if a.kind != TokenKind.Ident {
         return false
     }
-    if is_compound(a) || keyword(a, c"say") || keyword(a, c"return") || keyword(a, c"break") || keyword(a, c"continue") || keyword(a, c"pass") || keyword(a, c"raise") {
+    if is_compound(a) || keyword(
+        a,
+        c"say"
+    ) || keyword(
+        a,
+        c"return"
+    ) || keyword(
+        a,
+        c"break"
+    ) || keyword(a, c"continue") || keyword(a, c"pass") || keyword(a, c"raise") {
         return false
     }
     if b.kind == TokenKind.Eof || b.kind == TokenKind.Newline || b.kind == TokenKind.Dedent {
@@ -1152,13 +1211,34 @@ fn starts_shell(p: ref Parser) bool = trust {
         if u.s_eq(b.text, c"(") || u.s_eq(b.text, c"[") || u.s_eq(b.text, c".") {
             return false
         }
-        if u.s_eq(b.text, c"=") || u.s_eq(b.text, c"+=") || u.s_eq(b.text, c"-=") || u.s_eq(b.text, c"*=") || u.s_eq(b.text, c"/=") {
+        if u.s_eq(
+            b.text,
+            c"="
+        ) || u.s_eq(
+            b.text,
+            c"+="
+        ) || u.s_eq(b.text, c"-=") || u.s_eq(b.text, c"*=") || u.s_eq(b.text, c"/=") {
             return false
         }
-        if u.s_eq(b.text, c"+") || u.s_eq(b.text, c"*") || u.s_eq(b.text, c"/") || u.s_eq(b.text, c"%") {
+        if u.s_eq(
+            b.text,
+            c"+"
+        ) || u.s_eq(b.text, c"*") || u.s_eq(b.text, c"/") || u.s_eq(b.text, c"%") {
             return false
         }
-        if u.s_eq(b.text, c"==") || u.s_eq(b.text, c"!=") || u.s_eq(b.text, c"<") || u.s_eq(b.text, c">") || u.s_eq(b.text, c"<=") || u.s_eq(b.text, c">=") || u.s_eq(b.text, c"**") {
+        if u.s_eq(
+            b.text,
+            c"=="
+        ) || u.s_eq(
+            b.text,
+            c"!="
+        ) || u.s_eq(
+            b.text,
+            c"<"
+        ) || u.s_eq(
+            b.text,
+            c">"
+        ) || u.s_eq(b.text, c"<=") || u.s_eq(b.text, c">=") || u.s_eq(b.text, c"**") {
             return false
         }
         if u.s_eq(b.text, c"-") {

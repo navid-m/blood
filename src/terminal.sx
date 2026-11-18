@@ -1,10 +1,10 @@
 /// Terminal handling, raw mode, and the interactive line editor.
 
-val u = use("util.sx")
-val cfgmod = use("config.sx")
+val u       = use("util.sx")
+val cfgmod  = use("config.sx")
 val histmod = use("history.sx")
-val comp = use("completion.sx")
-val rt = use("std/runtime")
+val comp    = use("completion.sx")
+val rt      = use("std/runtime")
 
 pub type Termios = {
     c_iflag: mut u32
@@ -245,7 +245,11 @@ fn ed_set(e: mut ref Editor, s: ref u8) void = trust {
 fn ed_insert_byte(e: mut ref Editor, c: u8) void = trust {
     ed_reserve(e, 1)
     if e.pos < e.len {
-        u.mem_move(@ptradd(e.line, e.pos + 1) as ref void, @ptradd(e.line, e.pos) as ref void, e.len - e.pos)
+        u.mem_move(
+            @ptradd(e.line, e.pos + 1) as ref void,
+            @ptradd(e.line, e.pos) as ref void,
+            e.len - e.pos
+        )
     }
     @store8(@ptradd(e.line, e.pos), c)
     e.len++
@@ -260,7 +264,11 @@ fn ed_backspace(e: mut ref Editor) void = trust {
     val prev: i64 = u.utf8_prev(e.line, e.pos)
     val count: i64 = e.pos - prev
     if e.pos < e.len {
-        u.mem_move(@ptradd(e.line, prev) as ref void, @ptradd(e.line, e.pos) as ref void, e.len - e.pos)
+        u.mem_move(
+            @ptradd(e.line, prev) as ref void,
+            @ptradd(e.line, e.pos) as ref void,
+            e.len - e.pos
+        )
     }
     e.len = e.len - count
     e.pos = prev
@@ -274,7 +282,11 @@ fn ed_delete(e: mut ref Editor) void = trust {
     val next: i64 = u.utf8_next(e.line, e.pos, e.len)
     val count: i64 = next - e.pos
     if next < e.len {
-        u.mem_move(@ptradd(e.line, e.pos) as ref void, @ptradd(e.line, next) as ref void, e.len - next)
+        u.mem_move(
+            @ptradd(e.line, e.pos) as ref void,
+            @ptradd(e.line, next) as ref void,
+            e.len - next
+        )
     }
     e.len = e.len - count
     @store8(@ptradd(e.line, e.len), 0)

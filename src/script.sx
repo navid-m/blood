@@ -1,9 +1,9 @@
 /// Interpreter for the Blood scripting language.
 
-val u = use("util.sx")
+val u    = use("util.sx")
 val lang = use("lang.sx")
 val term = use("terminal.sx")
-val rt = use("std/runtime")
+val rt   = use("std/runtime")
 
 pub type Value = {
     tag: mut i64
@@ -1509,7 +1509,11 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
         if op > 1 {
             val cur: ref Value = env_lookup(env, target.s)
             if cur == none {
-                set_error(u.s_cat3(c"undefined variable '", target.s, c"'"), target.line, target.col)
+                set_error(
+                    u.s_cat3(c"undefined variable '", target.s, c"'"),
+                    target.line,
+                    target.col
+                )
                 return
             }
             final = bin_op(op - 2, cur, value)
@@ -2058,7 +2062,52 @@ pub fn looks_like_script(line: ref u8) bool = trust {
     if u.s_ends_with(t, c".blood") && !u.s_contains(t, c" ") && u.file_exists(t) {
         return false
     }
-    if u.s_starts(t, c"say ") || u.s_eq(t, c"say") || u.s_starts(t, c"if ") || u.s_starts(t, c"elif ") || u.s_starts(t, c"else") || u.s_starts(t, c"while ") || u.s_starts(t, c"for ") || u.s_starts(t, c"fn ") || u.s_starts(t, c"def ") || u.s_starts(t, c"return") || u.s_starts(t, c"break") || u.s_starts(t, c"continue") || u.s_starts(t, c"pass") || u.s_starts(t, c"try") || u.s_starts(t, c"catch") || u.s_starts(t, c"except") || u.s_starts(t, c"raise ") || u.s_starts(t, c"throw ") {
+    if u.s_starts(
+        t,
+        c"say "
+    ) || u.s_eq(
+        t,
+        c"say"
+    ) || u.s_starts(
+        t,
+        c"if "
+    ) || u.s_starts(
+        t,
+        c"elif "
+    ) || u.s_starts(
+        t,
+        c"else"
+    ) || u.s_starts(
+        t,
+        c"while "
+    ) || u.s_starts(
+        t,
+        c"for "
+    ) || u.s_starts(
+        t,
+        c"fn "
+    ) || u.s_starts(
+        t,
+        c"def "
+    ) || u.s_starts(
+        t,
+        c"return"
+    ) || u.s_starts(
+        t,
+        c"break"
+    ) || u.s_starts(
+        t,
+        c"continue"
+    ) || u.s_starts(
+        t,
+        c"pass"
+    ) || u.s_starts(
+        t,
+        c"try"
+    ) || u.s_starts(
+        t,
+        c"catch"
+    ) || u.s_starts(t, c"except") || u.s_starts(t, c"raise ") || u.s_starts(t, c"throw ") {
         return true
     }
     if @load8(t) == 91 || @load8(t) == 123 {
@@ -2102,7 +2151,10 @@ pub fn looks_like_script(line: ref u8) bool = trust {
                     if d == 61 && !(j + 1 < n && @load8(@ptradd(t, j + 1)) == 61) {
                         return true
                     }
-                    if (d == 43 || d == 45 || d == 42 || d == 47) && j + 1 < n && @load8(@ptradd(t, j + 1)) == 61 {
+                    if (d == 43 || d == 45 || d == 42 || d == 47) && j + 1 < n && @load8(@ptradd(
+                            t,
+                            j + 1
+                        )) == 61 {
                         return true
                     }
                 }

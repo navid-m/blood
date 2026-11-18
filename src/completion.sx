@@ -1,6 +1,6 @@
 /// Tab completion for commands, paths, directories, and variables.
 
-val u = use("util.sx")
+val u      = use("util.sx")
 val cfgmod = use("config.sx")
 
 pub type CompResult = {
@@ -282,7 +282,12 @@ fn add_candidate(res: mut ref CompResult, s: ref u8) void = trust {
     }
 }
 
-fn complete_commands(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, aliases: ref u.Map) void = trust {
+fn complete_commands(
+    res: mut ref CompResult,
+    word: ref u8,
+    c: ref cfgmod.Config,
+    aliases: ref u.Map
+) void = trust {
     res.kind = 1
     val names: ref u.Vec = builtin_list()
     val i: mut i64 = 0
@@ -330,7 +335,12 @@ fn complete_dirs(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config) vo
     complete_files(res, word, c, true)
 }
 
-fn complete_env(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, vars: ref u.Map) void = trust {
+fn complete_env(
+    res: mut ref CompResult,
+    word: ref u8,
+    c: ref cfgmod.Config,
+    vars: ref u.Map
+) void = trust {
     res.kind = 3
     if vars == none {
         return
@@ -351,7 +361,12 @@ fn complete_env(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, var
     sort_strings(res.items)
 }
 
-fn complete_files(res: mut ref CompResult, word: ref u8, c: ref cfgmod.Config, dirs_only: bool) void = trust {
+fn complete_files(
+    res: mut ref CompResult,
+    word: ref u8,
+    c: ref cfgmod.Config,
+    dirs_only: bool
+) void = trust {
     res.kind = 2
     val slash: i64 = last_slash(word)
     val listing: mut ref u8 = u.s_dup(c"")

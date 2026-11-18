@@ -1,10 +1,10 @@
 /// Colon-prefixed interactive escape commands.
 
-val u = use("util.sx")
-val cfgmod = use("config.sx")
+val u       = use("util.sx")
+val cfgmod  = use("config.sx")
 val histmod = use("history.sx")
-val shell = use("shell.sx")
-val script = use("script.sx")
+val shell   = use("shell.sx")
+val script  = use("script.sx")
 
 pub fn is_command(line: ref u8) bool = trust {
     val t: ref u8 = u.s_trim(line)
@@ -28,7 +28,17 @@ fn error(msg: ref u8) void = trust {
 }
 
 fn print_help() void = trust {
-    u.write_fd(1, c"Blood escape commands\n\n  :cfg.SECTION.KEY            show current and possible values\n  :cfg.SECTION.KEY = VALUE   update and save configuration\n  :rla                       reload configuration and .bloodrc\n  :where                     show configuration file paths\n\nExamples:\n  :cfg.prompt.theme\n  :cfg.prompt.theme = hacker\n  :cfg.colors.primary = red\n")
+    u.write_fd(1, c\\Blood escape commands
+        \\  :cfg.SECTION.KEY           show current and possible values
+        \\  :cfg.SECTION.KEY = VALUE   update and save configuration
+        \\  :rla                       reload configuration and .bloodrc
+        \\  :where                     show configuration file paths
+        \\
+        \\Examples:
+        \\  :cfg.prompt.theme
+        \\  :cfg.prompt.theme = hacker
+        \\  :cfg.colors.primary = red
+    )
 }
 
 fn show_paths(c: ref cfgmod.Config) void = trust {

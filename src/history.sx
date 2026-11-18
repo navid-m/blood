@@ -1,6 +1,6 @@
 /// Persistent command history with duplicate suppression and search.
 
-val u = use("util.sx")
+val u      = use("util.sx")
 val cfgmod = use("config.sx")
 
 pub type History = {

@@ -1,15 +1,15 @@
 /// Blood — an interactive shell and small brace-delimited scripting language.
 
-val u = use("util.sx")
-val cfgmod = use("config.sx")
+val u       = use("util.sx")
+val cfgmod  = use("config.sx")
 val histmod = use("history.sx")
-val prompt = use("prompt.sx")
-val term = use("terminal.sx")
-val ex = use("exec.sx")
-val shell = use("shell.sx")
-val script = use("script.sx")
-val escape = use("escape.sx")
-val flags = use("std/flags")
+val prompt  = use("prompt.sx")
+val term    = use("terminal.sx")
+val ex      = use("exec.sx")
+val shell   = use("shell.sx")
+val script  = use("script.sx")
+val escape  = use("escape.sx")
+val flags   = use("std/flags")
 
 val VERSION: ref u8 = c"0.1.0"
 
@@ -59,11 +59,8 @@ fn list_to_vec(src: list[ref u8], start: i64) ref u.Vec = trust {
         if i >= n {
             break
         }
-        match @get(src, i as usize) {
-            some p => {
-                u.vec_pushp(out, p as ref void)
-            }
-            none => {}
+        if @get(src, i as usize) is some p {
+            u.vec_pushp(out, p as ref void)
         }
         i++
     }
@@ -221,7 +218,12 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
             break
         }
         shell.reap_jobs()
-        val p: prompt.PromptParts = prompt.render_parts(c, status as i32, duration, shell.job_count())
+        val p: prompt.PromptParts = prompt.render_parts(
+            c,
+            status as i32,
+            duration,
+            shell.job_count()
+        )
         val ed: mut ref term.Editor = term.editor_new(c, h, shell.vars(), shell.aliases())
         val line: ref u8 = term.readline(ed, p.left, p.right)
         term.cooked_mode()

@@ -1,9 +1,9 @@
 /// Prompt rendering: git discovery, directory formatting, and themed output.
 
-val u = use("util.sx")
+val u      = use("util.sx")
 val cfgmod = use("config.sx")
-val ex = use("exec.sx")
-val rt = use("std/runtime")
+val ex     = use("exec.sx")
+val rt     = use("std/runtime")
 
 pub type GitInfo = {
     branch: mut ref u8
@@ -211,7 +211,10 @@ fn compact_text(dir: ref u8) ref u8 = trust {
                     u.buf_ch(out, 47)
                 }
                 val last: bool = i == n
-                if last || clen <= 2 || u.s_eq(comp, c"~") || u.s_eq(comp, c".") || u.s_eq(comp, c"..") {
+                if last || clen <= 2 || u.s_eq(
+                    comp,
+                    c"~"
+                ) || u.s_eq(comp, c".") || u.s_eq(comp, c"..") {
                     u.buf_add(out, comp)
                 } else {
                     val next: i64 = u.utf8_next(comp, 0, clen)
@@ -318,7 +321,13 @@ fn make_parts(lb: mut ref u.Buf, rb: mut ref u.Buf) PromptParts = trust {
     return p
 }
 
-fn add_indicators(b: mut ref u.Buf, c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) void = trust {
+fn add_indicators(
+    b: mut ref u.Buf,
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) void = trust {
     if c.show_jobs != 0 && jobs > 0 {
         u.buf_ch(b, 32)
         u.buf_add(b, style(c.color_warning, u.s_cat(c"⚙ ", u.s_int(jobs))))
@@ -441,7 +450,12 @@ fn render_plain(c: ref cfgmod.Config) PromptParts = trust {
     return make_parts(lb, rb)
 }
 
-fn render_default(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_default(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -497,7 +511,12 @@ fn render_default(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64
     return make_parts(lb, rb)
 }
 
-fn render_lambda(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_lambda(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -525,7 +544,12 @@ fn render_lambda(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64)
     return make_parts(lb, rb)
 }
 
-fn render_powerline(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_powerline(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -586,7 +610,12 @@ fn render_powerline(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i
     return make_parts(lb, rb)
 }
 
-fn render_right(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_right(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -612,7 +641,12 @@ fn render_right(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) 
     return make_parts(lb, rb)
 }
 
-fn render_right_time(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_right_time(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -648,7 +682,12 @@ fn render_right_time(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: 
     return make_parts(lb, rb)
 }
 
-fn render_hacker(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_hacker(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -737,7 +776,12 @@ fn render_dots(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) P
     return make_parts(lb, rb)
 }
 
-fn render_compact(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_compact(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -761,7 +805,12 @@ fn render_compact(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64
     return make_parts(lb, rb)
 }
 
-fn render_iconified(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_iconified(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -808,7 +857,12 @@ fn render_iconified(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i
     return make_parts(lb, rb)
 }
 
-fn render_timestamped(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_timestamped(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -861,7 +915,12 @@ fn render_timestamped(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs:
     return make_parts(lb, rb)
 }
 
-fn render_doubleline(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+fn render_doubleline(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     val lb: mut ref u.Buf = u.buf_new()
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
@@ -906,7 +965,12 @@ fn render_doubleline(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: 
     return make_parts(lb, rb)
 }
 
-pub fn render_parts(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) PromptParts = trust {
+pub fn render_parts(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
     if is_theme(c, c"plain") {
         return render_plain(c)
     }

@@ -4,7 +4,7 @@
 /// hot paths. Everything here is libc-backed and allocation-light.
 
 val allocators = use("std/allocators")
-val rt = use("std/runtime")
+val rt         = use("std/runtime")
 
 val g_heap: allocators.HeapAllocator = @zeroed
 
@@ -616,7 +616,10 @@ fn map_slot(m: ref Map, key: ref u8) i64 = trust {
     val start: i64 = h
     val i: mut i64 = h
     for {
-        val e: ref MapEntry = @ptradd(m.slots as ref void, i * @sizeof(MapEntry) as i64) as ref MapEntry
+        val e: ref MapEntry = @ptradd(
+            m.slots as ref void,
+            i * @sizeof(MapEntry) as i64
+        ) as ref MapEntry
         if e.used == 0 {
             return i
         }
@@ -642,11 +645,17 @@ fn map_grow(m: mut ref Map) void = trust {
         if i >= old_cap {
             break
         }
-        val e: ref MapEntry = @ptradd(old_slots as ref void, i * @sizeof(MapEntry) as i64) as ref MapEntry
+        val e: ref MapEntry = @ptradd(
+            old_slots as ref void,
+            i * @sizeof(MapEntry) as i64
+        ) as ref MapEntry
         if e.used == 1 {
             val slot: i64 = map_slot(m, e.key)
             if slot >= 0 {
-                val ne: mut ref MapEntry = @ptradd(m.slots as ref void, slot * @sizeof(MapEntry) as i64) as ref MapEntry
+                val ne: mut ref MapEntry = @ptradd(
+                    m.slots as ref void,
+                    slot * @sizeof(MapEntry) as i64
+                ) as ref MapEntry
                 ne.key = e.key
                 ne.value = e.value
                 ne.used = 1
@@ -668,7 +677,10 @@ pub fn map_put(m: mut ref Map, key: ref u8, value: i64) void = trust {
     if slot < 0 {
         return
     }
-    val e: mut ref MapEntry = @ptradd(m.slots as ref void, slot * @sizeof(MapEntry) as i64) as ref MapEntry
+    val e: mut ref MapEntry = @ptradd(
+        m.slots as ref void,
+        slot * @sizeof(MapEntry) as i64
+    ) as ref MapEntry
     if e.used == 1 {
         e.value = value
         return
@@ -687,7 +699,10 @@ pub fn map_get(m: ref Map, key: ref u8) i64 = trust {
     if slot < 0 {
         return 0
     }
-    val e: ref MapEntry = @ptradd(m.slots as ref void, slot * @sizeof(MapEntry) as i64) as ref MapEntry
+    val e: ref MapEntry = @ptradd(
+        m.slots as ref void,
+        slot * @sizeof(MapEntry) as i64
+    ) as ref MapEntry
     if e.used == 1 {
         return e.value
     }
@@ -702,7 +717,10 @@ pub fn map_has(m: ref Map, key: ref u8) bool = trust {
     if slot < 0 {
         return false
     }
-    val e: ref MapEntry = @ptradd(m.slots as ref void, slot * @sizeof(MapEntry) as i64) as ref MapEntry
+    val e: ref MapEntry = @ptradd(
+        m.slots as ref void,
+        slot * @sizeof(MapEntry) as i64
+    ) as ref MapEntry
     return e.used == 1
 }
 
@@ -714,7 +732,10 @@ pub fn map_del(m: mut ref Map, key: ref u8) void = trust {
     if slot < 0 {
         return
     }
-    val e: mut ref MapEntry = @ptradd(m.slots as ref void, slot * @sizeof(MapEntry) as i64) as ref MapEntry
+    val e: mut ref MapEntry = @ptradd(
+        m.slots as ref void,
+        slot * @sizeof(MapEntry) as i64
+    ) as ref MapEntry
     if e.used == 1 {
         e.used = 2
         m.len--

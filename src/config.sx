@@ -52,7 +52,46 @@ pub type Config = {
 }
 
 fn bool_key(key: ref u8) bool = trust {
-    if u.s_eq(key, c"show_username") || u.s_eq(key, c"show_hostname") || u.s_eq(key, c"show_directory") || u.s_eq(key, c"show_git") || u.s_eq(key, c"show_time") || u.s_eq(key, c"show_exit_status") || u.s_eq(key, c"show_duration") || u.s_eq(key, c"show_jobs") || u.s_eq(key, c"show_mode") || u.s_eq(key, c"two_line") || u.s_eq(key, c"enabled") || u.s_eq(key, c"ignore_duplicates") || u.s_eq(key, c"case_sensitive") || u.s_eq(key, c"login_message") || u.s_eq(key, c"git_status") {
+    if u.s_eq(
+        key,
+        c"show_username"
+    ) || u.s_eq(
+        key,
+        c"show_hostname"
+    ) || u.s_eq(
+        key,
+        c"show_directory"
+    ) || u.s_eq(
+        key,
+        c"show_git"
+    ) || u.s_eq(
+        key,
+        c"show_time"
+    ) || u.s_eq(
+        key,
+        c"show_exit_status"
+    ) || u.s_eq(
+        key,
+        c"show_duration"
+    ) || u.s_eq(
+        key,
+        c"show_jobs"
+    ) || u.s_eq(
+        key,
+        c"show_mode"
+    ) || u.s_eq(
+        key,
+        c"two_line"
+    ) || u.s_eq(
+        key,
+        c"enabled"
+    ) || u.s_eq(
+        key,
+        c"ignore_duplicates"
+    ) || u.s_eq(
+        key,
+        c"case_sensitive"
+    ) || u.s_eq(key, c"login_message") || u.s_eq(key, c"git_status") {
         return true
     }
     return false
@@ -348,33 +387,141 @@ fn apply(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8) void = 
 
 pub fn known_key(section: ref u8, key: ref u8) bool = trust {
     if u.s_eq(section, c"prompt") {
-        if u.s_eq(key, c"show_username") || u.s_eq(key, c"show_hostname") || u.s_eq(key, c"show_directory") || u.s_eq(key, c"show_git") || u.s_eq(key, c"show_time") || u.s_eq(key, c"show_exit_status") || u.s_eq(key, c"show_duration") || u.s_eq(key, c"show_jobs") || u.s_eq(key, c"show_mode") || u.s_eq(key, c"two_line") || u.s_eq(key, c"git_status") {
+        if u.s_eq(
+            key,
+            c"show_username"
+        ) || u.s_eq(
+            key,
+            c"show_hostname"
+        ) || u.s_eq(
+            key,
+            c"show_directory"
+        ) || u.s_eq(
+            key,
+            c"show_git"
+        ) || u.s_eq(
+            key,
+            c"show_time"
+        ) || u.s_eq(
+            key,
+            c"show_exit_status"
+        ) || u.s_eq(
+            key,
+            c"show_duration"
+        ) || u.s_eq(
+            key,
+            c"show_jobs"
+        ) || u.s_eq(key, c"show_mode") || u.s_eq(key, c"two_line") || u.s_eq(key, c"git_status") {
             return true
         }
-        return u.s_eq(key, c"theme") || u.s_eq(key, c"symbol") || u.s_eq(key, c"prompt_symbol") || u.s_eq(key, c"prompt_char") || u.s_eq(key, c"separator") || u.s_eq(key, c"directory_style")
+        return u.s_eq(
+            key,
+            c"theme"
+        ) || u.s_eq(
+            key,
+            c"symbol"
+        ) || u.s_eq(
+            key,
+            c"prompt_symbol"
+        ) || u.s_eq(
+            key,
+            c"prompt_char"
+        ) || u.s_eq(key, c"separator") || u.s_eq(key, c"directory_style")
     }
     if u.s_eq(section, c"colors") {
-        return u.s_eq(key, c"primary") || u.s_eq(key, c"secondary") || u.s_eq(key, c"success") || u.s_eq(key, c"error") || u.s_eq(key, c"directory") || u.s_eq(key, c"git_clean") || u.s_eq(key, c"git_dirty") || u.s_eq(key, c"muted") || u.s_eq(key, c"warning") || u.s_eq(key, c"accent")
+        return u.s_eq(
+            key,
+            c"primary"
+        ) || u.s_eq(
+            key,
+            c"secondary"
+        ) || u.s_eq(
+            key,
+            c"success"
+        ) || u.s_eq(
+            key,
+            c"error"
+        ) || u.s_eq(
+            key,
+            c"directory"
+        ) || u.s_eq(
+            key,
+            c"git_clean"
+        ) || u.s_eq(
+            key,
+            c"git_dirty"
+        ) || u.s_eq(key, c"muted") || u.s_eq(key, c"warning") || u.s_eq(key, c"accent")
     }
     if u.s_eq(section, c"history") {
-        return u.s_eq(key, c"enabled") || u.s_eq(key, c"file") || u.s_eq(key, c"history_file") || u.s_eq(key, c"max_entries") || u.s_eq(key, c"history_max") || u.s_eq(key, c"ignore_duplicates")
+        return u.s_eq(
+            key,
+            c"enabled"
+        ) || u.s_eq(
+            key,
+            c"file"
+        ) || u.s_eq(
+            key,
+            c"history_file"
+        ) || u.s_eq(
+            key,
+            c"max_entries"
+        ) || u.s_eq(key, c"history_max") || u.s_eq(key, c"ignore_duplicates")
     }
     if u.s_eq(section, c"completion") {
         return u.s_eq(key, c"enabled") || u.s_eq(key, c"case_sensitive")
     }
     if u.s_eq(section, c"shell") {
-        return u.s_eq(key, c"default_editor") || u.s_eq(key, c"editor") || u.s_eq(key, c"login_message") || u.s_eq(key, c"startup_file")
+        return u.s_eq(
+            key,
+            c"default_editor"
+        ) || u.s_eq(key, c"editor") || u.s_eq(key, c"login_message") || u.s_eq(key, c"startup_file")
     }
     return false
 }
 
 fn bool_value(v: ref u8) bool = trust {
-    return u.s_eq(v, c"true") || u.s_eq(v, c"yes") || u.s_eq(v, c"on") || u.s_eq(v, c"1") || u.s_eq(v, c"false") || u.s_eq(v, c"no") || u.s_eq(v, c"off") || u.s_eq(v, c"0")
+    return u.s_eq(
+        v,
+        c"true"
+    ) || u.s_eq(
+        v,
+        c"yes"
+    ) || u.s_eq(
+        v,
+        c"on"
+    ) || u.s_eq(
+        v,
+        c"1"
+    ) || u.s_eq(v, c"false") || u.s_eq(v, c"no") || u.s_eq(v, c"off") || u.s_eq(v, c"0")
 }
 
 fn needs_bool(section: ref u8, key: ref u8) bool = trust {
     if u.s_eq(section, c"prompt") {
-        return u.s_eq(key, c"show_username") || u.s_eq(key, c"show_hostname") || u.s_eq(key, c"show_directory") || u.s_eq(key, c"show_git") || u.s_eq(key, c"show_time") || u.s_eq(key, c"show_exit_status") || u.s_eq(key, c"show_duration") || u.s_eq(key, c"show_jobs") || u.s_eq(key, c"show_mode") || u.s_eq(key, c"two_line") || u.s_eq(key, c"git_status")
+        return u.s_eq(
+            key,
+            c"show_username"
+        ) || u.s_eq(
+            key,
+            c"show_hostname"
+        ) || u.s_eq(
+            key,
+            c"show_directory"
+        ) || u.s_eq(
+            key,
+            c"show_git"
+        ) || u.s_eq(
+            key,
+            c"show_time"
+        ) || u.s_eq(
+            key,
+            c"show_exit_status"
+        ) || u.s_eq(
+            key,
+            c"show_duration"
+        ) || u.s_eq(
+            key,
+            c"show_jobs"
+        ) || u.s_eq(key, c"show_mode") || u.s_eq(key, c"two_line") || u.s_eq(key, c"git_status")
     }
     if u.s_eq(section, c"history") {
         return u.s_eq(key, c"enabled") || u.s_eq(key, c"ignore_duplicates")
@@ -389,7 +536,10 @@ fn needs_bool(section: ref u8, key: ref u8) bool = trust {
 }
 
 fn needs_int(section: ref u8, key: ref u8) bool = trust {
-    return u.s_eq(section, c"history") && (u.s_eq(key, c"max_entries") || u.s_eq(key, c"history_max"))
+    return u.s_eq(
+        section,
+        c"history"
+    ) && (u.s_eq(key, c"max_entries") || u.s_eq(key, c"history_max"))
 }
 
 pub fn set_value(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8) bool = trust {
@@ -786,7 +936,11 @@ pub fn load_config_from(path: ref u8) ref Config = trust {
                         apply(c, section, key, vv)
                     } else {
                         u.stderr_s(u.s_cat3(c"blood: config: ", c.path, c"\n"))
-                        u.stderr_s(u.s_cat3(c"  line ", u.s_int(lineno), c": expected key = value\n"))
+                        u.stderr_s(u.s_cat3(
+                                c"  line ",
+                                u.s_int(lineno),
+                                c": expected key = value\n"
+                            ))
                     }
                 }
             }
