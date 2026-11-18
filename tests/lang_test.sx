@@ -219,6 +219,16 @@ test "parser builds assignments, conditions and loops" {
         assert u.s_eq(forn.s, c"item")
         assert kid(forn, 0).kind == lang.NodeKind.ListLit
         assert kid(forn, 1).kind == lang.NodeKind.Block
+
+        val pr: ref lang.Node = lang.parse(c"para for item in [1, 2] {\n  say item\n}\n")
+        val pn: ref lang.Node = kid(pr, 0)
+        assert pn.kind == lang.NodeKind.ParaFor
+        assert u.s_eq(pn.s, c"item")
+        assert kid(pn, 0).kind == lang.NodeKind.ListLit
+        assert kid(pn, 1).kind == lang.NodeKind.Block
+
+        lang.parse(c"para item in [1] {\n  pass\n}\n")
+        assert lang.last_error() != none
     }
 }
 

@@ -33,6 +33,7 @@ pub enum NodeKind = {
     If
     While
     For
+    ParaFor
     FnDef
     Return
     Break
@@ -984,7 +985,10 @@ fn is_compound(t: ref Token) bool = trust {
     return keyword(
         t,
         c"if"
-    ) || keyword(t, c"while") || keyword(t, c"for") || keyword(t, c"fn") || keyword(t, c"try")
+    ) || keyword(t, c"while") || keyword(t, c"for") || keyword(t, c"para") || keyword(
+            t,
+            c"fn"
+        ) || keyword(t, c"try")
 }
 
 fn parse_shell_cmd(p: mut ref Parser, t: ref Token) ref Node = trust {
@@ -1022,6 +1026,9 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
     }
     if keyword(t, c"for") {
         return parse_for(p)
+    }
+    if keyword(t, c"para") {
+        return parse_para_for(p)
     }
     if keyword(t, c"fn") {
         return parse_fn(p)
@@ -1073,8 +1080,23 @@ fn parse_while(p: mut ref Parser) ref Node = trust {
 
 fn parse_for(p: mut ref Parser) ref Node = trust {
     val t: ref Token = cur(p)
-    val n: mut ref Node = node_new(NodeKind.For, t.line, t.col)
     advance(p)
+    return parse_for_rest(p, t, NodeKind.For)
+}
+
+fn parse_para_for(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    advance(p)
+    if !keyword(cur(p), c"for") {
+        set_error(cur(p).line, cur(p).col, c"expected 'for' after 'para'")
+        return node_new(NodeKind.ParaFor, t.line, t.col)
+    }
+    advance(p)
+    return parse_for_rest(p, t, NodeKind.ParaFor)
+}
+
+fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = trust {
+    val n: mut ref Node = node_new(kind, t.line, t.col)
     val var: ref Token = cur(p)
     if var.kind != TokenKind.Ident {
         set_error(var.line, var.col, c"expected a loop variable")

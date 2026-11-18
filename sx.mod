@@ -3,11 +3,11 @@ version "v0.1.0"
 spectre_version "v0.0.18"
 
 build release {
-    flags "-release -dynamic"
+    flags "-release"
     output "./blood"
 }
 
 build dev {
-    flags "-dynamic"
+    flags ""
     output "./blood-dev"
 }

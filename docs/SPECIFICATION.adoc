@@ -1348,6 +1348,29 @@ dictionary. `break` and `continue` affect the innermost loop.
 
 There is no C-style `for`, no `do`, and no `loop` statement.
 
+==== Parallel loops
+
+[source]
+----
+para for NAME in EXPRESSION {
+    BLOCK
+}
+----
+
+`para for` evaluates `EXPRESSION` once and runs the body for each element in a
+separate child process. Iterations run concurrently. Each child starts from a
+copy of the parent's variables, with `NAME` bound to its element and `status`
+reset to `0`; assignments made inside the body are visible only within that
+child and do not propagate back to the parent. Output from iterations may
+interleave.
+
+After every iteration has finished, the loop waits for all children and
+assigns the first non-zero iteration status to `status`. An iteration's status
+is its final `status` value, or the argument passed to `exit`. An uncaught
+error in an iteration reports the error and makes that iteration fail without
+aborting the remaining iterations. `para for` does not support `break` or
+`continue`. On platforms without `fork`, the statement reports an error.
+
 ==== Functions
 
 [source]
@@ -1629,6 +1652,7 @@ statement    = say-stmt
              | if-stmt
              | while-stmt
              | for-stmt
+             | para-for-stmt
              | fn-stmt
              | try-stmt
              | assignment
@@ -1656,6 +1680,8 @@ if-stmt      = "if" expression suite
 while-stmt   = "while" expression suite ;
 
 for-stmt     = "for" IDENT "in" expression suite ;
+
+para-for-stmt = "para" "for" IDENT "in" expression suite ;
 
 fn-stmt      = "fn" IDENT "(" [ param { "," param } [ "," ] ] ")" suite ;
 param        = IDENT [ ":" type-text ] ;

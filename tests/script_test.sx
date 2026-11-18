@@ -176,11 +176,20 @@ test "script builtins convert types and aggregate values" {
     }
 }
 
+test "script runs parallel for iterations" {
+    trust {
+        fresh()
+        assert run(c"para for x in [1, 2, 3] {\n    pass\n}\nif x != 3 {\n    raise \"last item\"\n}\n") == 0
+        assert run(c"para for x in [0, 1, 2] {\n    if x == 2 {\n        exit(3)\n    }\n}\nif status != 3 {\n    raise \"parallel status\"\n}\n") == 0
+    }
+}
+
 test "script detects lines that need continuation" {
     trust {
         assert script.needs_continuation(c"echo hi \\")
         assert script.needs_continuation(c"if true {")
         assert script.needs_continuation(c"while true {")
+        assert script.needs_continuation(c"para for x in xs {")
         assert script.needs_continuation(c"fn main {")
         assert script.needs_continuation(c"say \"open")
         assert script.needs_continuation(c"[1, 2")
@@ -199,6 +208,7 @@ test "script classifies script-looking lines" {
         assert script.looks_like_script(c"if x {")
         assert script.looks_like_script(c"while x {")
         assert script.looks_like_script(c"for x in xs {")
+        assert script.looks_like_script(c"para for x in xs {")
         assert script.looks_like_script(c"fn f() {")
         assert script.looks_like_script(c"return 1")
         assert script.looks_like_script(c"raise \"x\"")

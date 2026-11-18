@@ -2945,6 +2945,32 @@ dictionary. <code>break</code> and <code>continue</code> affect the innermost lo
 </div>
 </div>
 <div class="sect3">
+<h4 id="_parallel_loops">Parallel loops</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>para for NAME in EXPRESSION {
+    BLOCK
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>para for</code> evaluates <code>EXPRESSION</code> once and runs the body for each element in a
+separate child process. Iterations run concurrently. Each child starts from a
+copy of the parent&#8217;s variables, with <code>NAME</code> bound to its element and <code>status</code>
+reset to <code>0</code>; assignments made inside the body are visible only within that
+child and do not propagate back to the parent. Output from iterations may
+interleave.</p>
+</div>
+<div class="paragraph">
+<p>After every iteration has finished, the loop waits for all children and
+assigns the first non-zero iteration status to <code>status</code>. An iteration&#8217;s status
+is its final <code>status</code> value, or the argument passed to <code>exit</code>. An uncaught
+error in an iteration reports the error and makes that iteration fail without
+aborting the remaining iterations. <code>para for</code> does not support <code>break</code> or
+<code>continue</code>. On platforms without <code>fork</code>, the statement reports an error.</p>
+</div>
+</div>
+<div class="sect3">
 <h4 id="_functions">Functions</h4>
 <div class="listingblock">
 <div class="content">
@@ -3595,6 +3621,7 @@ statement    = say-stmt
              | if-stmt
              | while-stmt
              | for-stmt
+             | para-for-stmt
              | fn-stmt
              | try-stmt
              | assignment
@@ -3622,6 +3649,8 @@ if-stmt      = "if" expression suite
 while-stmt   = "while" expression suite ;
 
 for-stmt     = "for" IDENT "in" expression suite ;
+
+para-for-stmt = "para" "for" IDENT "in" expression suite ;
 
 fn-stmt      = "fn" IDENT "(" [ param { "," param } [ "," ] ] ")" suite ;
 param        = IDENT [ ":" type-text ] ;
@@ -4191,7 +4220,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-18 01:41:48 UTC
+Last updated 2026-11-18 02:12:48 UTC
 </div>
 </div>
 </body>

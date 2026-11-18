@@ -1578,6 +1578,150 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
     set_error(c"invalid assignment target", target.line, target.col)
 }
 
+fn wait_status_code(status: i32) i64 = trust {
+    if (status & 127) == 0 {
+        return ((status >> 8) & 255) as i64
+    }
+    return (128 + (status & 127)) as i64
+}
+
+fn para_items(iterable: ref Value) ref u.Vec = trust {
+    val items: mut ref u.Vec = u.vec_new()
+    if iterable == none {
+        return items
+    }
+    if iterable.tag == 5 {
+        val vec: ref u.Vec = iterable.p as ref u.Vec
+        val i: mut i64 = 0
+        for {
+            if i >= vec.len {
+                break
+            }
+            u.vec_pushp(items, u.vec_p(vec, i))
+            i++
+        }
+        return items
+    }
+    if iterable.tag == 4 {
+        val s: ref u8 = iterable.p as ref u8
+        val len: i64 = u.s_len(s)
+        val i: mut i64 = 0
+        for {
+            if i >= len {
+                break
+            }
+            val j: i64 = u.utf8_next(s, i, len)
+            u.vec_pushp(items, v_str(u.s_substr(s, i, j)) as ref void)
+            i = j
+        }
+        return items
+    }
+    if iterable.tag == 6 {
+        val m: ref u.Map = iterable.p as ref u.Map
+        val i: mut i64 = 0
+        for {
+            if i >= m.cap {
+                break
+            }
+            if u.map_used_at(m, i) {
+                u.vec_pushp(items, v_str(u.s_dup(u.map_key_at(m, i))) as ref void)
+            }
+            i++
+        }
+    }
+    return items
+}
+
+fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
+    val iterable: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+    if g_flow != 0 {
+        return
+    }
+    val items: ref u.Vec = para_items(iterable)
+    val body: ref lang.Node = u.vec_p(n.kids, 1) as ref lang.Node
+    val pids: mut ref u.Vec = u.vec_new()
+    val failed: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= items.len {
+            break
+        }
+        if u.interrupt_flag != 0 {
+            break
+        }
+        val item: ref Value = u.vec_p(items, i) as ref Value
+        val pid: i32 = rt.fork()
+        if pid == 0 {
+            g_error = none
+            g_flow = 0
+            g_return = none
+            env_assign(env, n.s, item)
+            set_status(0)
+            exec_block(body, env, false)
+            val code: mut i64 = 0
+            if g_flow == 4 {
+                val msg: mut ref u8 = g_error
+                if msg == none {
+                    msg = u.s_dup(c"error")
+                }
+                report_error(c"", g_err_line, g_err_col, msg)
+                code = 1
+            } elif g_flow == 5 {
+                code = u.script_exit_code
+            } else {
+                code = status_value()
+            }
+            if code < 0 {
+                code = 0
+            }
+            rt.exit_now((code & 255) as i32)
+            return
+        }
+        if pid < 0 {
+            failed = 127
+            break
+        }
+        u.vec_pushp(pids, v_int(pid as i64) as ref void)
+        i++
+    }
+    val j: mut i64 = 0
+    for {
+        if j >= pids.len {
+            break
+        }
+        val pid: i32 = num_i(u.vec_p(pids, j) as ref Value) as i32
+        val status: mut i32 = 0
+        val got: mut i32 = -1
+        for {
+            got = rt.waitpid(pid, @addr(status), 0)
+            if got >= 0 || u.interrupt_flag == 0 {
+                break
+            }
+        }
+        if got >= 0 {
+            val code: i64 = wait_status_code(status)
+            if code != 0 && failed == 0 {
+                failed = code
+            }
+        } elif failed == 0 {
+            failed = 127
+        }
+        j++
+    }
+    if items.len > 0 {
+        env_assign(env, n.s, u.vec_p(items, items.len - 1) as ref Value)
+    }
+    set_status(failed)
+    if u.interrupt_flag != 0 {
+        u.interrupt_flag = 0
+        set_error(c"interrupted", n.line, n.col)
+        return
+    }
+    if failed == 127 && pids.len == 0 {
+        set_error(c"failed to start parallel iteration", n.line, n.col)
+    }
+}
+
 fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
     if n == none || g_flow != 0 {
         return
@@ -1691,6 +1835,10 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                 break
             }
         }
+        return
+    }
+    if n.kind == lang.NodeKind.ParaFor {
+        exec_para_for(n, env)
         return
     }
     if n.kind == lang.NodeKind.For {
@@ -2083,6 +2231,9 @@ pub fn looks_like_script(line: ref u8) bool = trust {
     ) || u.s_starts(
         t,
         c"for "
+    ) || u.s_starts(
+        t,
+        c"para "
     ) || u.s_starts(
         t,
         c"fn "
