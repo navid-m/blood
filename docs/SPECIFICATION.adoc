@@ -39,6 +39,7 @@ blood
 blood -c COMMAND
 blood SCRIPT.blood|SCRIPT.bx [ARG...]
 blood -init
+blood -fmt PATH...
 blood -translate-sh [-o DIR] PATH...
 blood -version
 blood -help
@@ -64,6 +65,12 @@ translated file is written beside its source with the extension replaced by
 the directory structure relative to the translated directory. The command
 prints one `SOURCE -> TARGET` line per translated file and exits with status 1
 when an input cannot be read or written.
+
+`blood -fmt PATH...` formats Blood scripts in place. It normalises indentation
+to four spaces, places opening braces on the same line as their header,
+removes Allman-style brace lines, aligns consecutive assignments, and prefers
+unparenthesised calls where the arguments are unambiguous. Files that cannot
+be read or written are reported and produce status 1.
 
 `blood -init` writes a default configuration file at the configuration path
 if no file exists there. Parent directories are created. If the file already
@@ -1279,6 +1286,13 @@ Arguments may be named as `name: value`; named arguments bind to the parameter
 with that name, and native functions use them for optional settings such as
 `merge_stderr:` and `default:`. Missing arguments are bound as null; extra
 arguments are ignored by user-defined functions.
+
+Parentheses may be omitted when the call is unambiguous, as in
+`which "spectre"`, `say "hello"`, or `x = str len args`. A command-shaped
+statement whose first word names a function is called as a function with the
+remaining text as its arguments; if no such function exists, the line is run
+as a shell command. Parentheses are still required for method calls,
+zero-argument calls, and calls whose arguments contain top-level operators.
 
 Indexing has the form `container[index]`. Lists accept integers, including
 negative indices from the end. Dictionaries accept string keys; non-string

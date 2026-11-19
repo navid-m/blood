@@ -66,10 +66,23 @@ fn read_head_branch(gitdir: ref u8) ref u8 = trust {
     return u.s_dup(t)
 }
 
+fn valid_gitdir(gitdir: ref u8) bool = trust {
+    if !u.is_dir(gitdir) {
+        return false
+    }
+    if !u.file_exists(u.path_join(gitdir, c"HEAD")) {
+        return false
+    }
+    return u.is_dir(u.path_join(gitdir, c"objects")) || u.is_dir(u.path_join(gitdir, c"refs"))
+}
+
 fn gitdir_of(root: ref u8) ref u8 = trust {
     val dotgit: ref u8 = u.path_join(root, c".git")
     if u.is_dir(dotgit) {
-        return u.s_dup(dotgit)
+        if valid_gitdir(dotgit) {
+            return u.s_dup(dotgit)
+        }
+        return none
     }
     if !u.file_exists(dotgit) {
         return none
@@ -85,9 +98,16 @@ fn gitdir_of(root: ref u8) ref u8 = trust {
     val p: ref u8 = u.s_substr(t, 7, u.s_len(t))
     val tt: ref u8 = u.s_trim(p)
     if u.is_dir(tt) {
-        return u.s_dup(tt)
+        if valid_gitdir(tt) {
+            return u.s_dup(tt)
+        }
+        return none
     }
-    return u.path_join(root, tt)
+    val resolved: ref u8 = u.path_join(root, tt)
+    if valid_gitdir(resolved) {
+        return resolved
+    }
+    return none
 }
 
 fn find_git(cwd: ref u8) GitInfo = trust {
@@ -375,10 +395,10 @@ fn bg_escape(color: ref u8) ref u8 = trust {
         }
     }
     if n > 7 && u.s_starts(color, c"\x1b[38;5;") {
-        return u.s_cat(c"\x1b[48;5;", u.s_substr(color, 7, n - 1))
+        return u.s_cat3(c"\x1b[48;5;", u.s_substr(color, 7, n - 1), c"m")
     }
     if n > 7 && u.s_starts(color, c"\x1b[38;2;") {
-        return u.s_cat(c"\x1b[48;2;", u.s_substr(color, 7, n - 1))
+        return u.s_cat3(c"\x1b[48;2;", u.s_substr(color, 7, n - 1), c"m")
     }
     return c"\x1b[49m"
 }

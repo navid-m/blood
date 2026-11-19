@@ -43,6 +43,7 @@ pub enum NodeKind = {
     Try
     Raise
     ShellCmd
+    CommandCall
     Defer
     Spread
     IntLit
@@ -117,6 +118,7 @@ val g_error: mut ref u8 = none
 val g_error_line: mut i64 = 0
 val g_error_col: mut i64 = 0
 val g_style: mut i64 = 0
+val g_no_unparen: mut i64 = 0
 
 pub fn last_error() ref u8 = trust {
     return g_error
@@ -1085,6 +1087,10 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
     if keyword(t, c"defer") {
         return parse_defer(p)
     }
+    val command_call: ref Node = try_command_call(p)
+    if command_call != none {
+        return command_call
+    }
     return parse_simple(p)
 }
 
@@ -1319,6 +1325,92 @@ fn is_assign_op(t: ref Token) i64 = trust {
         return 6
     }
     return 0
+}
+
+fn reserved_unparen(t: ref Token) bool = trust {
+    if t.kind != TokenKind.Ident {
+        return false
+    }
+    return keyword(t, c"and") || keyword(t, c"or") || keyword(t, c"not") || keyword(
+        t,
+        c"in"
+    ) || keyword(t, c"if") || keyword(t, c"elif") || keyword(t, c"else") || keyword(
+        t,
+        c"while"
+    ) || keyword(t, c"for") || keyword(t, c"para") || keyword(t, c"fn") || keyword(
+        t,
+        c"return"
+    ) || keyword(t, c"break") || keyword(t, c"continue") || keyword(t, c"pass") || keyword(
+        t,
+        c"try"
+    ) || keyword(t, c"catch") || keyword(t, c"except") || keyword(t, c"raise") || keyword(
+        t,
+        c"throw"
+    ) || keyword(t, c"say") || keyword(t, c"defer") || keyword(t, c"export")
+}
+
+fn starts_unparen_arg(t: ref Token) bool = trust {
+    if t.kind == TokenKind.Str || t.kind == TokenKind.RawStr || t.kind == TokenKind.Int || t.kind == TokenKind.Float || t.kind == TokenKind.CmdSubst {
+        return true
+    }
+    if t.kind == TokenKind.Ident {
+        return !reserved_unparen(t)
+    }
+    return false
+}
+
+fn parse_unparen_args(p: mut ref Parser, call: mut ref Node) void = trust {
+    for {
+        if is_named_arg(p) {
+            u.vec_pushp(call.params, u.s_dup(cur(p).text) as ref void)
+            advance(p)
+            advance(p)
+        } else {
+            u.vec_pushp(call.params, c"" as ref void)
+        }
+        u.vec_pushp(call.kids, parse_expr(p) as ref void)
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+            advance(p)
+            continue
+        }
+        break
+    }
+}
+
+fn parse_unparen_call(p: mut ref Parser, t: ref Token) ref Node = trust {
+    val callee: mut ref Node = node_new(NodeKind.Var, t.line, t.col)
+    callee.s = u.s_dup(t.text)
+    val call: mut ref Node = node_new(NodeKind.Call, t.line, t.col)
+    u.vec_pushp(call.kids, callee as ref void)
+    advance(p)
+    parse_unparen_args(p, call)
+    return call
+}
+
+fn try_command_call(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    if reserved_unparen(t) || !starts_unparen_arg(peek(p, 1)) {
+        return none
+    }
+    val save: i64 = p.i
+    val saved_unparen: i64 = g_no_unparen
+    g_no_unparen = 1
+    val call: ref Node = parse_unparen_call(p, t)
+    g_no_unparen = saved_unparen
+    val done: bool = cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent || (cur(p).kind == TokenKind.Op && text_is(cur(p), c";"))
+    if g_error != none || !done {
+        p.i = save
+        g_no_unparen = saved_unparen
+        clear_error()
+        return none
+    }
+    val n: mut ref Node = node_new(NodeKind.CommandCall, t.line, t.col)
+    n.s = line_slice(p, t.start)
+    u.vec_pushp(n.kids, call as ref void)
+    if cur(p).kind == TokenKind.Newline {
+        advance(p)
+    }
+    return n
 }
 
 fn is_named_arg(p: ref Parser) bool = trust {
@@ -1709,6 +1801,17 @@ fn parse_postfix(p: mut ref Parser) ref Node = trust {
     val node: mut ref Node = primary
     for {
         if cur(p).kind != TokenKind.Op {
+            if g_no_unparen == 0 && node.kind == NodeKind.Var && starts_unparen_arg(cur(p)) {
+                val unparen: mut ref Node = node_new(
+                    NodeKind.Call,
+                    cur(p).line,
+                    cur(p).col
+                )
+                u.vec_pushp(unparen.kids, node as ref void)
+                parse_unparen_args(p, unparen)
+                node = unparen
+                continue
+            }
             break
         }
         val t: ref Token = cur(p)

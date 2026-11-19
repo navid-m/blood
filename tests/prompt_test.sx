@@ -38,6 +38,26 @@ fn shortened(dir: ref u8) ref u8 = trust {
     return u.s_dup(dir)
 }
 
+test "git discovery ignores incomplete repositories" {
+    trust {
+        val root: ref u8 = c"/tmp/blood-unit-prompt-git"
+        assert u.mkdir_p(root)
+        val incomplete: ref u8 = u.path_join(root, c"incomplete")
+        assert u.mkdir_p(u.path_join(incomplete, c".git"))
+        assert u.write_file(u.path_join(incomplete, c".git/HEAD"), c"ref: refs/heads/online-pvp\n")
+        val bad: ref prompt.GitInfo = prompt.git_info(incomplete, true)
+        assert bad.valid == 0
+
+        val good: ref u8 = u.path_join(root, c"valid")
+        assert u.mkdir_p(u.path_join(good, c".git/objects"))
+        assert u.mkdir_p(u.path_join(good, c".git/refs"))
+        assert u.write_file(u.path_join(good, c".git/HEAD"), c"ref: refs/heads/main\n")
+        val found: ref prompt.GitInfo = prompt.git_info(good, true)
+        assert found.valid == 1
+        assert u.s_eq(found.branch, c"main")
+    }
+}
+
 test "plain prompt renders user, host and directory" {
     trust {
         val c: mut ref cfg.Config = plain_config()
@@ -160,7 +180,7 @@ test "powerline preset uses background segments and separators" {
     trust {
         val c: ref cfg.Config = preset_config(c"powerline")
         val out: ref u8 = prompt.render(c, 0, 0, 0)
-        assert u.s_contains(out, c"\x1b[46m")
+        assert u.s_contains(out, c"\x1b[48;5;124m")
         assert u.s_contains(out, c"\xee\x82\xb0")
         assert u.s_contains(out, c"\n")
         assert u.s_contains(out, c"❯")

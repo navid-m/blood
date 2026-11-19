@@ -498,6 +498,7 @@ script.</p>
 blood -c COMMAND
 blood SCRIPT.blood|SCRIPT.bx [ARG...]
 blood -init
+blood -fmt PATH...
 blood -translate-sh [-o DIR] PATH...
 blood -version
 blood -help</code></pre>
@@ -527,6 +528,13 @@ translated file is written beside its source with the extension replaced by
 the directory structure relative to the translated directory. The command
 prints one <code>SOURCE &#8594; TARGET</code> line per translated file and exits with status 1
 when an input cannot be read or written.</p>
+</div>
+<div class="paragraph">
+<p><code>blood -fmt PATH&#8230;&#8203;</code> formats Blood scripts in place. It normalises indentation
+to four spaces, places opening braces on the same line as their header,
+removes Allman-style brace lines, aligns consecutive assignments, and prefers
+unparenthesised calls where the arguments are unambiguous. Files that cannot
+be read or written are reported and produce status 1.</p>
 </div>
 <div class="paragraph">
 <p><code>blood -init</code> writes a default configuration file at the configuration path
@@ -2807,6 +2815,14 @@ with that name, and native functions use them for optional settings such as
 arguments are ignored by user-defined functions.</p>
 </div>
 <div class="paragraph">
+<p>Parentheses may be omitted when the call is unambiguous, as in
+<code>which "spectre"</code>, <code>say "hello"</code>, or <code>x = str len args</code>. A command-shaped
+statement whose first word names a function is called as a function with the
+remaining text as its arguments; if no such function exists, the line is run
+as a shell command. Parentheses are still required for method calls,
+zero-argument calls, and calls whose arguments contain top-level operators.</p>
+</div>
+<div class="paragraph">
 <p>Indexing has the form <code>container[index]</code>. Lists accept integers, including
 negative indices from the end. Dictionaries accept string keys; non-string
 keys are converted to strings. Strings accept a byte offset, including negative
@@ -4469,7 +4485,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-19 19:12:57 UTC
+Last updated 2026-11-19 19:29:03 UTC
 </div>
 </div>
 </body>

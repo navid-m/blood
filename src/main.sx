@@ -10,6 +10,7 @@ val shell     = use("shell.sx")
 val script    = use("script.sx")
 val escape    = use("escape.sx")
 val translate = use("translate.sx")
+val format    = use("format.sx")
 val loginmod  = use("login.sx")
 val flags     = use("std/flags")
 val env       = use("std/env")
@@ -61,7 +62,7 @@ fn print_version() void = trust {
 }
 
 fn print_help() void = trust {
-    val text: ref u8 = c"usage: blood [options] [script.blood|script.bx [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  -init            write a default configuration file\n  -login           initialize a login-shell environment\n  -translate-sh    translate .sh/.bash files or directories to .bx\n  -o DIR           write translated files under DIR\n  -version, -v     print the version\n  -help, -h        show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n"
+    val text: ref u8 = c"usage: blood [options] [script.blood|script.bx [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  -init            write a default configuration file\n  -login           initialize a login-shell environment\n  -translate-sh    translate .sh/.bash files or directories to .bx\n  -fmt             format Blood scripts in place\n  -o DIR           write translated files under DIR\n  -version, -v     print the version\n  -help, -h        show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n"
     u.write_fd(1, text)
 }
 
@@ -389,6 +390,7 @@ pub fn main() i32 = trust {
     val do_init: mut bool = false
     val do_login: mut bool = false
     val do_translate: mut bool = false
+    val do_format: mut bool = false
     val out_dir: mut ref u8 = none
     val command: mut ref u8 = none
     flags.bool_var(fs, c"version", c"v", @addr(show_version), c"print the version")
@@ -401,6 +403,7 @@ pub fn main() i32 = trust {
         @addr(do_translate),
         c"translate bash scripts to Blood"
     )
+    flags.bool_var(fs, c"fmt", none, @addr(do_format), c"format Blood scripts in place")
     flags.string_var(fs, c"out", c"o", @addr(out_dir), c"output directory for -translate-sh")
     flags.string_var(fs, c"c", none, @addr(command), c"execute a command or script and exit")
     flags.stop_at_positional(fs, true)
@@ -425,6 +428,24 @@ pub fn main() i32 = trust {
     if show_version {
         print_version()
         return 0
+    }
+    if do_format {
+        if all_args.len == 0 {
+            u.write_fd(2, c"blood: -fmt: expected a file\n")
+            return 2
+        }
+        val i: mut i64 = 0
+        val rc: mut i32 = 0
+        for {
+            if i >= all_args.len {
+                break
+            }
+            if format.format_file(u.vec_p(all_args, i) as ref u8) != 0 {
+                rc = 1
+            }
+            i++
+        }
+        return rc
     }
     if do_translate {
         if all_args.len == 0 {

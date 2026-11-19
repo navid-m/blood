@@ -1,0 +1,715 @@
+/// Source formatter for Blood scripts.
+
+val u = use("util.sx")
+
+fn is_alpha(c: u8) bool = trust {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn is_alnum(c: u8) bool = trust {
+    return is_alpha(c) || (c >= 48 && c <= 57)
+}
+
+fn expand_tabs(s: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 9 {
+            val k: mut i64 = 0
+            for {
+                if k >= 4 {
+                    break
+                }
+                u.buf_ch(b, 32)
+                k++
+            }
+        } elif c != 13 {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+    return u.buf_take(b)
+}
+
+fn skip_string(s: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val quote: u8 = @load8(@ptradd(s, i))
+    val j: mut i64 = i + 1
+    for {
+        if j >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, j))
+        if c == 92 {
+            j += 2
+            continue
+        }
+        if c == quote {
+            j++
+            break
+        }
+        j++
+    }
+    return j
+}
+
+fn skip_raw_string(s: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val quote: u8 = @load8(@ptradd(s, i + 1))
+    val j: mut i64 = i + 2
+    for {
+        if j >= n {
+            break
+        }
+        if @load8(@ptradd(s, j)) == quote {
+            j++
+            break
+        }
+        j++
+    }
+    return j
+}
+
+fn split_comment(line: ref u8) i64 = trust {
+    val n: i64 = u.s_len(line)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            return -1
+        }
+        val c: u8 = @load8(@ptradd(line, i))
+        if c == 114 && i + 1 < n {
+            val q: u8 = @load8(@ptradd(line, i + 1))
+            if q == 34 || q == 39 {
+                i = skip_raw_string(line, i)
+                continue
+            }
+        }
+        if c == 34 || c == 39 {
+            i = skip_string(line, i)
+            continue
+        }
+        if c == 35 {
+            return i
+        }
+        i++
+    }
+    return -1
+}
+
+fn brace_delta(s: ref u8) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    val delta: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 114 && i + 1 < n {
+            val q: u8 = @load8(@ptradd(s, i + 1))
+            if q == 34 || q == 39 {
+                i = skip_raw_string(s, i)
+                continue
+            }
+        }
+        if c == 34 || c == 39 {
+            i = skip_string(s, i)
+            continue
+        }
+        if c == 123 {
+            delta++
+        } elif c == 125 {
+            delta--
+        }
+        i++
+    }
+    return delta
+}
+
+fn leading_closes(s: ref u8) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    val count: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 32 {
+            i++
+            continue
+        }
+        if c == 125 {
+            count++
+            i++
+            continue
+        }
+        break
+    }
+    return count
+}
+
+fn indent_string(level: i64) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val n: mut i64 = level
+    if n < 0 {
+        n = 0
+    }
+    n = n * 4
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        u.buf_ch(b, 32)
+        i++
+    }
+    return u.buf_take(b)
+}
+
+fn excluded_call(name: ref u8) bool = trust {
+    return u.s_eq(name, c"if") || u.s_eq(name, c"elif") || u.s_eq(name, c"else") || u.s_eq(
+        name,
+        c"while"
+    ) || u.s_eq(name, c"for") || u.s_eq(name, c"para") || u.s_eq(name, c"fn") || u.s_eq(
+        name,
+        c"try"
+    ) || u.s_eq(name, c"catch") || u.s_eq(name, c"except") || u.s_eq(name, c"raise") || u.s_eq(
+        name,
+        c"throw"
+    ) || u.s_eq(name, c"return") || u.s_eq(name, c"break") || u.s_eq(name, c"continue") || u.s_eq(
+        name,
+        c"pass"
+    ) || u.s_eq(name, c"not") || u.s_eq(name, c"and") || u.s_eq(name, c"or") || u.s_eq(
+        name,
+        c"in"
+    ) || u.s_eq(name, c"defer")
+}
+
+fn previous_nonspace(s: ref u8, at: i64) u8 = trust {
+    val i: mut i64 = at - 1
+    for {
+        if i < 0 {
+            return 0
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c != 32 {
+            return c
+        }
+        i--
+    }
+    return 0
+}
+
+fn previous_word(s: ref u8, at: i64) ref u8 = trust {
+    val i: mut i64 = at - 1
+    for {
+        if i < 0 {
+            return c""
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c != 32 {
+            break
+        }
+        i--
+    }
+    if i < 0 {
+        return c""
+    }
+    val end: i64 = i + 1
+    for {
+        if i < 0 {
+            break
+        }
+        if !is_alnum(@load8(@ptradd(s, i))) {
+            i++
+            break
+        }
+        i--
+    }
+    if i < 0 {
+        i = 0
+    }
+    return u.s_substr(s, i, end)
+}
+
+fn top_level_commas(s: ref u8) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    val depth: mut i64 = 0
+    val commas: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 114 && i + 1 < n {
+            val q: u8 = @load8(@ptradd(s, i + 1))
+            if q == 34 || q == 39 {
+                i = skip_raw_string(s, i)
+                continue
+            }
+        }
+        if c == 34 || c == 39 {
+            i = skip_string(s, i)
+            continue
+        }
+        if c == 40 || c == 91 || c == 123 {
+            depth++
+        } elif c == 41 || c == 93 || c == 125 {
+            if depth > 0 {
+                depth--
+            }
+        } elif c == 44 && depth == 0 {
+            commas++
+        }
+        i++
+    }
+    return commas
+}
+
+fn top_level_operator(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    val depth: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 114 && i + 1 < n {
+            val q: u8 = @load8(@ptradd(s, i + 1))
+            if q == 34 || q == 39 {
+                i = skip_raw_string(s, i)
+                continue
+            }
+        }
+        if c == 34 || c == 39 {
+            i = skip_string(s, i)
+            continue
+        }
+        if c == 40 || c == 91 || c == 123 {
+            depth++
+        } elif c == 41 || c == 93 || c == 125 {
+            if depth > 0 {
+                depth--
+            }
+        } elif depth == 0 {
+            if c == 43 || c == 45 || c == 42 || c == 47 || c == 37 || c == 60 || c == 62 || c == 61 || c == 33 || c == 58 || c == 38 || c == 124 {
+                return true
+            }
+        }
+        i++
+    }
+    return false
+}
+
+fn starts_reserved(s: ref u8) bool = trust {
+    val t: ref u8 = u.s_trim(s)
+    val n: i64 = u.s_len(t)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        if !is_alnum(@load8(@ptradd(t, i))) {
+            break
+        }
+        i++
+    }
+    if i == 0 {
+        return false
+    }
+    return excluded_call(u.s_substr(t, 0, i)) || u.s_eq(u.s_substr(t, 0, i), c"not")
+}
+
+fn skip_balanced(s: ref u8, open: i64) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val depth: mut i64 = 1
+    val i: mut i64 = open + 1
+    for {
+        if i >= n {
+            return -1
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 114 && i + 1 < n {
+            val q: u8 = @load8(@ptradd(s, i + 1))
+            if q == 34 || q == 39 {
+                i = skip_raw_string(s, i)
+                continue
+            }
+        }
+        if c == 34 || c == 39 {
+            i = skip_string(s, i)
+            continue
+        }
+        if c == 40 {
+            depth++
+        } elif c == 41 {
+            depth--
+            if depth == 0 {
+                return i
+            }
+        }
+        i++
+    }
+    return -1
+}
+
+fn format_calls(s: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 114 && i + 1 < n {
+            val q: u8 = @load8(@ptradd(s, i + 1))
+            if q == 34 || q == 39 {
+                val end: i64 = skip_raw_string(s, i)
+                u.buf_addn(b, @ptradd(s, i), end - i)
+                i = end
+                continue
+            }
+        }
+        if c == 34 || c == 39 {
+            val end: i64 = skip_string(s, i)
+            u.buf_addn(b, @ptradd(s, i), end - i)
+            i = end
+            continue
+        }
+        if !is_alpha(c) {
+            u.buf_ch(b, c)
+            i++
+            continue
+        }
+        val start: i64 = i
+        for {
+            if i >= n {
+                break
+            }
+            if !is_alnum(@load8(@ptradd(s, i))) {
+                break
+            }
+            i++
+        }
+        val name: ref u8 = u.s_substr(s, start, i)
+        val prev_char: u8 = previous_nonspace(s, start)
+        val prev_word: ref u8 = previous_word(s, start)
+        if i >= n || @load8(@ptradd(s, i)) != 40 || prev_char == 46 || u.s_eq(prev_word, c"fn") || excluded_call(name) {
+            u.buf_add(b, name)
+            continue
+        }
+        val close: i64 = skip_balanced(s, i)
+        if close < 0 {
+            u.buf_add(b, name)
+            continue
+        }
+        val inner: ref u8 = u.s_substr(s, i + 1, close)
+        val inner_trim: ref u8 = u.s_trim(inner)
+        val followed: mut u8 = 0
+        if close + 1 < n {
+            followed = @load8(@ptradd(s, close + 1))
+        }
+        val keep: bool = u.s_len(inner_trim) == 0 || u.s_ends_with(inner_trim, c",") || u.s_starts(
+            inner_trim,
+            c"["
+        ) || u.s_starts(inner_trim, c"{") || u.s_starts(inner_trim, c"(") || followed == 46 || followed == 91 || top_level_commas(inner_trim) > 0 || top_level_operator(inner_trim) || starts_reserved(inner_trim)
+        if keep {
+            u.buf_addn(b, @ptradd(s, start), close + 1 - start)
+            i = close + 1
+            continue
+        }
+        u.buf_add(b, name)
+        u.buf_ch(b, 32)
+        u.buf_add(b, u.s_trim(format_calls(inner_trim)))
+        i = close + 1
+    }
+    return u.buf_take(b)
+}
+
+fn find_assign(s: ref u8) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    val depth: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 114 && i + 1 < n {
+            val q: u8 = @load8(@ptradd(s, i + 1))
+            if q == 34 || q == 39 {
+                i = skip_raw_string(s, i)
+                continue
+            }
+        }
+        if c == 34 || c == 39 {
+            i = skip_string(s, i)
+            continue
+        }
+        if c == 40 || c == 91 || c == 123 {
+            depth++
+        } elif c == 41 || c == 93 || c == 125 {
+            if depth > 0 {
+                depth--
+            }
+        } elif c == 61 && depth == 0 {
+            val prev: mut u8 = 0
+            if i > 0 {
+                prev = @load8(@ptradd(s, i - 1))
+            }
+            val next: mut u8 = 0
+            if i + 1 < n {
+                next = @load8(@ptradd(s, i + 1))
+            }
+            if prev != 61 && prev != 33 && prev != 60 && prev != 62 && prev != 43 && prev != 45 && prev != 42 && prev != 47 && prev != 37 && next != 61 && next != 62 {
+                return i
+            }
+        }
+        i++
+    }
+    return -1
+}
+
+fn valid_lhs(s: ref u8) bool = trust {
+    val t: ref u8 = u.s_trim(s)
+    val n: i64 = u.s_len(t)
+    if n == 0 || !is_alpha(@load8(t)) {
+        return false
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(t, i))
+        if is_alnum(c) || c == 46 || c == 91 || c == 93 || c == 34 || c == 39 {
+            i++
+            continue
+        }
+        return false
+    }
+    return true
+}
+
+fn align_assignments(codes: mut ref u.Vec, indents: ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= codes.len {
+            break
+        }
+        val code: ref u8 = u.vec_p(codes, i) as ref u8
+        val at: i64 = find_assign(code)
+        if at <= 0 {
+            i++
+            continue
+        }
+        val lhs: ref u8 = u.s_trim(u.s_substr(code, 0, at))
+        if !valid_lhs(lhs) {
+            i++
+            continue
+        }
+        val indent: i64 = u.vec_gets(indents, i)
+        val j: mut i64 = i
+        val widest: mut i64 = u.s_len(lhs)
+        for {
+            if j >= codes.len {
+                break
+            }
+            if u.vec_gets(indents, j) != indent {
+                break
+            }
+            val line: ref u8 = u.vec_p(codes, j) as ref u8
+            val eq: i64 = find_assign(line)
+            if eq <= 0 {
+                break
+            }
+            val left: ref u8 = u.s_trim(u.s_substr(line, 0, eq))
+            if !valid_lhs(left) {
+                break
+            }
+            if u.s_len(left) > widest {
+                widest = u.s_len(left)
+            }
+            j++
+        }
+        if j - i >= 2 {
+            val k: mut i64 = i
+            for {
+                if k >= j {
+                    break
+                }
+                val line: ref u8 = u.vec_p(codes, k) as ref u8
+                val eq: i64 = find_assign(line)
+                val left: ref u8 = u.s_trim(u.s_substr(line, 0, eq))
+                val right: ref u8 = u.s_trim(u.s_substr(line, eq + 1, u.s_len(line)))
+                val b: mut ref u.Buf = u.buf_new()
+                u.buf_add(b, left)
+                val pad: mut i64 = widest - u.s_len(left) + 1
+                for {
+                    if pad <= 0 {
+                        break
+                    }
+                    u.buf_ch(b, 32)
+                    pad--
+                }
+                u.buf_ch(b, 61)
+                u.buf_ch(b, 32)
+                u.buf_add(b, right)
+                u.vec_setp(codes, k, u.buf_take(b) as ref void)
+                k++
+            }
+        }
+        i = j
+    }
+}
+
+fn output_line(b: mut ref u.Buf, indent: i64, code: ref u8, comment: ref u8) void = trust {
+    if u.s_len(code) == 0 && u.s_len(comment) == 0 {
+        u.buf_ch(b, 10)
+        return
+    }
+    u.buf_add(b, indent_string(indent))
+    if u.s_len(code) > 0 {
+        u.buf_add(b, code)
+    }
+    if u.s_len(comment) > 0 {
+        if u.s_len(code) > 0 {
+            u.buf_ch(b, 32)
+        }
+        u.buf_add(b, comment)
+    }
+    u.buf_ch(b, 10)
+}
+
+pub fn format_text(src: ref u8) ref u8 = trust {
+    val text: ref u8 = expand_tabs(src)
+    val n: i64 = u.s_len(text)
+    val codes: mut ref u.Vec = u.vec_new()
+    val comments: mut ref u.Vec = u.vec_new()
+    val indents: mut ref u.Vec = u.vec_new()
+    val depth: mut i64 = 0
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n && start == n {
+            break
+        }
+        if i == n || @load8(@ptradd(text, i)) == 10 {
+            val raw: ref u8 = u.s_substr(text, start, i)
+            val line: ref u8 = u.s_trim(raw)
+            if u.s_len(line) == 0 {
+                u.vec_pushp(codes, c"" as ref void)
+                u.vec_pushp(comments, c"" as ref void)
+                u.vec_push(indents, 0)
+            } else {
+                val at: i64 = split_comment(line)
+                val code: mut ref u8 = c""
+                val comment: mut ref u8 = c""
+                if at < 0 {
+                    code = u.s_trim(line)
+                } else {
+                    code = u.s_trim(u.s_substr(line, 0, at))
+                    comment = u.s_trim(u.s_substr(line, at, u.s_len(line)))
+                }
+                if u.s_len(code) == 0 {
+                    u.vec_pushp(codes, c"" as ref void)
+                    u.vec_pushp(comments, comment as ref void)
+                    u.vec_push(indents, depth)
+                } elif u.s_eq(code, c"{") && codes.len > 0 {
+                    val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
+                    if u.s_len(prev) > 0 && !u.s_starts(prev, c"#") {
+                        val merged: ref u8 = u.s_cat(prev, c" {")
+                        u.vec_setp(codes, codes.len - 1, merged as ref void)
+                        depth++
+                    } else {
+                        u.vec_pushp(codes, code as ref void)
+                        u.vec_pushp(comments, comment as ref void)
+                        u.vec_push(indents, depth)
+                        depth += brace_delta(code)
+                    }
+                } elif (u.s_starts(code, c"else") || u.s_starts(code, c"catch") || u.s_starts(code, c"except")) && codes.len > 0 {
+                    val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
+                    if u.s_eq(u.s_trim(prev), c"}") {
+                        val merged: ref u8 = u.s_cat3(prev, c" ", code)
+                        u.vec_setp(codes, codes.len - 1, merged as ref void)
+                        depth += brace_delta(code)
+                        if depth < 0 {
+                            depth = 0
+                        }
+                    } else {
+                        val alloc: i64 = leading_closes(code)
+                        val level: mut i64 = depth - alloc
+                        if level < 0 {
+                            level = 0
+                        }
+                        u.vec_pushp(codes, format_calls(code) as ref void)
+                        u.vec_pushp(comments, comment as ref void)
+                        u.vec_push(indents, level)
+                        depth += brace_delta(code)
+                        if depth < 0 {
+                            depth = 0
+                        }
+                    }
+                } else {
+                    val alloc: i64 = leading_closes(code)
+                    val level: mut i64 = depth - alloc
+                    if level < 0 {
+                        level = 0
+                    }
+                    u.vec_pushp(codes, format_calls(code) as ref void)
+                    u.vec_pushp(comments, comment as ref void)
+                    u.vec_push(indents, level)
+                    depth += brace_delta(code)
+                    if depth < 0 {
+                        depth = 0
+                    }
+                }
+            }
+            start = i + 1
+        }
+        i++
+    }
+    align_assignments(codes, indents)
+    val b: mut ref u.Buf = u.buf_new()
+    val k: mut i64 = 0
+    for {
+        if k >= codes.len {
+            break
+        }
+        output_line(
+            b,
+            u.vec_gets(indents, k),
+            u.vec_p(codes, k) as ref u8,
+            u.vec_p(comments, k) as ref u8
+        )
+        k++
+    }
+    return u.buf_take(b)
+}
+
+pub fn format_file(path: ref u8) i32 = trust {
+    val data: ref u8 = u.read_file(path)
+    if data == none {
+        u.write_fd(2, u.s_cat3(c"blood: -fmt: ", path, c": cannot read file\n"))
+        return 1
+    }
+    val out: ref u8 = format_text(data)
+    if !u.write_file(path, out) {
+        u.write_fd(2, u.s_cat3(c"blood: -fmt: ", path, c": cannot write file\n"))
+        return 1
+    }
+    return 0
+}

@@ -2838,6 +2838,32 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         set_error(v_to_str(v), n.line, n.col)
         return
     }
+    if n.kind == lang.NodeKind.CommandCall {
+        val call: ref lang.Node = u.vec_p(n.kids, 0) as ref lang.Node
+        val callee: ref lang.Node = u.vec_p(call.kids, 0) as ref lang.Node
+        if callee.kind == lang.NodeKind.Var {
+            val fnval: ref Value = env_lookup(env, callee.s)
+            if fnval != none && fnval.tag == 7 {
+                val args: ref u.Vec = eval_args(call, 1, env)
+                if g_flow != 0 {
+                    return
+                }
+                call_func(fnval.p as ref Func, args, call)
+                return
+            }
+        }
+        if u.hooks_ready == 0 {
+            return
+        }
+        val hook: fn(ref u8) i32 = u.run_shell_hook
+        val st: i32 = hook(n.s)
+        set_status(st as i64)
+        if u.interrupt_flag != 0 {
+            u.interrupt_flag = 0
+            set_error(c"interrupted", n.line, n.col)
+        }
+        return
+    }
     if n.kind == lang.NodeKind.ShellCmd {
         if u.hooks_ready == 0 {
             return
