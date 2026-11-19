@@ -8,6 +8,9 @@ build release {
     env {
         GIT_HASH=$((git rev-parse --short HEAD))
     }
+    darwin {
+        flags "-release -runtime:hosted"
+    }
 }
 
 build dev {

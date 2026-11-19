@@ -6,15 +6,37 @@ val histmod = use("history.sx")
 val comp    = use("completion.sx")
 val rt      = use("std/runtime")
 
-pub type Termios = {
-    c_iflag: mut u32
-    c_oflag: mut u32
-    c_cflag: mut u32
-    c_lflag: mut u32
-    c_line: mut u8
-    c_cc: mut [32]u8
-    c_ispeed: mut u32
-    c_ospeed: mut u32
+when darwin {
+    /// Darwin `struct termios`: `tcflag_t` and `speed_t` are C `unsigned long`
+    /// (64-bit) and `NCCS` is 20.
+    extern type Termios = {
+        c_iflag: mut u64
+        c_oflag: mut u64
+        c_cflag: mut u64
+        c_lflag: mut u64
+        c_cc: mut [20]u8
+        c_ispeed: mut u64
+        c_ospeed: mut u64
+    }
+}
+otherwise {
+    pub type Termios = {
+        c_iflag: mut u32
+        c_oflag: mut u32
+        c_cflag: mut u32
+        c_lflag: mut u32
+        c_line: mut u8
+        c_cc: mut [32]u8
+        c_ispeed: mut u32
+        c_ospeed: mut u32
+    }
+}
+
+when darwin {
+    /// `ioctl` is variadic, and Darwin's AArch64 ABI passes variadic
+    /// arguments on the stack. Declaring it as variadic keeps that contract.
+    extern "sys/ioctl.h"
+    extern (C, header) fn c_ioctl(fd: i32, req: u64, ...) i32 = "ioctl"
 }
 
 pub type PollFd = {
@@ -92,6 +114,48 @@ fn const_icrnl() u32 = trust {
     return 256 as u32
 }
 
+fn d_const_echo() u64 = trust {
+    return 8 as u64
+}
+
+fn d_const_icanon() u64 = trust {
+    return 256 as u64
+}
+
+fn d_const_isig() u64 = trust {
+    return 128 as u64
+}
+
+fn d_const_iexten() u64 = trust {
+    return 1024 as u64
+}
+
+fn d_const_ixon() u64 = trust {
+    return 512 as u64
+}
+
+fn d_const_icrnl() u64 = trust {
+    return 256 as u64
+}
+
+fn winsize_request() u64 = trust {
+    when darwin {
+        return 1074295912 as u64
+    }
+    otherwise {
+        return 21523 as u64
+    }
+}
+
+fn query_winsize(ws: ref WinSize) i32 = trust {
+    when darwin {
+        return c_ioctl(1, winsize_request(), ws as ref void)
+    }
+    otherwise {
+        return rt.ioctl(1, winsize_request(), ws as ref void)
+    }
+}
+
 pub fn init_terminal() void = trust {
     val t: mut Termios = @zeroed
     if rt.tcgetattr(0, @addr(t) as ref void) == 0 {
@@ -111,12 +175,22 @@ pub fn raw_mode() void = trust {
     if term.have_tty == 0 {
         return
     }
-    val t: mut Termios = term.orig
-    t.c_lflag = t.c_lflag & ~(const_echo() | const_icanon() | const_iexten() | const_isig())
-    t.c_iflag = t.c_iflag & ~(const_ixon() | const_icrnl())
-    @store8(@ptradd(@addr(t.c_cc) as ref u8, 6), 1)
-    @store8(@ptradd(@addr(t.c_cc) as ref u8, 5), 0)
-    rt.tcsetattr(0, 0, @addr(t) as ref void)
+    when darwin {
+        val t: mut Termios = term.orig
+        t.c_lflag = t.c_lflag & ~(d_const_echo() | d_const_icanon() | d_const_iexten() | d_const_isig())
+        t.c_iflag = t.c_iflag & ~(d_const_ixon() | d_const_icrnl())
+        @store8(@ptradd(@addr(t.c_cc) as ref u8, 16), 1)
+        @store8(@ptradd(@addr(t.c_cc) as ref u8, 17), 0)
+        rt.tcsetattr(0, 0, @addr(t) as ref void)
+    }
+    otherwise {
+        val t: mut Termios = term.orig
+        t.c_lflag = t.c_lflag & ~(const_echo() | const_icanon() | const_iexten() | const_isig())
+        t.c_iflag = t.c_iflag & ~(const_ixon() | const_icrnl())
+        @store8(@ptradd(@addr(t.c_cc) as ref u8, 6), 1)
+        @store8(@ptradd(@addr(t.c_cc) as ref u8, 5), 0)
+        rt.tcsetattr(0, 0, @addr(t) as ref void)
+    }
     term.raw_active = 1
 }
 
@@ -130,7 +204,7 @@ pub fn cooked_mode() void = trust {
 
 pub fn cols() i64 = trust {
     val ws: mut WinSize = @zeroed
-    if rt.ioctl(1, 21523 as u64, @addr(ws) as ref void) == 0 && ws.cols > 0 {
+    if query_winsize(@addr(ws)) == 0 && ws.cols > 0 {
         return ws.cols as i64
     }
     return 80
@@ -138,7 +212,7 @@ pub fn cols() i64 = trust {
 
 pub fn rows() i64 = trust {
     val ws: mut WinSize = @zeroed
-    if rt.ioctl(1, 21523 as u64, @addr(ws) as ref void) == 0 && ws.rows > 0 {
+    if query_winsize(@addr(ws)) == 0 && ws.rows > 0 {
         return ws.rows as i64
     }
     return 24

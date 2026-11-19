@@ -370,7 +370,7 @@ pub fn main() i32 = trust {
     ex.signal_ignore(3)
     ex.signal_handler(2, on_interrupt)
     ex.signal_ignore(15)
-    ex.signal_ignore(20)
+    ex.signal_ignore(ex.sig_tstp())
     val h: mut ref histmod.History = histmod.history_new(c)
     u.scratch_begin()
     histmod.history_load(h)
@@ -490,6 +490,6 @@ pub fn main() i32 = trust {
     ex.signal_default(2)
     ex.signal_default(3)
     ex.signal_default(15)
-    ex.signal_default(20)
+    ex.signal_default(ex.sig_tstp())
     return code
 }

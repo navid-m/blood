@@ -4,6 +4,13 @@ val u = use("util.sx")
 
 val rt = use("std/runtime")
 
+when darwin {
+    /// `open` is variadic, and Darwin's AArch64 ABI passes variadic
+    /// arguments on the stack. Declaring it as variadic keeps that contract.
+    extern "fcntl.h"
+    extern (C, header) fn c_open(path: ref u8, flags: i32, ...) i32 = "open"
+}
+
 pub fn getpid() i32 = trust {
     return rt.getpid()
 }
@@ -40,16 +47,44 @@ pub fn fd_write(fd: i32, buf: ref u8, n: i64) i64 = trust {
     return rt.write(fd, buf, n as usize)
 }
 
-pub fn open_write(path: ref u8, append: bool) i32 = trust {
-    val flags: mut i32 = 1 | 64 | 512
-    if append {
-        flags = 1 | 64 | 1024
+fn open_fd(path: ref u8, flags: i32, mode: i32) i32 = trust {
+    when darwin {
+        return c_open(path, flags, mode)
     }
-    return rt.open(path, flags, 438)
+    otherwise {
+        return rt.open(path, flags, mode)
+    }
+}
+
+pub fn open_write(path: ref u8, append: bool) i32 = trust {
+    when darwin {
+        val flags: mut i32 = 1 | 512 | 1024
+        if append {
+            flags = 1 | 512 | 8
+        }
+        return open_fd(path, flags, 438)
+    }
+    otherwise {
+        val flags: mut i32 = 1 | 64 | 512
+        if append {
+            flags = 1 | 64 | 1024
+        }
+        return open_fd(path, flags, 438)
+    }
+}
+
+/// Signal number used for terminal suspension (SIGTSTP).
+pub fn sig_tstp() i32 = trust {
+    when darwin {
+        return 18
+    }
+    otherwise {
+        return 20
+    }
 }
 
 pub fn open_read(path: ref u8) i32 = trust {
-    return rt.open(path, 0, 0)
+    return open_fd(path, 0, 0)
 }
 
 pub fn p_fork() i32 = trust {
@@ -137,7 +172,7 @@ pub fn child_reset() void = trust {
     signal_default(2)
     signal_default(3)
     signal_default(15)
-    signal_default(20)
+    signal_default(sig_tstp())
     signal_default(21)
     signal_default(22)
 }
@@ -193,7 +228,7 @@ pub fn capture_argv(argv: ref u.Vec, quiet_err: bool) ref u8 = trust {
         fd_close(p.read_fd)
         fd_dup2(p.write_fd, 1)
         if quiet_err {
-            val nullfd: i32 = rt.open(c"/dev/null", 1, 438)
+            val nullfd: i32 = open_fd(c"/dev/null", 1, 438)
             if nullfd >= 0 {
                 fd_dup2(nullfd, 2)
                 fd_close(nullfd)
