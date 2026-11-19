@@ -12,18 +12,6 @@ for x in ["hello", "world"] {
 }
 ```
 
-## Translating bash scripts
-
-Translate one script, or a directory tree of scripts, to Blood:
-
-```
-blood -translate-sh script.sh
-blood -translate-sh -o translated scripts/
-```
-
-Files are written next to their source by default, with `.sh` or `.bash`
-replaced by `.bx`. Directories are walked recursively.
-
 ## Resources
 
 - [Site](https://bloodshell.pages.dev)
@@ -72,6 +60,18 @@ para for file in glob("src/*.sx") {
     say capture("sha256sum {file}").strip()
 }
 ```
+
+## Translating bash scripts
+
+Translate one script, or a directory tree of scripts, to Blood:
+
+```
+blood -translate-sh script.sh
+blood -translate-sh -o translated scripts/
+```
+
+Files are written next to their source by default, with `.sh` or `.bash`
+replaced by `.bx`. Directories are walked recursively.
 
 ---
 
