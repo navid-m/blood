@@ -1383,6 +1383,16 @@ If the target variable does not exist in the current environment chain, it is
 created in the current scope. If it exists in an enclosing scope, that binding
 is updated.
 
+Prefixing a variable assignment with `export` also writes the value to the
+process environment:
+
+[source]
+----
+export PATH = (user_paths + [env("PATH")]).join(":")
+----
+
+The variable remains available as an ordinary script binding.
+
 ==== `say`
 
 [source]

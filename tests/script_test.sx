@@ -67,6 +67,16 @@ test "script supports dictionaries and attributes" {
     }
 }
 
+test "script export assignments update the environment" {
+    trust {
+        fresh()
+        val src: ref u8 = c"export BLOOD_TEST_EXPORT = [\"a\", \"b\"].join(\":\")\nif env(\"BLOOD_TEST_EXPORT\") != \"a:b\" {\n    raise \"export env\"\n}\nif BLOOD_TEST_EXPORT != \"a:b\" {\n    raise \"export value\"\n}\n"
+        assert run(src) == 0
+        assert u.s_eq(u.env_get(c"BLOOD_TEST_EXPORT"), c"a:b")
+        u.env_unset(c"BLOOD_TEST_EXPORT")
+    }
+}
+
 test "script supports compound assignment" {
     trust {
         fresh()

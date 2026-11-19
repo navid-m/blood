@@ -3013,6 +3013,18 @@ supported.</p>
 created in the current scope. If it exists in an enclosing scope, that binding
 is updated.</p>
 </div>
+<div class="paragraph">
+<p>Prefixing a variable assignment with <code>export</code> also writes the value to the
+process environment:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>export PATH = (user_paths + [env("PATH")]).join(":")</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The variable remains available as an ordinary script binding.</p>
+</div>
 </div>
 <div class="sect3">
 <h4 id="_say"><code>say</code></h4>
@@ -4372,7 +4384,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-19 17:30:22 UTC
+Last updated 2026-11-19 17:43:20 UTC
 </div>
 </div>
 </body>

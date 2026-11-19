@@ -1036,7 +1036,53 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
     if keyword(t, c"try") {
         return parse_try(p)
     }
+    if keyword(t, c"export") {
+        return parse_export(p)
+    }
     return parse_simple(p)
+}
+
+fn parse_export(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    val save: i64 = p.i
+    advance(p)
+    if cur(p).kind != TokenKind.Ident {
+        p.i = save
+        return parse_shell_cmd(p, t)
+    }
+    val name: ref Token = cur(p)
+    val name_end: i64 = name.end
+    advance(p)
+    if !spaced_assignment(p, name_end) {
+        p.i = save
+        return parse_shell_cmd(p, t)
+    }
+    val op: i64 = is_assign_op(cur(p))
+    if op == 0 {
+        p.i = save
+        return parse_shell_cmd(p, t)
+    }
+    advance(p)
+    val rhs: ref Node = parse_expr(p)
+    val lhs: mut ref Node = node_new(NodeKind.Var, name.line, name.col)
+    lhs.s = name.text
+    val n: mut ref Node = node_new(NodeKind.Assign, t.line, t.col)
+    n.a = op
+    n.b = 1
+    u.vec_pushp(n.kids, lhs as ref void)
+    u.vec_pushp(n.kids, rhs as ref void)
+    if cur(p).kind == TokenKind.Newline {
+        advance(p)
+    }
+    return n
+}
+
+fn spaced_assignment(p: ref Parser, at: i64) bool = trust {
+    if at >= u.s_len(p.src) {
+        return false
+    }
+    val c: u8 = @load8(@ptradd(p.src, at))
+    return c == 32 || c == 9
 }
 
 fn parse_if(p: mut ref Parser) ref Node = trust {

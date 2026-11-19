@@ -236,6 +236,21 @@ test "parser builds assignments, conditions and loops" {
     }
 }
 
+test "parser builds exported assignments" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"export PATH = \"/opt/bin\"\n")
+        assert prog.kids.len == 1
+        val n: ref lang.Node = kid(prog, 0)
+        assert n.kind == lang.NodeKind.Assign
+        assert n.b == 1
+        assert u.s_eq(kid(n, 0).s, c"PATH")
+        assert kid(n, 1).kind == lang.NodeKind.StrLit
+
+        val shell: ref lang.Node = lang.parse(c"export PATH=/opt/bin\n")
+        assert kid(shell, 0).kind == lang.NodeKind.ShellCmd
+    }
+}
+
 test "parser builds functions, returns, try and shell commands" {
     trust {
         val fns: ref lang.Node = lang.parse(c"fn add(a, b) {\n  return a + b\n}\n")

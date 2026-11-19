@@ -1840,7 +1840,12 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         if g_flow != 0 {
             return
         }
-        assign_target(u.vec_p(n.kids, 0) as ref lang.Node, value, env, n.a)
+        val target: ref lang.Node = u.vec_p(n.kids, 0) as ref lang.Node
+        assign_target(target, value, env, n.a)
+        if n.b != 0 && g_flow == 0 && target.kind == lang.NodeKind.Var {
+            val bound: ref Value = env_lookup(env, target.s)
+            u.env_set(target.s, v_to_str(bound))
+        }
         return
     }
     if n.kind == lang.NodeKind.If {
