@@ -61,10 +61,10 @@ if which("spectre") {
 say("==> running samples")
 
 failures = 0
-count = 0
+count    = 0
 
 for sample in glob("samples/*.bx") {
-    name = stem(sample)
+    name     = stem(sample)
     expected = "samples/expected/{name}.out"
 
     if not is_file(expected) {
