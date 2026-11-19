@@ -487,93 +487,6 @@ script.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_system_overview">System overview</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>Blood is a single executable. The principal source modules are:</p>
-</div>
-<table class="tableblock frame-all grid-all stretch">
-<colgroup>
-<col style="width: 25%;">
-<col style="width: 75%;">
-</colgroup>
-<thead>
-<tr>
-<th class="tableblock halign-left valign-top">Module</th>
-<th class="tableblock halign-left valign-top">Responsibility</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/main.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Entry point, argument handling, interactive loop, startup files.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/util.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Allocation, strings, vectors, maps, files, paths, terminal I/O.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/config.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">INI configuration loading and defaults.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/prompt.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Prompt layout, colours, directory formatting, Git discovery.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/history.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Persistent history, encoding, duplicate suppression, search.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/completion.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Command, directory, path, and variable completion.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/terminal.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Raw terminal mode, key decoding, line editor, menu, search.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/exec.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Fork, exec, pipes, waits, redirection primitives.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/shell.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Command scanning, parsing, pipelines, redirection, builtins.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/lang.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Lexer, AST, and parser for the scripting language.</p></td>
-</tr>
-<tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>src/script.sx</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Script interpreter, values, builtins, shell integration.</p></td>
-</tr>
-</tbody>
-</table>
-<div class="paragraph">
-<p>The build configurations in <code>sx.mod</code> are:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlight"><code>build release {
-    flags "-release -dynamic"
-    output "./blood"
-}
-
-build dev {
-    flags "-dynamic"
-    output "./blood-dev"
-}</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>No C, C++, Rust, or Zig source is introduced by the shell. The executable
-uses the C library supplied by the platform for process, terminal, file, and
-memory primitives.</p>
-</div>
-</div>
-</div>
-<div class="sect1">
 <h2 id="_invocation">Invocation</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -4377,7 +4290,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-19 17:51:05 UTC
+Last updated 2026-11-19 17:57:11 UTC
 </div>
 </div>
 </body>
