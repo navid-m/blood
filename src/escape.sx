@@ -146,7 +146,7 @@ fn find_files(q: ref u8) i32 = trust {
 
 fn print_help() void = trust {
     u.write_fd(1, c\\blood escape commands:
-        \\  :blood                     show the Blood brand art
+        \\  :blood                     show the blood art
         \\  :cfg.SECTION.KEY           show current and possible values
         \\  :cfg.SECTION.KEY = VALUE   update and save configuration
         \\  :ft SEARCH                 find files by name under the current directory
