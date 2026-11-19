@@ -17,7 +17,7 @@ defer {
 }
 
 var blood_bin = env("BLOOD", default: "")
-var r = null
+var r         = null
 
 if blood_bin == "" {
     if not which("spectre") {
@@ -61,12 +61,12 @@ if which("spectre") {
 
 say("==> running samples")
 
-var failures = 0
-var count    = 0
-var name     = ""
-var expected = ""
+var failures    = 0
+var count       = 0
+var name        = ""
+var expected    = ""
 var sample_args = []
-var want     = ""
+var want        = ""
 
 for sample in glob("samples/*.bx") {
     name     = stem(sample)
