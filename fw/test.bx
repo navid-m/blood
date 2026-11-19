@@ -1,7 +1,8 @@
 #!/usr/bin/env blood
-# Build Blood, run the unit tests, and verify every sample program.
-#
-# Set BLOOD=/path/to/blood to test an existing binary instead of building.
+
+## Build Blood, run the unit tests, and verify every sample program.
+##
+## Set BLOOD=/path/to/blood to test an existing binary instead of building.
 
 fn cleanup(tmp) {
     shell("rm -rf \"{tmp}\"")
