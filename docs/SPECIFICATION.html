@@ -534,9 +534,9 @@ when an input cannot be read or written.</p>
 file or a directory. Directories are walked recursively and every <code>.bx</code> or
 <code>.blood</code> file below them is formatted. The formatter normalises indentation to
 four spaces, places opening braces on the same line as their header, removes
-Allman-style brace lines, aligns consecutive assignments, and prefers
-unparenthesised calls where the arguments are unambiguous. Files that cannot
-be read or written are reported and produce status 1.</p>
+Allman-style brace lines, aligns consecutive assignments, and writes calls
+with parentheses where the call is unambiguous. Files that cannot be read or
+written are reported and produce status 1.</p>
 </div>
 <div class="paragraph">
 <p><code>blood -init</code> writes a default configuration file at the configuration path
@@ -4487,7 +4487,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-19 19:33:23 UTC
+Last updated 2026-11-19 19:44:41 UTC
 </div>
 </div>
 </body>

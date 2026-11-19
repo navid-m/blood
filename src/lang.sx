@@ -92,6 +92,8 @@ pub type Node = {
     params: mut ref u.Vec
     line: mut i64
     col: mut i64
+    start: mut i64
+    end: mut i64
 }
 
 pub type Lexer = {
@@ -879,6 +881,8 @@ fn node_new(kind: NodeKind, line: i64, col: i64) ref Node = trust {
     n.params = u.vec_new()
     n.line = line
     n.col = col
+    n.start = 0
+    n.end = 0
     return n
 }
 
@@ -898,6 +902,14 @@ fn advance(p: mut ref Parser) void = trust {
     if p.i + 1 < p.toks.len {
         p.i++
     }
+}
+
+fn last_end(p: ref Parser) i64 = trust {
+    if p.i <= 0 {
+        return 0
+    }
+    val t: ref Token = u.vec_p(p.toks, p.i - 1) as ref Token
+    return t.end
 }
 
 fn text_is(t: ref Token, text: ref u8) bool = trust {
@@ -1380,10 +1392,16 @@ fn parse_unparen_args(p: mut ref Parser, call: mut ref Node) void = trust {
 fn parse_unparen_call(p: mut ref Parser, t: ref Token) ref Node = trust {
     val callee: mut ref Node = node_new(NodeKind.Var, t.line, t.col)
     callee.s = u.s_dup(t.text)
+    callee.start = t.start
+    callee.end = t.end
     val call: mut ref Node = node_new(NodeKind.Call, t.line, t.col)
+    call.a = 1
+    call.start = t.start
     u.vec_pushp(call.kids, callee as ref void)
     advance(p)
+    call.b = cur(p).start
     parse_unparen_args(p, call)
+    call.end = last_end(p)
     return call
 }
 
@@ -1397,7 +1415,10 @@ fn try_command_call(p: mut ref Parser) ref Node = trust {
     g_no_unparen = 1
     val call: ref Node = parse_unparen_call(p, t)
     g_no_unparen = saved_unparen
-    val done: bool = cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent || (cur(p).kind == TokenKind.Op && text_is(cur(p), c";"))
+    val done: bool = cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent || (cur(p).kind == TokenKind.Op && text_is(
+            cur(p),
+            c";"
+        ))
     if g_error != none || !done {
         p.i = save
         g_no_unparen = saved_unparen
@@ -1534,17 +1555,34 @@ fn parse_simple(p: mut ref Parser) ref Node = trust {
     if keyword(t, c"say") {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.Say, t.line, t.col)
-        for {
-            if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent {
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c"(") {
+            advance(p)
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c")") {
+                advance(p)
+            } else {
+                for {
+                    u.vec_pushp(n.kids, parse_expr(p) as ref void)
+                    if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+                        advance(p)
+                        continue
+                    }
+                    break
+                }
+                expect_op(p, c")")
+            }
+        } else {
+            for {
+                if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent {
+                    break
+                }
+                val e: ref Node = parse_expr(p)
+                u.vec_pushp(n.kids, e)
+                if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+                    advance(p)
+                    continue
+                }
                 break
             }
-            val e: ref Node = parse_expr(p)
-            u.vec_pushp(n.kids, e)
-            if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
-                advance(p)
-                continue
-            }
-            break
         }
         if cur(p).kind == TokenKind.Newline {
             advance(p)
@@ -1807,8 +1845,12 @@ fn parse_postfix(p: mut ref Parser) ref Node = trust {
                     cur(p).line,
                     cur(p).col
                 )
+                unparen.a = 1
+                unparen.start = node.start
                 u.vec_pushp(unparen.kids, node as ref void)
+                unparen.b = cur(p).start
                 parse_unparen_args(p, unparen)
+                unparen.end = last_end(p)
                 node = unparen
                 continue
             }
@@ -1936,6 +1978,8 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.Var, t.line, t.col)
         n.s = u.s_dup(t.text)
+        n.start = t.start
+        n.end = t.end
         return n
     }
     if t.kind == TokenKind.Op && u.s_eq(t.text, c"(") {

@@ -47,8 +47,14 @@ fn helper_script() ref u8 = trust {
     u.buf_add(b, c"done\n")
     u.buf_add(b, c"if [ \"$cmd\" = git ]; then\n")
     u.buf_add(b, c"  for f in \\\n")
-    u.buf_add(b, c"    /Library/Developer/CommandLineTools/usr/share/git-core/git-completion.bash \\\n")
-    u.buf_add(b, c"    /Applications/Xcode.app/Contents/Developer/usr/share/git-core/git-completion.bash \\\n")
+    u.buf_add(
+        b,
+        c"    /Library/Developer/CommandLineTools/usr/share/git-core/git-completion.bash \\\n"
+    )
+    u.buf_add(
+        b,
+        c"    /Applications/Xcode.app/Contents/Developer/usr/share/git-core/git-completion.bash \\\n"
+    )
     u.buf_add(b, c"    /opt/homebrew/share/git-core/git-completion.bash; do\n")
     u.buf_add(b, c"    if [ -r \"$f\" ]; then . \"$f\" >/dev/null 2>&1; break; fi\n")
     u.buf_add(b, c"  done\n")
@@ -58,14 +64,20 @@ fn helper_script() ref u8 = trust {
     u.buf_add(b, c"word_list=''\n")
     u.buf_add(b, c"action=''\n")
     u.buf_add(b, c"if [ -n \"$spec\" ]; then\n")
-    u.buf_add(b, c"  if [[ $spec =~ -F[[:space:]]+([^[:space:]]+) ]]; then fn_name=${BASH_REMATCH[1]}; fi\n")
+    u.buf_add(
+        b,
+        c"  if [[ $spec =~ -F[[:space:]]+([^[:space:]]+) ]]; then fn_name=${BASH_REMATCH[1]}; fi\n"
+    )
     u.buf_add(b, c"  if [[ $spec =~ -W[[:space:]]+(.+) ]]; then\n")
     u.buf_add(b, c"    word_list=${BASH_REMATCH[1]}\n")
     u.buf_add(b, c"    word_list=${word_list%\" $cmd\"}\n")
     u.buf_add(b, c"    word_list=${word_list#\\\"}; word_list=${word_list%\\\"}\n")
     u.buf_add(b, c"    word_list=${word_list#\"'\"}; word_list=${word_list%\"'\"}\n")
     u.buf_add(b, c"  fi\n")
-    u.buf_add(b, c"  if [[ $spec =~ -A[[:space:]]+([^[:space:]]+) ]]; then action=${BASH_REMATCH[1]}; fi\n")
+    u.buf_add(
+        b,
+        c"  if [[ $spec =~ -A[[:space:]]+([^[:space:]]+) ]]; then action=${BASH_REMATCH[1]}; fi\n"
+    )
     u.buf_add(b, c"fi\n")
     u.buf_add(b, c"COMP_LINE=$line\n")
     u.buf_add(b, c"COMP_POINT=$point\n")
@@ -80,12 +92,21 @@ fn helper_script() ref u8 = trust {
     u.buf_add(b, c"if [ -n \"$fn_name\" ] && declare -F \"$fn_name\" >/dev/null 2>&1; then\n")
     u.buf_add(b, c"  \"$fn_name\" \"$cmd\" \"$cur\" \"$prev\" >/dev/null 2>&1\n")
     u.buf_add(b, c"elif [ -n \"$word_list\" ]; then\n")
-    u.buf_add(b, c"  while IFS= read -r __bc_item; do COMPREPLY+=(\"$__bc_item\"); done < <(compgen -W \"$word_list\" -- \"$cur\" 2>/dev/null)\n")
+    u.buf_add(
+        b,
+        c"  while IFS= read -r __bc_item; do COMPREPLY+=(\"$__bc_item\"); done < <(compgen -W \"$word_list\" -- \"$cur\" 2>/dev/null)\n"
+    )
     u.buf_add(b, c"elif [ -n \"$action\" ]; then\n")
-    u.buf_add(b, c"  while IFS= read -r __bc_item; do COMPREPLY+=(\"$__bc_item\"); done < <(compgen -A \"$action\" -- \"$cur\" 2>/dev/null)\n")
+    u.buf_add(
+        b,
+        c"  while IFS= read -r __bc_item; do COMPREPLY+=(\"$__bc_item\"); done < <(compgen -A \"$action\" -- \"$cur\" 2>/dev/null)\n"
+    )
     u.buf_add(b, c"fi\n")
     u.buf_add(b, c"if [ ${#COMPREPLY[@]} -eq 0 ] && [[ $spec =~ -o[[:space:]]+default ]]; then\n")
-    u.buf_add(b, c"  while IFS= read -r __bc_item; do COMPREPLY+=(\"$__bc_item\"); done < <(compgen -f -- \"$cur\" 2>/dev/null)\n")
+    u.buf_add(
+        b,
+        c"  while IFS= read -r __bc_item; do COMPREPLY+=(\"$__bc_item\"); done < <(compgen -f -- \"$cur\" 2>/dev/null)\n"
+    )
     u.buf_add(b, c"fi\n")
     u.buf_add(b, c"for __bc_item in \"${COMPREPLY[@]}\"; do\n")
     u.buf_add(b, c"  [ -n \"$__bc_item\" ] && printf '%s\\n' \"$__bc_item\"\n")

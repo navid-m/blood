@@ -1141,7 +1141,11 @@ fn unary_file_test(t: mut ref Tr, op: ref u8, operand: ref u8) ref u8 = trust {
     if u.s_eq(op, c"-h") {
         flag = c"-L"
     }
-    return u.s_cat3(c"shell(\"test ", flag, u.s_cat3(c" \" + __bx_quote(", operand, c")).status == 0"))
+    return u.s_cat3(
+        c"shell(\"test ",
+        flag,
+        u.s_cat3(c" \" + __bx_quote(", operand, c")).status == 0")
+    )
 }
 
 fn pattern_match_expr(t: mut ref Tr, lhs: ref u8, pat: ref u8, negate: bool) ref u8 = trust {

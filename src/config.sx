@@ -501,7 +501,10 @@ pub fn known_key(section: ref u8, key: ref u8) bool = trust {
         ) || u.s_eq(
             key,
             c"case_sensitive"
-        ) || u.s_eq(key, c"history_suggestions") || u.s_eq(key, c"autosuggestions") || u.s_eq(key, c"external")
+        ) || u.s_eq(
+            key,
+            c"history_suggestions"
+        ) || u.s_eq(key, c"autosuggestions") || u.s_eq(key, c"external")
     }
     if u.s_eq(section, c"shell") {
         return u.s_eq(
@@ -572,7 +575,10 @@ fn needs_bool(section: ref u8, key: ref u8) bool = trust {
         ) || u.s_eq(
             key,
             c"case_sensitive"
-        ) || u.s_eq(key, c"history_suggestions") || u.s_eq(key, c"autosuggestions") || u.s_eq(key, c"external")
+        ) || u.s_eq(
+            key,
+            c"history_suggestions"
+        ) || u.s_eq(key, c"autosuggestions") || u.s_eq(key, c"external")
     }
     if u.s_eq(section, c"shell") {
         return u.s_eq(key, c"login_message") || u.s_eq(key, c"login")

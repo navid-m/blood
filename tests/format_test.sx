@@ -4,15 +4,15 @@ val u = use("../src/util.sx")
 test "formatter normalizes braces, indentation and assignments" {
     trust {
         val src: ref u8 = c"fn main()\n{\n\tx = 1\n\tlonger = 2\n\tsay(\"hi\")\n}\n"
-        val want: ref u8 = c"fn main() {\n    x      = 1\n    longer = 2\n    say \"hi\"\n}\n"
+        val want: ref u8 = c"fn main() {\n    x      = 1\n    longer = 2\n    say(\"hi\")\n}\n"
         assert u.s_eq(format.format_text(src), want)
     }
 }
 
-test "formatter prefers unparenthesized calls" {
+test "formatter prefers parenthesized calls" {
     trust {
-        val src: ref u8 = c"say(\"hello\")\nwhich(\"spectre\")\nif not which(\"spectre\") {\n    say(join(\"/a\", \"b\"))\n}\nobj.method(\"x\")\nfn f(a) { return a }\n"
-        val want: ref u8 = c"say \"hello\"\nwhich \"spectre\"\nif not which \"spectre\" {\n    say join(\"/a\", \"b\")\n}\nobj.method(\"x\")\nfn f(a) { return a }\n"
+        val src: ref u8 = c"say \"hello\"\nwhich \"spectre\"\nif not which \"spectre\" {\n    say join(\"/a\", \"b\")\n}\nobj.method(\"x\")\nfn f(a) { return a }\n"
+        val want: ref u8 = c"say(\"hello\")\nwhich(\"spectre\")\nif not which(\"spectre\") {\n    say(join(\"/a\", \"b\"))\n}\nobj.method(\"x\")\nfn f(a) { return a }\n"
         assert u.s_eq(format.format_text(src), want)
     }
 }
@@ -20,7 +20,7 @@ test "formatter prefers unparenthesized calls" {
 test "formatter joins allman else with closing braces" {
     trust {
         val src: ref u8 = c"if true\n{\n    say(\"a\")\n}\nelse\n{\n    say(\"b\")\n}\n"
-        val want: ref u8 = c"if true {\n    say \"a\"\n} else {\n    say \"b\"\n}\n"
+        val want: ref u8 = c"if true {\n    say(\"a\")\n} else {\n    say(\"b\")\n}\n"
         assert u.s_eq(format.format_text(src), want)
     }
 }
@@ -28,8 +28,22 @@ test "formatter joins allman else with closing braces" {
 test "formatter preserves comments and raw strings" {
     trust {
         val src: ref u8 = c"# top\nx = r\"a\\{b}\" # keep\n\nsay(x)\n"
-        val want: ref u8 = c"# top\nx = r\"a\\{b}\" # keep\n\nsay x\n"
+        val want: ref u8 = c"# top\nx = r\"a\\{b}\" # keep\n\nsay(x)\n"
         assert u.s_eq(format.format_text(src), want)
+    }
+}
+
+test "formatter keeps shell commands unparenthesized" {
+    trust {
+        val src: ref u8 = c"echo \"hi\"\ngit status --short\n"
+        assert u.s_eq(format.format_text(src), src)
+    }
+}
+
+test "formatter parenthesizes multi-argument say" {
+    trust {
+        val src: ref u8 = c"say \"a\", \"b\"\n"
+        assert u.s_eq(format.format_text(src), c"say(\"a\", \"b\")\n")
     }
 }
 
@@ -54,8 +68,8 @@ test "formatter walks directories and filters Blood scripts" {
         assert u.write_file(two, c"if true\n{\n  say(\"two\")\n}\n")
         assert u.write_file(other, c"if true\n{\n  say(\"keep\")\n}\n")
         assert format.format_path(dir) == 0
-        assert u.s_eq(u.read_file(one), c"if true {\n    say \"one\"\n}\n")
-        assert u.s_eq(u.read_file(two), c"if true {\n    say \"two\"\n}\n")
+        assert u.s_eq(u.read_file(one), c"if true {\n    say(\"one\")\n}\n")
+        assert u.s_eq(u.read_file(two), c"if true {\n    say(\"two\")\n}\n")
         assert u.s_eq(u.read_file(other), c"if true\n{\n  say(\"keep\")\n}\n")
     }
 }
@@ -67,6 +81,6 @@ test "formatter writes files in place" {
         val path: ref u8 = u.path_join(dir, c"sample.bx")
         assert u.write_file(path, c"if true\n{\n  say(\"hi\")\n}\n")
         assert format.format_file(path) == 0
-        assert u.s_eq(u.read_file(path), c"if true {\n    say \"hi\"\n}\n")
+        assert u.s_eq(u.read_file(path), c"if true {\n    say(\"hi\")\n}\n")
     }
 }

@@ -1,6 +1,7 @@
 /// Source formatter for Blood scripts.
 
-val u = use("util.sx")
+val u    = use("util.sx")
+val lang = use("lang.sx")
 
 fn is_alpha(c: u8) bool = trust {
     return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
@@ -404,7 +405,10 @@ fn format_calls(s: ref u8) ref u8 = trust {
         val name: ref u8 = u.s_substr(s, start, i)
         val prev_char: u8 = previous_nonspace(s, start)
         val prev_word: ref u8 = previous_word(s, start)
-        if i >= n || @load8(@ptradd(s, i)) != 40 || prev_char == 46 || u.s_eq(prev_word, c"fn") || excluded_call(name) {
+        if i >= n || @load8(@ptradd(
+                s,
+                i
+            )) != 40 || prev_char == 46 || u.s_eq(prev_word, c"fn") || excluded_call(name) {
             u.buf_add(b, name)
             continue
         }
@@ -422,7 +426,13 @@ fn format_calls(s: ref u8) ref u8 = trust {
         val keep: bool = u.s_len(inner_trim) == 0 || u.s_ends_with(inner_trim, c",") || u.s_starts(
             inner_trim,
             c"["
-        ) || u.s_starts(inner_trim, c"{") || u.s_starts(inner_trim, c"(") || followed == 46 || followed == 91 || top_level_commas(inner_trim) > 0 || top_level_operator(inner_trim) || starts_reserved(inner_trim)
+        ) || u.s_starts(
+            inner_trim,
+            c"{"
+        ) || u.s_starts(
+            inner_trim,
+            c"("
+        ) || followed == 46 || followed == 91 || top_level_commas(inner_trim) > 0 || top_level_operator(inner_trim) || starts_reserved(inner_trim)
         if keep {
             u.buf_addn(b, @ptradd(s, start), close + 1 - start)
             i = close + 1
@@ -591,6 +601,264 @@ fn output_line(b: mut ref u.Buf, indent: i64, code: ref u8, comment: ref u8) voi
     u.buf_ch(b, 10)
 }
 
+fn add_call_edit(
+    n: ref lang.Node,
+    positions: mut ref u.Vec,
+    texts: mut ref u.Vec,
+    cuts: mut ref u.Vec
+) void = trust {
+    if n.kind != lang.NodeKind.Call || n.a == 0 || n.kids.len == 0 {
+        return
+    }
+    val callee: ref lang.Node = u.vec_p(n.kids, 0) as ref lang.Node
+    if callee.end > 0 && n.end >= callee.end {
+        val cut: mut i64 = 0
+        if n.b > callee.end {
+            cut = n.b - callee.end
+        }
+        u.vec_push(positions, callee.end)
+        u.vec_pushp(texts, c"(" as ref void)
+        u.vec_push(cuts, cut)
+        u.vec_push(positions, n.end)
+        u.vec_pushp(texts, c")" as ref void)
+        u.vec_push(cuts, 0)
+    }
+}
+
+fn known_function(known: ref u.Map, name: ref u8) bool = trust {
+    if name == none {
+        return false
+    }
+    return u.map_has(known, name)
+}
+
+fn collect_paren_edits(
+    n: ref lang.Node,
+    known: ref u.Map,
+    positions: mut ref u.Vec,
+    texts: mut ref u.Vec,
+    cuts: mut ref u.Vec
+) void = trust {
+    if n == none {
+        return
+    }
+    if n.kind == lang.NodeKind.CommandCall && n.kids.len > 0 {
+        val call: ref lang.Node = u.vec_p(n.kids, 0) as ref lang.Node
+        if call.kids.len > 0 {
+            val callee: ref lang.Node = u.vec_p(call.kids, 0) as ref lang.Node
+            if callee.kind == lang.NodeKind.Var && known_function(known, callee.s) {
+                add_call_edit(call, positions, texts, cuts)
+                val j: mut i64 = 1
+                for {
+                    if j >= call.kids.len {
+                        break
+                    }
+                    collect_paren_edits(
+                        u.vec_p(call.kids, j) as ref lang.Node,
+                        known,
+                        positions,
+                        texts,
+                        cuts
+                    )
+                    j++
+                }
+            }
+        }
+        return
+    }
+    add_call_edit(n, positions, texts, cuts)
+    val i: mut i64 = 0
+    for {
+        if i >= n.kids.len {
+            break
+        }
+        collect_paren_edits(
+            u.vec_p(n.kids, i) as ref lang.Node,
+            known,
+            positions,
+            texts,
+            cuts
+        )
+        i++
+    }
+}
+
+fn collect_functions(n: ref lang.Node, known: mut ref u.Map) void = trust {
+    if n == none {
+        return
+    }
+    if n.kind == lang.NodeKind.FnDef && n.s != none {
+        u.map_put(known, n.s, 1)
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= n.kids.len {
+            break
+        }
+        collect_functions(u.vec_p(n.kids, i) as ref lang.Node, known)
+        i++
+    }
+}
+
+fn seed_builtins(known: mut ref u.Map) void = trust {
+    u.map_put(known, c"len", 1)
+    u.map_put(known, c"str", 1)
+    u.map_put(known, c"int", 1)
+    u.map_put(known, c"float", 1)
+    u.map_put(known, c"bool", 1)
+    u.map_put(known, c"range", 1)
+    u.map_put(known, c"print", 1)
+    u.map_put(known, c"input", 1)
+    u.map_put(known, c"sleep", 1)
+    u.map_put(known, c"exit", 1)
+    u.map_put(known, c"shell", 1)
+    u.map_put(known, c"capture", 1)
+    u.map_put(known, c"abs", 1)
+    u.map_put(known, c"min", 1)
+    u.map_put(known, c"max", 1)
+    u.map_put(known, c"sum", 1)
+    u.map_put(known, c"type", 1)
+    u.map_put(known, c"keys", 1)
+    u.map_put(known, c"values", 1)
+    u.map_put(known, c"items", 1)
+    u.map_put(known, c"read_file", 1)
+    u.map_put(known, c"write_file", 1)
+    u.map_put(known, c"append_file", 1)
+    u.map_put(known, c"env", 1)
+    u.map_put(known, c"clock", 1)
+    u.map_put(known, c"chr", 1)
+    u.map_put(known, c"ord", 1)
+    u.map_put(known, c"source", 1)
+    u.map_put(known, c"glob", 1)
+    u.map_put(known, c"rename", 1)
+    u.map_put(known, c"this", 1)
+    u.map_put(known, c"this_dir", 1)
+    u.map_put(known, c"run", 1)
+    u.map_put(known, c"eprint", 1)
+    u.map_put(known, c"indent", 1)
+    u.map_put(known, c"exists", 1)
+    u.map_put(known, c"is_file", 1)
+    u.map_put(known, c"is_dir", 1)
+    u.map_put(known, c"is_executable", 1)
+    u.map_put(known, c"which", 1)
+    u.map_put(known, c"mktemp_dir", 1)
+    u.map_put(known, c"remove_file", 1)
+    u.map_put(known, c"remove_all", 1)
+    u.map_put(known, c"parent", 1)
+    u.map_put(known, c"basename", 1)
+    u.map_put(known, c"stem", 1)
+    u.map_put(known, c"join", 1)
+    u.map_put(known, c"cd", 1)
+    u.map_put(known, c"unified_diff", 1)
+}
+
+fn apply_edits(
+    src: ref u8,
+    positions: ref u.Vec,
+    texts: ref u.Vec,
+    cuts: ref u.Vec
+) ref u8 = trust {
+    val out: mut ref u8 = u.s_dup(src)
+    val count: i64 = positions.len
+    val i: mut i64 = 0
+    for {
+        if i >= count {
+            break
+        }
+        val best: mut i64 = i
+        val j: mut i64 = i + 1
+        for {
+            if j >= count {
+                break
+            }
+            if u.vec_gets(positions, j) > u.vec_gets(positions, best) {
+                best = j
+            }
+            j++
+        }
+        if best != i {
+            val p: i64 = u.vec_gets(positions, i)
+            val t: ref void = u.vec_p(texts, i)
+            val c: i64 = u.vec_gets(cuts, i)
+            u.vec_sets(positions, i, u.vec_gets(positions, best))
+            u.vec_setp(texts, i, u.vec_p(texts, best))
+            u.vec_sets(cuts, i, u.vec_gets(cuts, best))
+            u.vec_sets(positions, best, p)
+            u.vec_setp(texts, best, t)
+            u.vec_sets(cuts, best, c)
+        }
+        val pos: i64 = u.vec_gets(positions, i)
+        val text: ref u8 = u.vec_p(texts, i) as ref u8
+        val cut: i64 = u.vec_gets(cuts, i)
+        val after: mut i64 = pos + cut
+        if after > u.s_len(out) {
+            after = u.s_len(out)
+        }
+        if pos >= 0 && pos <= u.s_len(out) {
+            out = u.s_cat3(u.s_substr(out, 0, pos), text, u.s_substr(out, after, u.s_len(out)))
+        }
+        i++
+    }
+    return out
+}
+
+fn add_call_parens(src: ref u8) ref u8 = trust {
+    lang.clear_error()
+    val program: ref lang.Node = lang.parse(src)
+    if lang.last_error() != none {
+        return u.s_dup(src)
+    }
+    val known: mut ref u.Map = u.map_new()
+    seed_builtins(known)
+    collect_functions(program, known)
+    val positions: mut ref u.Vec = u.vec_new()
+    val texts: mut ref u.Vec = u.vec_new()
+    val cuts: mut ref u.Vec = u.vec_new()
+    collect_paren_edits(program, known, positions, texts, cuts)
+    if positions.len == 0 {
+        return u.s_dup(src)
+    }
+    return apply_edits(src, positions, texts, cuts)
+}
+
+fn parenthesize_say(codes: mut ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= codes.len {
+            break
+        }
+        val code: ref u8 = u.vec_p(codes, i) as ref u8
+        if u.s_eq(code, c"say") {
+            u.vec_setp(codes, i, c"say()" as ref void)
+        } elif u.s_starts(code, c"say ") {
+            val rest: ref u8 = u.s_trim(u.s_substr(code, 4, u.s_len(code)))
+            if !u.s_starts(rest, c"(") {
+                val wrapped: ref u8 = u.s_cat3(c"say(", rest, c")")
+                u.vec_setp(codes, i, wrapped as ref void)
+            }
+        }
+        i++
+    }
+}
+
+fn join_codes(codes: ref u.Vec, comments: ref u.Vec, indents: ref u.Vec) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val k: mut i64 = 0
+    for {
+        if k >= codes.len {
+            break
+        }
+        output_line(
+            b,
+            u.vec_gets(indents, k),
+            u.vec_p(codes, k) as ref u8,
+            u.vec_p(comments, k) as ref u8
+        )
+        k++
+    }
+    return u.buf_take(b)
+}
+
 pub fn format_text(src: ref u8) ref u8 = trust {
     val text: ref u8 = expand_tabs(src)
     val n: i64 = u.s_len(text)
@@ -640,7 +908,13 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                         u.vec_push(indents, depth)
                         depth += brace_delta(code)
                     }
-                } elif (u.s_starts(code, c"else") || u.s_starts(code, c"catch") || u.s_starts(code, c"except")) && codes.len > 0 {
+                } elif (u.s_starts(
+                        code,
+                        c"else"
+                    ) || u.s_starts(
+                        code,
+                        c"catch"
+                    ) || u.s_starts(code, c"except")) && codes.len > 0 {
                     val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
                     if u.s_eq(u.s_trim(prev), c"}") {
                         val merged: ref u8 = u.s_cat3(prev, c" ", code)
@@ -655,7 +929,7 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                         if level < 0 {
                             level = 0
                         }
-                        u.vec_pushp(codes, format_calls(code) as ref void)
+                        u.vec_pushp(codes, code as ref void)
                         u.vec_pushp(comments, comment as ref void)
                         u.vec_push(indents, level)
                         depth += brace_delta(code)
@@ -669,7 +943,7 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                     if level < 0 {
                         level = 0
                     }
-                    u.vec_pushp(codes, format_calls(code) as ref void)
+                    u.vec_pushp(codes, code as ref void)
                     u.vec_pushp(comments, comment as ref void)
                     u.vec_push(indents, level)
                     depth += brace_delta(code)
@@ -682,22 +956,10 @@ pub fn format_text(src: ref u8) ref u8 = trust {
         }
         i++
     }
+    parenthesize_say(codes)
     align_assignments(codes, indents)
-    val b: mut ref u.Buf = u.buf_new()
-    val k: mut i64 = 0
-    for {
-        if k >= codes.len {
-            break
-        }
-        output_line(
-            b,
-            u.vec_gets(indents, k),
-            u.vec_p(codes, k) as ref u8,
-            u.vec_p(comments, k) as ref u8
-        )
-        k++
-    }
-    return u.buf_take(b)
+    val out: ref u8 = join_codes(codes, comments, indents)
+    return add_call_parens(out)
 }
 
 pub fn format_file(path: ref u8) i32 = trust {
