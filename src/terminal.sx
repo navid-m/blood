@@ -230,6 +230,75 @@ pub fn write_s(s: ref u8) void = trust {
     u.write_fd(1, s)
 }
 
+fn hex_digit(v: u8) u8 = trust {
+    if v < 10 {
+        return 48 + v
+    }
+    return 55 + v
+}
+
+fn append_url_path(b: mut ref u.Buf, path: ref u8) void = trust {
+    val n: i64 = u.s_len(path)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(path, i))
+        val plain: bool = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 45 || c == 46 || c == 95 || c == 126 || c == 47 || c == 58
+        if plain {
+            u.buf_ch(b, c)
+        } else {
+            u.buf_ch(b, 37)
+            u.buf_ch(b, hex_digit(c / 16))
+            u.buf_ch(b, hex_digit(c % 16))
+        }
+        i++
+    }
+}
+
+fn append_host(b: mut ref u.Buf, host: ref u8) void = trust {
+    val n: i64 = u.s_len(host)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(host, i))
+        if c >= 32 && c != 127 && c != 47 && c != 59 {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+}
+
+fn append_osc_133(b: mut ref u.Buf, body: ref u8) void = trust {
+    u.buf_add(b, c"\x1b]133;")
+    u.buf_add(b, body)
+    u.buf_ch(b, 7)
+}
+
+fn append_osc_7(b: mut ref u.Buf) void = trust {
+    u.buf_add(b, c"\x1b]7;file://")
+    append_host(b, u.hostname())
+    append_url_path(b, u.cwd())
+    u.buf_ch(b, 7)
+}
+
+/// Tell the terminal that command output is about to start.
+pub fn command_start() void = trust {
+    write_s(c"\x1b]133;C\x07")
+}
+
+/// Tell the terminal that the previous command finished with `status`.
+pub fn command_finished(status: i32) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"\x1b]133;D;")
+    u.buf_add(b, u.s_int(status as i64))
+    u.buf_ch(b, 7)
+    write_s(u.buf_take(b))
+}
+
 /// Read one byte directly from the tty, bypassing [pending_keys].
 fn read_tty_byte_timeout(ms: i32) i32 = trust {
     val pfd: mut PollFd = @zeroed
@@ -1136,9 +1205,10 @@ fn accept_suggestion(e: mut ref Editor) bool = trust {
     return true
 }
 
-fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
+fn draw(e: mut ref Editor, prompt: ref u8, kind: i64) void = trust {
     val pr: ref u8 = display_prompt(e, prompt)
     val prompt_row_count: i64 = prompt_rows(pr)
+    val fresh: bool = e.first_draw != 0
     if e.first_draw == 0 {
         val rows_up: i64 = e.drawn_rows - 1
         if rows_up > 0 {
@@ -1198,7 +1268,18 @@ fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
     }
     e.suggestion = suggestion
     val b: mut ref u.Buf = u.buf_new()
+    if fresh {
+        append_osc_7(b)
+        if kind == 1 {
+            append_osc_133(b, c"A;k=s")
+        } else {
+            append_osc_133(b, c"A")
+        }
+    }
     u.buf_add(b, pr)
+    if fresh {
+        append_osc_133(b, c"B")
+    }
     emit_display_segment(b, e.line, e.view_start, end)
     if suggestion != none && end == e.len && avail - w > 0 {
         val suffix: ref u8 = u.s_substr(suggestion, e.len, u.s_len(suggestion))
@@ -1458,13 +1539,13 @@ fn end_input_line(e: mut ref Editor) void = trust {
     }
 }
 
-pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust {
+fn readline_impl(e: mut ref Editor, prompt: ref u8, right: ref u8, kind: i64) ref u8 = trust {
     raw_mode()
     ensure_line_start()
     e.right_prompt = u.s_dup(right)
     e.first_draw = 1
     e.view_start = 0
-    draw(e, prompt)
+    draw(e, prompt, kind)
     for {
         val k: i32 = read_key()
         if k < 0 {
@@ -1479,7 +1560,7 @@ pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust
                 write_s(c"\n")
                 return u.s_dup(e.line)
             }
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 13 || k == 10 {
@@ -1501,19 +1582,19 @@ pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust
             }
             ed_delete(e)
             e.menu_active = 0
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 1 {
             e.pos = 0
             e.menu_active = 0
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 5 {
             e.pos = e.len
             e.menu_active = 0
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 2 {
@@ -1521,7 +1602,7 @@ pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust
                 e.pos = u.utf8_prev(e.line, e.pos)
             }
             e.menu_active = 0
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 6 {
@@ -1531,42 +1612,42 @@ pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust
                 accept_suggestion(e)
             }
             e.menu_active = 0
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 11 {
             ed_kill_to_end(e)
             e.menu_active = 0
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 21 {
             replace_range(e, 0, e.pos, c"")
             e.menu_active = 0
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 23 {
             ed_kill_word(e)
             e.menu_active = 0
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 12 {
             write_s(c"\x1b[2J\x1b[H")
             e.first_draw = 1
             e.menu_active = 0
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 16 {
             history_recall(e, true)
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 14 {
             history_recall(e, false)
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 18 {
@@ -1577,7 +1658,7 @@ pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust
                 e.search_active = 1
                 e.menu_active = 0
             }
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 9 {
@@ -1586,7 +1667,7 @@ pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust
             } else {
                 open_completion(e)
             }
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 27 {
@@ -1594,34 +1675,42 @@ pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust
                 e.menu_active = 0
                 ed_set(e, e.menu_base)
                 e.pos = e.menu_end
-                draw(e, prompt)
+                draw(e, prompt, kind)
                 continue
             }
             read_escape(e)
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k == 127 || k == 8 {
             e.menu_active = 0
             ed_backspace(e)
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k >= 32 && k < 127 {
             e.menu_active = 0
             e.hist_index = e.hist.items.len
             ed_insert_byte(e, k as u8)
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
         if k >= 128 {
             e.menu_active = 0
             ed_insert_byte(e, k as u8)
-            draw(e, prompt)
+            draw(e, prompt, kind)
             continue
         }
     }
     return none
+}
+
+pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust {
+    return readline_impl(e, prompt, right, 0)
+}
+
+pub fn readline_cont(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust {
+    return readline_impl(e, prompt, right, 1)
 }
 
 /// Read one line from a non-interactive stdin (no prompts, no editing).

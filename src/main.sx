@@ -250,6 +250,7 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
         term.cooked_mode()
         if line == none {
             if term.was_cancelled(ed) {
+                status = 130
                 u.interrupt_flag = 0
                 u.scratch_end()
                 continue
@@ -265,10 +266,12 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
         if escape.is_command(trimmed) {
             histmod.history_add(h, trimmed)
             u.interrupt_flag = 0
+            term.command_start()
             val st: i32 = escape.handle(trimmed, c, h)
             status = st as i64
             script.set_external_status(status)
             duration = 0
+            term.command_finished(status as i32)
             if u.script_exit_code >= 0 {
                 code = u.script_exit_code as i32
                 u.scratch_end()
@@ -294,7 +297,7 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
         if block_mode {
             for {
                 val ced: mut ref term.Editor = term.editor_new(c, h, shell.vars(), shell.aliases())
-                val next: ref u8 = term.readline(ced, prompt_continuation(), c"")
+                val next: ref u8 = term.readline_cont(ced, prompt_continuation(), c"")
                 term.cooked_mode()
                 if next == none {
                     if term.was_cancelled(ced) {
@@ -313,7 +316,7 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
                     break
                 }
                 val ced: mut ref term.Editor = term.editor_new(c, h, shell.vars(), shell.aliases())
-                val next: ref u8 = term.readline(ced, prompt_continuation(), c"")
+                val next: ref u8 = term.readline_cont(ced, prompt_continuation(), c"")
                 term.cooked_mode()
                 if next == none {
                     if term.was_cancelled(ced) {
@@ -334,6 +337,7 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
         }
         histmod.history_add(h, full)
         u.interrupt_flag = 0
+        term.command_start()
         val started: i64 = u.now_ms()
         if script.looks_like_script(full) {
             val st: i32 = script.run_interactive(full)
@@ -352,10 +356,12 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
             script.set_external_status(status)
             if u.script_exit_code >= 0 {
                 code = u.script_exit_code as i32
+                term.command_finished(status as i32)
                 u.scratch_end()
                 break
             }
         }
+        term.command_finished(status as i32)
         duration = u.now_ms() - started
         if shell.exit_requested() {
             code = shell.exit_code()
