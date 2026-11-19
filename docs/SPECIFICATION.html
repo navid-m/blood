@@ -585,6 +585,7 @@ memory primitives.</p>
 blood -c COMMAND
 blood SCRIPT.blood|SCRIPT.bx [ARG...]
 blood -init
+blood -translate-sh [-o DIR] PATH...
 blood -version
 blood -help</code></pre>
 </div>
@@ -603,6 +604,16 @@ as a script. Otherwise it is executed as a shell command.</p>
 <p><code>blood SCRIPT.blood ARG&#8230;&#8203;</code> or <code>blood SCRIPT.bx ARG&#8230;&#8203;</code> reads and executes the
 named script. Remaining arguments are exposed to the script as the list
 variable <code>args</code>. The script name is exposed as <code><em>file</em></code>.</p>
+</div>
+<div class="paragraph">
+<p><code>blood -translate-sh PATH&#8230;&#8203;</code> translates bash scripts to Blood scripts. Each
+<code>PATH</code> may be a <code>.sh</code> or <code>.bash</code> file or a directory. Directories are walked
+recursively and every bash script below them is translated. By default the
+translated file is written beside its source with the extension replaced by
+<code>.bx</code>; <code>-o DIR</code> (also <code>-out DIR</code>) writes the results below <code>DIR</code>, preserving
+the directory structure relative to the translated directory. The command
+prints one <code>SOURCE &#8594; TARGET</code> line per translated file and exits with status 1
+when an input cannot be read or written.</p>
 </div>
 <div class="paragraph">
 <p><code>blood -init</code> writes a default configuration file at the configuration path
@@ -736,6 +747,65 @@ with a new prompt.</p>
 command. An external command interrupted by Ctrl-C normally produces status
 130.</p>
 </div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_bash_translation">Bash translation</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>-translate-sh</code> converts the common bash scripting constructs into their
+Blood equivalents while keeping the result ordinary, editable Blood source.
+Translation is deliberately conservative: a construct that has no faithful
+Blood equivalent is retained as a <code>shell</code> statement or emitted as a comment.</p>
+</div>
+<div class="paragraph">
+<p>The following constructs are translated:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Variable assignment (<code>NAME=VALUE</code>, <code>NAME+=VALUE</code>, arrays, <code>local</code>,
+<code>declare</code>, <code>readonly</code>, and <code>export</code>) becomes a Blood assignment. Assigned
+names are seeded from the environment before the script body runs and are
+mirrored into the shell variable table so later commands can still use
+<code>$NAME</code>. Array variables become Blood lists.</p>
+</li>
+<li>
+<p><code>echo</code> becomes <code>say</code> when the arguments can be expressed as Blood values.</p>
+</li>
+<li>
+<p><code>if</code>, <code>elif</code>, <code>else</code>, <code>while</code>, <code>until</code>, <code>for NAME in LIST</code>, C-style
+<code>for &#8230;&#8203;</code>, <code>case</code>, and function declarations become brace-delimited
+Blood statements. <code>case</code> clauses become an <code>if</code>/<code>elif</code> chain.</p>
+</li>
+<li>
+<p><code>[ &#8230;&#8203; ]</code>, <code>[[ &#8230;&#8203; ]]</code>, and <code>test &#8230;&#8203;</code> conditions become Blood expressions.
+String tests, numeric tests, boolean operators, and common file tests are
+supported. File tests use the platform <code>test</code> utility through <code>shell</code>.</p>
+</li>
+<li>
+<p><code>$(&#8230;&#8203;)</code> and backtick command substitution become <code>capture(&#8230;&#8203;)</code>.
+<code>$&#8230;&#8203;</code> arithmetic becomes a Blood arithmetic expression.</p>
+</li>
+<li>
+<p><code>$NAME</code>, <code>${NAME}</code>, <code>${NAME:-default}</code>, <code>${<mark>NAME}</code>, positional parameters,
+<code>$?</code>, <code>$</mark></code>, and <code>$@</code> are mapped to Blood variables and the standard <code>args</code>,
+<code>status</code>, and <code><em>file</em></code> values.</p>
+</li>
+<li>
+<p><code>read -r NAME</code> becomes <code>NAME = input()</code>. Later commands are wrapped in
+<code>shell(&#8230;&#8203;)</code> so arbitrary command lines, pipelines, and redirections keep
+working even when the script parser would otherwise read them as
+expressions.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The translator does not implement heredocs, process substitution, traps,
+bash <code>set</code> options, <code>BASH_SOURCE</code>, associative arrays, or arbitrary parameter
+expansion modifiers. These are preserved as comments or ordinary shell
+statements and may need manual adjustment.</p>
 </div>
 </div>
 </div>
@@ -1108,6 +1178,17 @@ immediately preceding command.</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>case_sensitive</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">boolean</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code>. Controls prefix matching.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>history_suggestions</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code>. Enables inline history suggestions.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>external</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">boolean</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code>. Enables application completion through
+installed Bash completion definitions.</p></td>
 </tr>
 </tbody>
 </table>
@@ -1924,6 +2005,16 @@ variable names.</p>
 <p>The <code>PATH</code> scan is performed lazily on the first command completion and cached
 for the life of the process. Only entries that are not directories and that
 pass the executable access check are included.</p>
+</div>
+<div class="paragraph">
+<p>When <code>[completion] external</code> is enabled, argument completion for a non-builtin
+command is delegated to the Bash programmable-completion engine. Blood loads
+the command&#8217;s <code>complete</code> definition from the standard Bash completion
+directories and from <code>~/.bash_completion</code>, evaluates it in a child Bash
+process, and uses the resulting <code>COMPREPLY</code> candidates. Path-like words and
+commands with no matching Bash definition continue to use Blood&#8217;s filesystem
+completion. Bash does not provide completion descriptions, so externally
+completed candidates are displayed without them.</p>
 </div>
 <div class="paragraph">
 <p>Filesystem completion splits the word at its final <code>/</code>. The directory portion
@@ -3315,6 +3406,19 @@ standard output.</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Execute a Blood script file and return its status.</p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>this()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Name and absolute path of the executing script as a dictionary
+with keys <code>name</code> (the final path component) and <code>path</code> (absolute). Returns null
+when no script file is executing.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>this_dir()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Absolute path of the directory containing the executing
+script. Returns null when no script file is executing.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>abs(x)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Absolute numeric value, returned as a float.</p></td>
@@ -4268,7 +4372,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-19 01:02:29 UTC
+Last updated 2026-11-19 17:30:22 UTC
 </div>
 </div>
 </body>
