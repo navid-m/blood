@@ -60,6 +60,12 @@ pub type TermState = {
 
 val term: mut TermState = @zeroed
 
+/// Bytes read while probing the terminal for its cursor position. They are
+/// genuine keystrokes (typed ahead while a command was running) and are fed
+/// back to the editor before anything else.
+val pending_keys: mut ref u8 = none
+val pending_pos: mut i64 = 0
+
 pub type Editor = {
     cfg: mut ref cfgmod.Config
     hist: mut ref histmod.History
@@ -222,7 +228,183 @@ pub fn write_s(s: ref u8) void = trust {
     u.write_fd(1, s)
 }
 
+/// Read one byte directly from the tty, bypassing [pending_keys].
+fn read_tty_byte_timeout(ms: i32) i32 = trust {
+    val pfd: mut PollFd = @zeroed
+    pfd.fd = 0
+    pfd.events = 1
+    pfd.revents = 0
+    if rt.poll(@addr(pfd) as ref void, 1, ms) <= 0 {
+        return -1
+    }
+    val c: mut u8 = 0
+    val n: i64 = rt.read(0, @addr(c) as ref void, 1)
+    if n <= 0 {
+        return -1
+    }
+    return c as i32
+}
+
+/// Extract the column from a DEC cursor position report (`ESC [ row ; col`).
+fn dsr_column(report: ref u8) i64 = trust {
+    val n: i64 = u.s_len(report)
+    if n < 5 || @load8(report) != 27 || @load8(@ptradd(report, 1)) != 91 {
+        return -1
+    }
+    val sep: i64 = u.s_index_of_char(report, 59, 2)
+    if sep < 2 || sep + 1 >= n {
+        return -1
+    }
+    match u.parse_int(u.s_substr(report, sep + 1, n)) {
+        some v => {
+            if v >= 1 {
+                return v
+            }
+            return -1
+        }
+        none => {
+            return -1
+        }
+    }
+}
+
+/// Queue keystrokes for the editor, keeping any that were buffered before.
+fn pending_append(s: ref u8) void = trust {
+    val n: i64 = u.s_len(s)
+    if n == 0 {
+        return
+    }
+    val from: mut i64 = 0
+    val keep: mut i64 = 0
+    if pending_keys != none {
+        val old: i64 = u.s_len(pending_keys)
+        if pending_pos < old {
+            from = pending_pos
+            keep = old - from
+        }
+    }
+    val out: ref u8 = u.xalloc_perm(keep + n + 1) as ref u8
+    if keep > 0 {
+        u.mem_copy(out as ref void, @ptradd(pending_keys, from) as ref void, keep)
+    }
+    u.mem_copy(@ptradd(out, keep) as ref void, s as ref void, n)
+    @store8(@ptradd(out, keep + n), 0)
+    pending_keys = out
+    pending_pos = 0
+}
+
+fn pending_take() i32 = trust {
+    if pending_keys == none {
+        return -1
+    }
+    if pending_pos >= u.s_len(pending_keys) {
+        pending_keys = none
+        pending_pos = 0
+        return -1
+    }
+    val c: u8 = @load8(@ptradd(pending_keys, pending_pos))
+    pending_pos++
+    return c as i32
+}
+
+/// Ask the terminal for the cursor column via a DEC cursor position report.
+/// Returns -1 when the terminal does not answer in time. Any keystrokes read
+/// while waiting are queued for the editor.
+fn query_cursor_column() i64 = trust {
+    if term.have_tty == 0 {
+        return -1
+    }
+    write_s(c"\x1b[6n")
+    val typed: mut ref u.Buf = u.buf_new()
+    val cand: mut ref u.Buf = u.buf_new()
+    val in_cand: mut bool = false
+    val seen_sep: mut bool = false
+    val got_col: mut bool = false
+    val started: i64 = u.now_ms()
+    val count: mut i64 = 0
+    for {
+        if count >= 65536 || u.now_ms() - started > 1000 {
+            break
+        }
+        val wait: mut i32 = 20
+        if in_cand {
+            wait = 100
+        }
+        val k: i32 = read_tty_byte_timeout(wait)
+        if k < 0 {
+            break
+        }
+        count++
+        if !in_cand {
+            if k == 27 {
+                in_cand = true
+                u.buf_ch(cand, 27)
+            } else {
+                u.buf_ch(typed, k as u8)
+            }
+            continue
+        }
+        val clen: i64 = cand.len
+        if clen == 1 {
+            if k == 91 {
+                u.buf_ch(cand, k as u8)
+            } else {
+                u.buf_ch(typed, 27)
+                u.buf_ch(typed, k as u8)
+                cand = u.buf_new()
+                in_cand = false
+            }
+            continue
+        }
+        if k >= 48 && k <= 57 {
+            if seen_sep {
+                if clen < 16 {
+                    u.buf_ch(cand, k as u8)
+                }
+                got_col = true
+            } elif clen < 10 {
+                u.buf_ch(cand, k as u8)
+            }
+            continue
+        }
+        if k == 59 && !seen_sep {
+            u.buf_ch(cand, k as u8)
+            seen_sep = true
+            continue
+        }
+        if k == 82 && seen_sep && got_col {
+            val col: i64 = dsr_column(u.buf_view(cand))
+            pending_append(u.buf_view(typed))
+            return col
+        }
+        u.buf_add(typed, u.buf_view(cand))
+        u.buf_ch(typed, k as u8)
+        cand = u.buf_new()
+        in_cand = false
+        seen_sep = false
+        got_col = false
+    }
+    if in_cand {
+        u.buf_add(typed, u.buf_view(cand))
+    }
+    pending_append(u.buf_view(typed))
+    return -1
+}
+
+/// If a command left the cursor in the middle of a line (output without a
+/// trailing newline), move to a fresh line before drawing the prompt.
+fn ensure_line_start() void = trust {
+    val col: i64 = query_cursor_column()
+    if col > 1 {
+        write_s(c"\r\n")
+    }
+}
+
 fn read_key() i32 = trust {
+    val key: i32 = pending_take()
+    if key >= 0 {
+        return key
+    }
     val c: mut u8 = 0
     val n: i64 = rt.read(0, @addr(c) as ref void, 1)
     if n <= 0 {
@@ -232,6 +414,9 @@ fn read_key() i32 = trust {
 }
 
 fn read_key_timeout(ms: i32) i32 = trust {
+    if pending_keys != none && pending_pos < u.s_len(pending_keys) {
+        return read_key()
+    }
     val pfd: mut PollFd = @zeroed
     pfd.fd = 0
     pfd.events = 1
@@ -1039,6 +1224,7 @@ fn end_input_line(e: mut ref Editor) void = trust {
 
 pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust {
     raw_mode()
+    ensure_line_start()
     e.right_prompt = u.s_dup(right)
     e.first_draw = 1
     e.view_start = 0
