@@ -11,6 +11,7 @@ pub enum TokenKind = {
     Int
     Float
     Str
+    RawStr
     Op
     CmdSubst
 }
@@ -42,6 +43,8 @@ pub enum NodeKind = {
     Try
     Raise
     ShellCmd
+    Defer
+    Spread
     IntLit
     FloatLit
     StrLit
@@ -365,6 +368,13 @@ fn detect_style(src: ref u8) i64 = trust {
             i++
         }
         val word: ref u8 = u.s_ndup(@ptradd(src, start), i - start)
+        if u.s_eq(word, c"defer") {
+            val j: i64 = next_significant(src, i, n)
+            if j >= 0 && @load8(@ptradd(src, j)) == 123 {
+                return 1
+            }
+            continue
+        }
         if is_suite_word(word) {
             val style: i64 = scan_suite_style(src, i, n)
             if style >= 0 {
@@ -456,6 +466,39 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
             lx.pos++
             lx.col++
             continue
+        }
+        if c == 114 && lx.pos + 1 < lx.len {
+            val q: u8 = @load8(@ptradd(lx.src, lx.pos + 1))
+            if q == 34 || q == 39 {
+                val start: i64 = lx.pos
+                val sline: i64 = lx.line
+                val scol: i64 = lx.col
+                lx.pos += 2
+                lx.col += 2
+                val body: i64 = lx.pos
+                val closed: mut bool = false
+                for {
+                    if lx.pos >= lx.len {
+                        break
+                    }
+                    val d: u8 = @load8(@ptradd(lx.src, lx.pos))
+                    if d == q {
+                        closed = true
+                        break
+                    }
+                    lx.pos++
+                    lx.col++
+                }
+                val text: ref u8 = u.s_ndup(@ptradd(lx.src, body), lx.pos - body)
+                if closed {
+                    lx.pos++
+                    lx.col++
+                } else {
+                    set_error(sline, scol, c"unterminated raw string")
+                }
+                emit(lx, TokenKind.RawStr, text, start, lx.pos, sline, scol)
+                continue
+            }
         }
         if is_alpha(c) {
             val start: i64 = lx.pos
@@ -1039,7 +1082,28 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
     if keyword(t, c"export") {
         return parse_export(p)
     }
+    if keyword(t, c"defer") {
+        return parse_defer(p)
+    }
     return parse_simple(p)
+}
+
+fn parse_defer(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    advance(p)
+    val n: mut ref Node = node_new(NodeKind.Defer, t.line, t.col)
+    if cur(p).kind == TokenKind.Op && text_is(cur(p), c"{") {
+        n.a = 1
+        u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
+        return n
+    }
+    val stmt: mut ref Node = node_new(NodeKind.ExprStmt, t.line, t.col)
+    u.vec_pushp(stmt.kids, parse_expr(p) as ref void)
+    if cur(p).kind == TokenKind.Newline {
+        advance(p)
+    }
+    u.vec_pushp(n.kids, stmt as ref void)
+    return n
 }
 
 fn parse_export(p: mut ref Parser) ref Node = trust {
@@ -1255,6 +1319,26 @@ fn is_assign_op(t: ref Token) i64 = trust {
         return 6
     }
     return 0
+}
+
+fn is_named_arg(p: ref Parser) bool = trust {
+    if cur(p).kind != TokenKind.Ident {
+        return false
+    }
+    val t: ref Token = peek(p, 1)
+    return t.kind == TokenKind.Op && u.s_eq(t.text, c":")
+}
+
+fn is_spread(p: ref Parser) bool = trust {
+    if cur(p).kind != TokenKind.Op || !u.s_eq(cur(p).text, c".") {
+        return false
+    }
+    val a: ref Token = peek(p, 1)
+    val b: ref Token = peek(p, 2)
+    return a.kind == TokenKind.Op && b.kind == TokenKind.Op && u.s_eq(
+        a.text,
+        c"."
+    ) && u.s_eq(b.text, c".")
 }
 
 fn starts_shell(p: ref Parser) bool = trust {
@@ -1639,6 +1723,13 @@ fn parse_postfix(p: mut ref Parser) ref Node = trust {
                 if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof {
                     break
                 }
+                if is_named_arg(p) {
+                    u.vec_pushp(call.params, u.s_dup(cur(p).text) as ref void)
+                    advance(p)
+                    advance(p)
+                } else {
+                    u.vec_pushp(call.params, c"" as ref void)
+                }
                 u.vec_pushp(call.kids, parse_expr(p) as ref void)
                 if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
                     advance(p)
@@ -1709,10 +1800,13 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
         }
         return n
     }
-    if t.kind == TokenKind.Str {
+    if t.kind == TokenKind.Str || t.kind == TokenKind.RawStr {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.StrLit, t.line, t.col)
         n.s = t.text
+        if t.kind == TokenKind.RawStr {
+            n.b = 1
+        }
         return n
     }
     if t.kind == TokenKind.CmdSubst {
@@ -1760,7 +1854,16 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
             if cur(p).kind == TokenKind.Eof {
                 break
             }
-            u.vec_pushp(n.kids, parse_expr(p) as ref void)
+            if is_spread(p) {
+                val spread: mut ref Node = node_new(NodeKind.Spread, cur(p).line, cur(p).col)
+                advance(p)
+                advance(p)
+                advance(p)
+                u.vec_pushp(spread.kids, parse_expr(p) as ref void)
+                u.vec_pushp(n.kids, spread as ref void)
+            } else {
+                u.vec_pushp(n.kids, parse_expr(p) as ref void)
+            }
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
                 advance(p)
                 continue

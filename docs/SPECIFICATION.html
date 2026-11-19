@@ -2589,6 +2589,12 @@ a string and inserted.</p>
 <p>Interpolation errors use the location information of the inner expression and
 may not reflect the outer source line.</p>
 </div>
+<div class="paragraph">
+<p>A raw string is written <code>r"&#8230;&#8203;"</code> or <code>r'&#8230;&#8203;'</code>. Raw strings perform no escape
+processing and no <code>{&#8230;&#8203;}</code> interpolation, so backslashes and braces are taken
+literally. This is useful for regular expressions and other patterns that are
+dense in backslashes.</p>
+</div>
 </div>
 <div class="sect3">
 <h4 id="_command_substitution_literals">Command substitution literals</h4>
@@ -2638,7 +2644,7 @@ or in expression position:</p>
 <div class="literalblock">
 <div class="content">
 <pre>if elif else while for in fn return break continue pass
-try catch except raise throw say true false null none
+try catch except raise throw say defer export true false null none
 not and or</pre>
 </div>
 </div>
@@ -2779,7 +2785,8 @@ precedence.</p>
 <p>Parenthesised expressions.</p>
 </li>
 <li>
-<p>List literals: <code>[e1, e2, &#8230;&#8203;]</code>.</p>
+<p>List literals: <code>[e1, e2, &#8230;&#8203;]</code>. A leading <code>&#8230;&#8203;</code> spreads a list into the
+literal: <code>[first, &#8230;&#8203;rest]</code>.</p>
 </li>
 <li>
 <p>Dictionary literals: <code>key1: value1, key2: value2, &#8230;&#8203;</code> inside braces.</p>
@@ -2794,8 +2801,10 @@ precedence.</p>
 <h4 id="_calls_indexing_and_attributes">Calls, indexing, and attributes</h4>
 <div class="paragraph">
 <p>Calls have the form <code>callee(arg1, arg2, &#8230;&#8203;)</code>. A trailing comma is permitted.
-Missing arguments are bound as null; extra arguments are ignored by
-user-defined functions.</p>
+Arguments may be named as <code>name: value</code>; named arguments bind to the parameter
+with that name, and native functions use them for optional settings such as
+<code>merge_stderr:</code> and <code>default:</code>. Missing arguments are bound as null; extra
+arguments are ignored by user-defined functions.</p>
 </div>
 <div class="paragraph">
 <p>Indexing has the form <code>container[index]</code>. Lists accept integers, including
@@ -3072,6 +3081,29 @@ the string representation of null, namely <code>null</code>.</p>
 </div>
 </div>
 <div class="sect3">
+<h4 id="_defer"><code>defer</code></h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>defer EXPRESSION
+defer {
+    ...
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Deferred statements run in last-in-first-out order when the enclosing function
+returns, when the script finishes, or when <code>exit()</code> is called. Pending defers
+also run while an uncaught runtime error unwinds. A deferred block runs in the
+environment where it was registered.</p>
+</div>
+<div class="paragraph">
+<p>A single-expression defer is evaluated when it runs, not when it is
+registered. Function arguments are therefore read at defer time, and variables
+changed after the <code>defer</code> statement are seen in their final state. Use a block
+form when the timing of side effects matters.</p>
+</div>
+</div>
+<div class="sect3">
 <h4 id="_other_statements">Other statements</h4>
 <div class="ulist">
 <ul>
@@ -3113,8 +3145,8 @@ operators is a shell command.</p>
 </li>
 <li>
 <p>Lines beginning with <code>if</code>, <code>while</code>, <code>for</code>, <code>fn</code>, <code>try</code>, <code>catch</code>, <code>except</code>,
-<code>raise</code>, <code>throw</code>, <code>say</code>, <code>return</code>, <code>break</code>, <code>continue</code>, or <code>pass</code> are
-scripting statements.</p>
+<code>raise</code>, <code>throw</code>, <code>say</code>, <code>return</code>, <code>break</code>, <code>continue</code>, <code>pass</code>, <code>defer</code>, or
+<code>export</code> are scripting statements.</p>
 </li>
 </ul>
 </div>
@@ -3137,6 +3169,12 @@ but cannot capture local variables of a caller.</p>
 <div class="paragraph">
 <p>A binding created by <code>for</code> is assigned in the current environment and is
 visible after the loop.</p>
+</div>
+<div class="paragraph">
+<p>The working directory is process-global, not scoped. <code>cd(path)</code> calls <code>chdir</code>
+in the interpreter process, updates <code>PWD</code>, and affects all later shell
+commands, <code>run</code> calls, and file operations. There is no automatic restoration
+on function return.</p>
 </div>
 </div>
 <div class="sect2">
@@ -3239,6 +3277,12 @@ execution.</p></td>
 command statement. A failed shell command does not raise a script error; it
 sets <code>status</code>.</p>
 </div>
+<div class="paragraph">
+<p><code>status</code> is deprecated for new scripts. <code>shell</code>, <code>capture</code>, and <code>run</code> return a
+result dictionary with <code>status</code>, <code>stdout</code>, <code>stderr</code>, and <code>ok</code> fields; use
+those fields instead. <code>status</code> remains available while existing scripts are
+migrated.</p>
+</div>
 </div>
 <div class="sect2">
 <h3 id="_builtin_functions">Builtin functions</h3>
@@ -3317,13 +3361,104 @@ standard input. Returns a string, or null on end of input.</p></td>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>shell(command)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Execute a shell command line and return its status.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Execute a shell command line and return a result
+dictionary with <code>status</code>, <code>stdout</code>, <code>stderr</code>, and <code>ok</code>. Both output streams
+are captured.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>capture(command)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Execute a shell command line and return its captured
-standard output.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Execute a shell command line and return the same
+result dictionary as <code>shell</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>run(argv, merge_stderr: bool, cwd: string)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Execute a list of arguments
+directly without a shell and return a result dictionary. <code>merge_stderr</code>
+combines stderr into <code>stdout</code>; <code>cwd</code> sets the child working directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>eprint(&#8230;&#8203;)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">variadic</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Like <code>print</code>, but writes to standard error.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>indent(text, n)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Prefix every line in <code>text</code> with <code>n</code> spaces.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>exists(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether a path exists.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>is_file(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether a path exists and is not a directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>is_dir(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether a path is a directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>is_executable(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether a path is executable.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>which(name)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Search <code>PATH</code> and return the executable path, or null.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>mktemp_dir(prefix)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Create and return a unique temporary directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>remove_file(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Remove one file. Returns a boolean.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>remove_all(path_or_list)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Recursively remove paths. Returns a boolean.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>parent(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Directory component of a path.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>basename(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Final component of a path.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stem(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Final component with its last extension removed.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>join(a, b)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Join two path components.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>cd(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Change the interpreter working directory. Affects later shell
+and <code>run</code> calls and file operations.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>unified_diff(expected, actual)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Line-oriented diagnostic diff for test
+harnesses.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>source(path)</code></p></td>
@@ -3398,9 +3533,11 @@ expanded.</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Rename or move a path. Returns a boolean. A leading <code>~</code> is expanded in both paths.</p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>read_file(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>read_file(path, default: x)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Read a file. Returns a string or null.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Read a file. Returns a string, or <code>x</code> when
+<code>default:</code> is given and the file cannot be read. Without a default, returns
+null.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>write_file(path, data)</code></p></td>
@@ -3413,9 +3550,11 @@ expanded.</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Append to a file. Returns a boolean.</p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>env(name)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>env(name, default: x)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">Read an environment variable. Returns a string or null.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Read an environment variable. Returns <code>x</code> when
+<code>default:</code> is given and the variable is unset or empty; otherwise returns a
+string or null.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>clock()</code></p></td>
@@ -3470,6 +3609,11 @@ value. <code>read_file</code> and <code>write_file</code> expand a leading <code
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>pop()</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Remove and return the last element, or null when empty.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>last()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Return the last element, or null when empty.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>len()</code></p></td>
@@ -3605,14 +3749,30 @@ keys should normally be accessed with indexing or assignment.</p>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Split on <code>sep</code>. An empty separator splits UTF-8 code points.</p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>startswith(prefix)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>lines()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Split into lines. A trailing newline does not add an empty
+final element; <code>\r\n</code> is accepted.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>split_words()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Split on whitespace, honouring single and double quotes.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>startswith(prefix)</code> / <code>starts_with(prefix)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Prefix test.</p></td>
 </tr>
 <tr>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>endswith(suffix)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>endswith(suffix)</code> / <code>ends_with(suffix)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Suffix test.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>strip_suffix(suffix)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Remove one trailing suffix when present.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>contains(needle)</code></p></td>
@@ -3620,9 +3780,19 @@ keys should normally be accessed with indexing or assignment.</p>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Substring test.</p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>matches(pattern)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Regular-expression search.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>replace(from,to)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Replace all occurrences.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>last()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Return the last UTF-8 code point, or null when empty.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>len()</code></p></td>
@@ -3672,6 +3842,7 @@ FLOAT        = digit { digit }
 exponent     = ( "e" | "E" ) [ "+" | "-" ] digit { digit } ;
 STRING       = "'" { string-byte } "'"
              | '"' { string-byte } '"' ;
+RAWSTRING    = ( "r'" { any-byte } "'" | 'r"' { any-byte } '"' ) ;
 CMDSUB       = "`" { any-byte } "`"
              | "$(" { any-byte } ")" ;</pre>
 </div>
@@ -3702,6 +3873,8 @@ statement    = say-stmt
              | fn-stmt
              | try-stmt
              | assignment
+             | export-stmt
+             | defer-stmt
              | expression-stmt
              | SHELL ;
 
@@ -3710,7 +3883,8 @@ suite        = "{" { NEWLINE | INDENT | DEDENT | ";" | statement } "}"
                    | inline-stmt { ";" inline-stmt } [ NEWLINE ] ) ;
 
 inline-stmt  = say-stmt | return-stmt | break-stmt | continue-stmt
-             | pass-stmt | raise-stmt | assignment | expression-stmt ;
+             | pass-stmt | raise-stmt | assignment | export-stmt
+             | defer-stmt | expression-stmt ;
 
 say-stmt     = "say" [ expression { "," expression } ] [ NEWLINE ] ;
 return-stmt  = "return" [ expression ] [ NEWLINE ] ;
@@ -3735,6 +3909,8 @@ param        = IDENT [ ":" type-text ] ;
 try-stmt     = "try" suite ( "catch" | "except" ) [ IDENT ] suite ;
 
 assignment   = expression assign-op expression [ NEWLINE ] ;
+export-stmt  = "export" IDENT assign-op expression [ NEWLINE ] ;
+defer-stmt   = "defer" expression [ NEWLINE ] | "defer" suite ;
 assign-op    = "=" | "+=" | "-=" | "*=" | "/=" ;
 
 expression-stmt = expression [ NEWLINE ] ;
@@ -3750,13 +3926,15 @@ additive     = multiplicative { ( "+" | "-" ) multiplicative } ;
 multiplicative = unary { ( "*" | "/" | "%" ) unary } ;
 unary        = ( "-" | "+" ) unary | postfix ;
 postfix      = primary { call | index | attribute } ;
-call         = "(" [ expression { "," expression } [ "," ] ] ")" ;
+call         = "(" [ argument { "," argument } [ "," ] ] ")" ;
+argument     = [ IDENT ":" ] expression ;
 index        = "[" expression "]" ;
 attribute    = "." IDENT ;
 
 primary      = INT
              | FLOAT
              | STRING
+             | RAWSTRING
              | CMDSUB
              | "true"
              | "false"
@@ -3767,7 +3945,8 @@ primary      = INT
              | list-literal
              | dict-literal ;
 
-list-literal = "[" [ expression { "," expression } [ "," ] ] "]" ;
+list-literal = "[" [ list-item { "," list-item } [ "," ] ] "]" ;
+list-item    = [ "..." ] expression ;
 dict-literal = "{" [ expression ":" expression
                      { "," expression ":" expression } [ "," ] ] "}" ;</pre>
 </div>
@@ -4290,7 +4469,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-19 17:57:11 UTC
+Last updated 2026-11-19 19:12:57 UTC
 </div>
 </div>
 </body>

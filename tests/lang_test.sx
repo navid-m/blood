@@ -236,6 +236,30 @@ test "parser builds assignments, conditions and loops" {
     }
 }
 
+test "parser handles raw strings, spread, defer and named arguments" {
+    trust {
+        val raw: ref lang.Node = lang.parse(c"x = r\"a\\{b\\}\"\n")
+        val lit: ref lang.Node = kid(kid(raw, 0), 1)
+        assert lit.kind == lang.NodeKind.StrLit
+        assert lit.b == 1
+        assert u.s_eq(lit.s, c"a\\{b\\}")
+
+        val spread: ref lang.Node = lang.parse(c"xs = [1, ...rest]\n")
+        val list: ref lang.Node = kid(kid(spread, 0), 1)
+        assert kid(list, 1).kind == lang.NodeKind.Spread
+
+        val deferred: ref lang.Node = lang.parse(c"defer cleanup(\"x\")\n")
+        assert kid(deferred, 0).kind == lang.NodeKind.Defer
+        assert kid(kid(deferred, 0), 0).kind == lang.NodeKind.ExprStmt
+
+        val named: ref lang.Node = lang.parse(c"f(1, size: 2)\n")
+        val call: ref lang.Node = kid(kid(named, 0), 0)
+        assert call.kind == lang.NodeKind.Call
+        assert u.s_eq(param(call, 0), c"")
+        assert u.s_eq(param(call, 1), c"size")
+    }
+}
+
 test "parser builds exported assignments" {
     trust {
         val prog: ref lang.Node = lang.parse(c"export PATH = \"/opt/bin\"\n")

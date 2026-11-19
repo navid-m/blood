@@ -77,6 +77,32 @@ test "script export assignments update the environment" {
     }
 }
 
+test "script run and shell return result objects" {
+    trust {
+        fresh()
+        val src: ref u8 = c"r = run([\"sh\", \"-c\", \"printf out; printf err >&2; exit 3\"])\nif r.status != 3 or r.ok or r.stdout != \"out\" or r.stderr != \"err\" {\n    raise \"run result\"\n}\nm = run([\"sh\", \"-c\", \"printf out; printf err >&2\"], merge_stderr: true)\nif m.stdout != \"outerr\" or m.stderr != \"\" {\n    raise \"merge stderr\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script defers run LIFO on return and errors" {
+    trust {
+        fresh()
+        val src: ref u8 = c"log = []\nfn ok() {\n    defer { log.append(\"a\") }\n    defer { log.append(\"b\") }\n    return 1\n}\nfn bad() {\n    defer { log.append(\"c\") }\n    raise \"boom\"\n}\nok()\ntry {\n    bad()\n} catch err {\n    if err != \"boom\" {\n        raise \"error lost\"\n    }\n}\nif log.join(\"\") != \"bac\" {\n    raise \"defer order\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script filesystem, path and cd builtins" {
+    trust {
+        fresh()
+        val old: ref u8 = u.cwd()
+        val src: ref u8 = c"dir = mktemp_dir(\"blood-script-test\")\nif not is_dir(dir) {\n    raise \"mktemp_dir\"\n}\nfile = join(dir, \"a.txt\")\nwrite_file(file, \"hello\")\nif not exists(file) or not is_file(file) or is_dir(file) {\n    raise \"file checks\"\n}\nif basename(file) != \"a.txt\" or stem(file) != \"a\" {\n    raise \"path names\"\n}\nif parent(file) != dir {\n    raise \"parent\"\n}\ncd(dir)\nif run([\"pwd\"]).stdout.strip() != dir {\n    raise \"cd\"\n}\nremove_all(dir)\nif exists(dir) {\n    raise \"remove_all\"\n}\n"
+        assert run(src) == 0
+        u.chdir(old)
+    }
+}
+
 test "script supports compound assignment" {
     trust {
         fresh()

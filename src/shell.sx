@@ -1824,6 +1824,19 @@ fn bi_cd(cmd: ref Command) i32 = trust {
     return 0
 }
 
+pub fn sync_cwd() void = trust {
+    if sh_vars != none {
+        val old: ref u8 = get_var(c"PWD")
+        if u.s_len(old) > 0 {
+            sh_oldpwd = u.s_dup_perm(old)
+            set_var(c"OLDPWD", old)
+            u.env_set(c"OLDPWD", old)
+        }
+        set_var(c"PWD", u.cwd())
+    }
+    u.env_set(c"PWD", u.cwd())
+}
+
 fn bi_history(cmd: ref Command) i32 = trust {
     if cmd.argv.len > 1 && u.s_eq(argv_at(cmd, 1), c"-c") {
         histmod.history_clear(sh_hist)

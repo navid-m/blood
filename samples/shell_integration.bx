@@ -1,6 +1,6 @@
 # Blood sample: shell command substitution and pipelines.
 
-lines = capture("printf 'one\ntwo\nthree\n' | wc -l")
+lines = capture("printf 'one\ntwo\nthree\n' | wc -l").stdout
 say "pipeline lines: " + lines.strip()
 
 listing = `printf 'alpha\nbeta\n'`

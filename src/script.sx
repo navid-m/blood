@@ -4,6 +4,8 @@ val u    = use("util.sx")
 val lang = use("lang.sx")
 val term = use("terminal.sx")
 val sh   = use("shell.sx")
+val ex   = use("exec.sx")
+val re   = use("std/regex")
 val rt   = use("std/runtime")
 
 pub type Value = {
@@ -24,6 +26,11 @@ pub type Func = {
     native: mut i64
 }
 
+type Defer = {
+    node: mut ref lang.Node
+    env: mut ref Env
+}
+
 val g_env: mut ref Env = none
 val g_error: mut ref u8 = none
 val g_err_line: mut i64 = 0
@@ -35,6 +42,8 @@ val g_depth: mut i64 = 0
 val g_run_depth: mut i64 = 0
 val g_args: mut ref u.Vec = none
 val g_script_path: mut ref u8 = none
+val g_defers: mut ref u.Vec = none
+val g_temp_seq: mut i64 = 0
 
 fn v_new(tag: i64) ref Value = trust {
     val v: mut ref Value = u.xalloc(@sizeof(Value) as i64) as ref Value
@@ -354,6 +363,72 @@ fn set_status(status: i64) void = trust {
     env_assign(g_env, c"status", v_int(status))
 }
 
+fn defer_push_frame() void = trust {
+    if g_defers == none {
+        g_defers = u.vec_new_perm()
+    }
+    u.vec_pushp(g_defers, u.vec_new() as ref void)
+}
+
+fn defer_register(n: ref lang.Node, env: mut ref Env) void = trust {
+    if g_defers == none || g_defers.len == 0 {
+        return
+    }
+    val frame: mut ref u.Vec = u.vec_p(g_defers, g_defers.len - 1) as ref u.Vec
+    val d: mut ref Defer = u.xalloc(@sizeof(Defer) as i64) as ref Defer
+    d.node = n
+    d.env = env
+    u.vec_pushp(frame, d as ref void)
+    env = env
+}
+
+fn defer_run_frame() void = trust {
+    if g_defers == none || g_defers.len == 0 {
+        return
+    }
+    val frame: ref u.Vec = u.vec_p(g_defers, g_defers.len - 1) as ref u.Vec
+    g_defers.len--
+    val saved_flow: mut i64 = g_flow
+    val saved_error: mut ref u8 = g_error
+    val saved_line: mut i64 = g_err_line
+    val saved_col: mut i64 = g_err_col
+    val saved_return: ref Value = g_return
+    val saved_exit: mut i64 = u.script_exit_code
+    g_flow = 0
+    g_error = none
+    val i: mut i64 = frame.len - 1
+    for {
+        if i < 0 {
+            break
+        }
+        val d: mut ref Defer = u.vec_p(frame, i) as ref Defer
+        g_flow = 0
+        exec_stmt(d.node, d.env, false)
+        if g_flow == 4 {
+            if saved_flow != 4 {
+                saved_flow = 4
+                saved_error = g_error
+                saved_line = g_err_line
+                saved_col = g_err_col
+            }
+        } elif g_flow == 5 {
+            if saved_flow != 5 {
+                saved_flow = 5
+                saved_exit = u.script_exit_code
+            }
+        }
+        g_flow = 0
+        g_error = none
+        i--
+    }
+    g_flow = saved_flow
+    g_error = saved_error
+    g_err_line = saved_line
+    g_err_col = saved_col
+    g_return = saved_return
+    u.script_exit_code = saved_exit
+}
+
 fn list_new() ref u.Vec = trust {
     return u.vec_new()
 }
@@ -627,6 +702,9 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         return v_float(@bitcast(n.a, f64))
     }
     if n.kind == lang.NodeKind.StrLit {
+        if n.b != 0 {
+            return v_str(n.s)
+        }
         return v_str(interp(n.s, env))
     }
     if n.kind == lang.NodeKind.BoolLit {
@@ -650,7 +728,26 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
             if i >= n.kids.len {
                 break
             }
-            u.vec_pushp(vec, eval(u.vec_p(n.kids, i) as ref lang.Node, env) as ref void)
+            val item: ref lang.Node = u.vec_p(n.kids, i) as ref lang.Node
+            if item.kind == lang.NodeKind.Spread {
+                val spread: ref Value = eval(u.vec_p(item.kids, 0) as ref lang.Node, env)
+                if g_flow != 0 {
+                    return v_nil()
+                }
+                if spread != none && spread.tag == 5 {
+                    val src: ref u.Vec = spread.p as ref u.Vec
+                    val j: mut i64 = 0
+                    for {
+                        if j >= src.len {
+                            break
+                        }
+                        u.vec_pushp(vec, u.vec_p(src, j))
+                        j++
+                    }
+                }
+            } else {
+                u.vec_pushp(vec, eval(item, env) as ref void)
+            }
             i++
         }
         return v_list(vec)
@@ -839,15 +936,45 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         if i >= f.params.len {
             break
         }
-        val pname: ref u8 = u.vec_p(f.params, i) as ref u8
-        val arg: ref Value = v_nil()
-        if i < args.len {
-            env_define(callenv, pname, u.vec_p(args, i) as ref Value)
-        } else {
-            env_define(callenv, pname, arg)
-        }
+        env_define(callenv, u.vec_p(f.params, i) as ref u8, v_nil())
         i++
     }
+    val pos: mut i64 = 0
+    val ai: mut i64 = 0
+    for {
+        if ai >= args.len {
+            break
+        }
+        val arg: ref Value = u.vec_p(args, ai) as ref Value
+        val name: ref u8 = arg_name(n, ai)
+        if u.s_len(name) == 0 {
+            if pos < f.params.len {
+                env_define(callenv, u.vec_p(f.params, pos) as ref u8, arg)
+                pos++
+            }
+        } else {
+            val j: mut i64 = 0
+            val found: mut bool = false
+            for {
+                if j >= f.params.len {
+                    break
+                }
+                if u.s_eq(u.vec_p(f.params, j) as ref u8, name) {
+                    env_define(callenv, name, arg)
+                    found = true
+                    break
+                }
+                j++
+            }
+            if !found {
+                g_depth--
+                set_error(u.s_cat3(c"unknown parameter '", name, c"'"), n.line, n.col)
+                return v_nil()
+            }
+        }
+        ai++
+    }
+    defer_push_frame()
     val saved_flow: i64 = g_flow
     val saved_return: ref Value = g_return
     g_flow = 0
@@ -859,6 +986,7 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
             result = g_return
         }
     }
+    defer_run_frame()
     if g_flow == 4 || g_flow == 5 {
         // propagate error/exit
     } else {
@@ -966,6 +1094,57 @@ fn native_id(name: ref u8) i64 = trust {
     if u.s_eq(name, c"this_dir") {
         return 32
     }
+    if u.s_eq(name, c"run") {
+        return 33
+    }
+    if u.s_eq(name, c"eprint") {
+        return 34
+    }
+    if u.s_eq(name, c"indent") {
+        return 35
+    }
+    if u.s_eq(name, c"exists") {
+        return 36
+    }
+    if u.s_eq(name, c"is_file") {
+        return 37
+    }
+    if u.s_eq(name, c"is_dir") {
+        return 38
+    }
+    if u.s_eq(name, c"is_executable") {
+        return 39
+    }
+    if u.s_eq(name, c"which") {
+        return 40
+    }
+    if u.s_eq(name, c"mktemp_dir") {
+        return 41
+    }
+    if u.s_eq(name, c"remove_file") {
+        return 42
+    }
+    if u.s_eq(name, c"remove_all") {
+        return 43
+    }
+    if u.s_eq(name, c"parent") {
+        return 44
+    }
+    if u.s_eq(name, c"basename") {
+        return 45
+    }
+    if u.s_eq(name, c"stem") {
+        return 46
+    }
+    if u.s_eq(name, c"join") {
+        return 47
+    }
+    if u.s_eq(name, c"cd") {
+        return 48
+    }
+    if u.s_eq(name, c"unified_diff") {
+        return 49
+    }
     return 0
 }
 
@@ -974,6 +1153,355 @@ fn arg(args: ref u.Vec, i: i64) ref Value = trust {
         return v_nil()
     }
     return u.vec_p(args, i) as ref Value
+}
+
+fn arg_name(n: ref lang.Node, i: i64) ref u8 = trust {
+    if n == none || i >= n.params.len {
+        return c""
+    }
+    return u.vec_p(n.params, i) as ref u8
+}
+
+fn named_index(n: ref lang.Node, name: ref u8, count: i64) i64 = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= count {
+            break
+        }
+        if u.s_eq(arg_name(n, i), name) {
+            return i
+        }
+        i++
+    }
+    return -1
+}
+
+fn arg_named(n: ref lang.Node, args: ref u.Vec, name: ref u8) ref Value = trust {
+    val idx: i64 = named_index(n, name, args.len)
+    if idx < 0 {
+        return v_nil()
+    }
+    return arg(args, idx)
+}
+
+fn v_result(status: i64, out: ref u8, errs: ref u8) ref Value = trust {
+    val m: mut ref u.Map = dict_new()
+    u.map_put(m, c"status", @bitcast(v_int(status), i64))
+    u.map_put(m, c"stdout", @bitcast(v_str(out), i64))
+    u.map_put(m, c"stderr", @bitcast(v_str(errs), i64))
+    u.map_put(m, c"ok", @bitcast(v_bool(status == 0), i64))
+    return v_dict(m)
+}
+
+fn result_status(v: ref Value) i64 = trust {
+    if v == none || v.tag != 6 {
+        return 127
+    }
+    val m: ref u.Map = v.p as ref u.Map
+    val raw: i64 = u.map_get(m, c"status")
+    if raw == 0 {
+        return 127
+    }
+    return num_i(@bitcast(raw, ref Value))
+}
+
+fn drain_fd(fd: i32, b: mut ref u.Buf, chunk: ref u8, timeout: i32) i64 = trust {
+    val pf: mut ex.PollFd = @zeroed
+    pf.fd = fd
+    pf.events = 1
+    pf.revents = 0
+    val ready: i32 = rt.poll(@addr(pf) as ref void, 1, timeout)
+    if ready <= 0 {
+        return 0
+    }
+    val n: i64 = ex.fd_read(fd, chunk, 4096)
+    if n <= 0 {
+        return -1
+    }
+    u.buf_addn(b, chunk, n)
+    return 1
+}
+
+fn spawn_result(
+    argv: ref u.Vec,
+    command: ref u8,
+    as_shell: bool,
+    merge: bool,
+    cwd: ref u8
+) ref Value = trust {
+    val outp: ex.Pipe = ex.make_pipe()
+    val errp: mut ex.Pipe = @zeroed
+    val has_err: bool = !merge
+    if has_err {
+        errp = ex.make_pipe()
+    }
+    val pid: i32 = ex.p_fork()
+    if pid == 0 {
+        ex.child_reset()
+        ex.fd_close(outp.read_fd)
+        if has_err {
+            ex.fd_close(errp.read_fd)
+        }
+        ex.fd_dup2(outp.write_fd, 1)
+        if has_err {
+            ex.fd_dup2(errp.write_fd, 2)
+            ex.fd_close(errp.write_fd)
+        } else {
+            ex.fd_dup2(outp.write_fd, 2)
+        }
+        ex.fd_close(outp.write_fd)
+        if cwd != none && u.s_len(cwd) > 0 && u.chdir(u.expand_tilde(cwd)) != 0 {
+            u.write_fd(2, u.s_cat3(c"blood: run: ", cwd, c": cannot change directory\n"))
+            ex.p_exit(127)
+        }
+        if as_shell {
+            val st: i32 = sh.run_line(command)
+            ex.p_exit(st)
+        }
+        ex.child_exec(argv)
+        ex.p_exit(127)
+    }
+    ex.fd_close(outp.write_fd)
+    if has_err {
+        ex.fd_close(errp.write_fd)
+    }
+    if pid < 0 {
+        ex.fd_close(outp.read_fd)
+        if has_err {
+            ex.fd_close(errp.read_fd)
+        }
+        return v_result(127, c"", c"blood: fork failed\n")
+    }
+    val outb: mut ref u.Buf = u.buf_new()
+    val errb: mut ref u.Buf = u.buf_new()
+    val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
+    val out_open: mut i64 = 1
+    val err_open: mut i64 = 0
+    if has_err {
+        err_open = 1
+    }
+    for {
+        if out_open == 0 && err_open == 0 {
+            break
+        }
+        val did: mut i64 = 0
+        if out_open != 0 {
+            val r: i64 = drain_fd(outp.read_fd, outb, chunk, 0)
+            if r == 1 {
+                did = 1
+            } elif r < 0 {
+                out_open = 0
+            }
+        }
+        if err_open != 0 {
+            val r: i64 = drain_fd(errp.read_fd, errb, chunk, 0)
+            if r == 1 {
+                did = 1
+            } elif r < 0 {
+                err_open = 0
+            }
+        }
+        if did == 0 {
+            if out_open != 0 {
+                val r: i64 = drain_fd(outp.read_fd, outb, chunk, 50)
+                if r < 0 {
+                    out_open = 0
+                }
+            } elif err_open != 0 {
+                val r: i64 = drain_fd(errp.read_fd, errb, chunk, 50)
+                if r < 0 {
+                    err_open = 0
+                }
+            }
+        }
+    }
+    u.xfree(chunk)
+    ex.fd_close(outp.read_fd)
+    if has_err {
+        ex.fd_close(errp.read_fd)
+    }
+    val status: i64 = ex.wait_pid(pid) as i64
+    return v_result(status, u.buf_take(outb), u.buf_take(errb))
+}
+
+fn remove_all_path(path: ref u8) bool = trust {
+    if !u.file_exists(path) && !u.is_dir(path) {
+        return true
+    }
+    if !u.is_dir(path) {
+        return rt.unlink(path) == 0
+    }
+    val names: mut ref u.Vec = u.vec_new()
+    val d: ref void = u.dir_open(path)
+    if d == none {
+        return false
+    }
+    for {
+        val name: ref u8 = u.dir_next(d)
+        if name == none {
+            break
+        }
+        if u.s_eq(name, c".") || u.s_eq(name, c"..") {
+            continue
+        }
+        u.vec_pushp(names, u.s_dup(name) as ref void)
+    }
+    u.dir_close(d)
+    val i: mut i64 = 0
+    for {
+        if i >= names.len {
+            break
+        }
+        remove_all_path(u.path_join(path, u.vec_p(names, i) as ref u8))
+        i++
+    }
+    return rt.rmdir(path) == 0
+}
+
+fn temp_dir(prefix: ref u8) ref u8 = trust {
+    val base: ref u8 = u.env_get(c"TMPDIR")
+    val dir: mut ref u8 = c"/tmp"
+    if base != none && u.s_len(base) > 0 {
+        dir = base
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= 100 {
+            break
+        }
+        g_temp_seq++
+        val name: ref u8 = u.s_cat3(
+            prefix,
+            c"-",
+            u.s_cat3(u.s_int(u.now_ms()), c"-", u.s_int(g_temp_seq))
+        )
+        val path: ref u8 = u.path_join(dir, name)
+        if rt.mkdir(path, 493 as u32) == 0 {
+            return path
+        }
+        i++
+    }
+    return none
+}
+
+fn indent_text(s: ref u8, n: i64) ref u8 = trust {
+    if n <= 0 || u.s_len(s) == 0 {
+        return u.s_dup(s)
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val len: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    val at_start: mut bool = true
+    for {
+        if i >= len {
+            break
+        }
+        if at_start {
+            val k: mut i64 = 0
+            for {
+                if k >= n {
+                    break
+                }
+                u.buf_ch(b, 32)
+                k++
+            }
+            at_start = false
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        u.buf_ch(b, c)
+        if c == 10 {
+            at_start = true
+        }
+        i++
+    }
+    return u.buf_take(b)
+}
+
+fn lines_of(s: ref u8) ref Value = trust {
+    val vec: mut ref u.Vec = list_new()
+    val len: i64 = u.s_len(s)
+    if len == 0 {
+        return v_list(vec)
+    }
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > len {
+            break
+        }
+        if i == len || @load8(@ptradd(s, i)) == 10 {
+            val end: mut i64 = i
+            if end > start && @load8(@ptradd(s, end - 1)) == 13 {
+                end--
+            }
+            if i == len && start == len {
+                break
+            }
+            u.vec_pushp(vec, v_str(u.s_substr(s, start, end)) as ref void)
+            start = i + 1
+        }
+        i++
+    }
+    return v_list(vec)
+}
+
+fn split_words_value(s: ref u8) ref Value = trust {
+    val vec: mut ref u.Vec = list_new()
+    val len: i64 = u.s_len(s)
+    val b: mut ref u.Buf = u.buf_new()
+    val inword: mut i64 = 0
+    val quote: mut u8 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= len {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if quote != 0 {
+            if c == quote {
+                quote = 0
+            } else {
+                u.buf_ch(b, c)
+            }
+        } elif c == 39 || c == 34 {
+            quote = c
+            inword = 1
+        } elif c == 32 || c == 9 || c == 10 || c == 13 {
+            if inword != 0 {
+                u.vec_pushp(vec, v_str(u.buf_take(b)) as ref void)
+                b = u.buf_new()
+                inword = 0
+            }
+        } else {
+            u.buf_ch(b, c)
+            inword = 1
+        }
+        i++
+    }
+    if inword != 0 {
+        u.vec_pushp(vec, v_str(u.buf_take(b)) as ref void)
+    }
+    return v_list(vec)
+}
+
+fn regex_match(s: ref u8, pattern: ref u8) bool = trust {
+    val ml: mut i64 = 0
+    match re.re_match(pattern, s, @addr(ml)) {
+        ok found => {
+            match found {
+                some _ => {
+                    return true
+                }
+                none => {
+                    return false
+                }
+            }
+        }
+        err _ => {
+            return false
+        }
+    }
+    return false
 }
 
 fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
@@ -1065,23 +1593,19 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         g_flow = 5
         return v_nil()
     }
-    if id == 11 {
+    if id == 11 || id == 12 {
         if u.hooks_ready == 0 {
-            return v_int(127)
+            return v_result(127, c"", c"")
         }
-        val hook: fn(ref u8) i32 = u.run_shell_hook
-        return v_int(hook(v_to_str(arg(args, 0))) as i64)
-    }
-    if id == 12 {
-        if u.hooks_ready == 0 {
-            return v_str(u.s_dup(c""))
-        }
-        val hook: fn(ref u8) ref u8 = u.run_capture_hook
-        val out: ref u8 = hook(v_to_str(arg(args, 0)))
-        if out == none {
-            return v_str(u.s_dup(c""))
-        }
-        return v_str(out)
+        val res: ref Value = spawn_result(
+            u.vec_new(),
+            v_to_str(arg(args, 0)),
+            true,
+            false,
+            none
+        )
+        set_status(result_status(res))
+        return res
     }
     if id == 13 {
         val f: f64 = num_f(arg(args, 0))
@@ -1188,6 +1712,13 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         val path: ref u8 = v_to_str(arg(args, 0))
         val data: ref u8 = u.read_file(u.expand_tilde(path))
         if data == none {
+            val fallback: ref Value = arg_named(n, args, c"default")
+            if !is_nil(fallback) {
+                return fallback
+            }
+            if args.len > 1 {
+                return arg(args, 1)
+            }
             return v_nil()
         }
         return v_str(data)
@@ -1203,8 +1734,17 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     if id == 23 {
         val name: ref u8 = v_to_str(arg(args, 0))
         val v: ref u8 = u.env_get(name)
-        if v == none {
-            return v_nil()
+        if v == none || u.s_len(v) == 0 {
+            val fallback: ref Value = arg_named(n, args, c"default")
+            if !is_nil(fallback) {
+                return fallback
+            }
+            if args.len > 1 {
+                return arg(args, 1)
+            }
+            if v == none {
+                return v_nil()
+            }
         }
         return v_str(u.s_dup(v))
     }
@@ -1287,6 +1827,205 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         }
         return v_str(u.path_dir(g_script_path))
     }
+    if id == 33 {
+        val argv_val: ref Value = arg(args, 0)
+        if argv_val == none || argv_val.tag != 5 {
+            set_error(c"run expects a list of arguments", n.line, n.col)
+            return v_nil()
+        }
+        val av: mut ref u.Vec = u.vec_new()
+        val src: ref u.Vec = argv_val.p as ref u.Vec
+        val i: mut i64 = 0
+        for {
+            if i >= src.len {
+                break
+            }
+            u.vec_pushp(av, v_to_str(u.vec_p(src, i) as ref Value) as ref void)
+            i++
+        }
+        val merge: bool = truthy(arg_named(n, args, c"merge_stderr"))
+        val cwdv: ref Value = arg_named(n, args, c"cwd")
+        val cwd: mut ref u8 = none
+        if !is_nil(cwdv) {
+            cwd = v_to_str(cwdv)
+        }
+        val res: ref Value = spawn_result(av, c"", false, merge, cwd)
+        set_status(result_status(res))
+        return res
+    }
+    if id == 34 {
+        val b: mut ref u.Buf = u.buf_new()
+        val i: mut i64 = 0
+        for {
+            if i >= args.len {
+                break
+            }
+            if i > 0 {
+                u.buf_ch(b, 32)
+            }
+            u.buf_add(b, v_to_str(arg(args, i)))
+            i++
+        }
+        u.buf_ch(b, 10)
+        u.write_fd(2, u.buf_take(b))
+        return v_nil()
+    }
+    if id == 35 {
+        return v_str(indent_text(v_to_str(arg(args, 0)), num_i(arg(args, 1))))
+    }
+    if id == 36 {
+        return v_bool(u.file_exists(u.expand_tilde(v_to_str(arg(args, 0)))))
+    }
+    if id == 37 {
+        val path: ref u8 = u.expand_tilde(v_to_str(arg(args, 0)))
+        return v_bool(u.file_exists(path) && !u.is_dir(path))
+    }
+    if id == 38 {
+        return v_bool(u.is_dir(u.expand_tilde(v_to_str(arg(args, 0)))))
+    }
+    if id == 39 {
+        return v_bool(u.is_executable(u.expand_tilde(v_to_str(arg(args, 0)))))
+    }
+    if id == 40 {
+        val name: ref u8 = v_to_str(arg(args, 0))
+        if u.s_contains(name, c"/") {
+            if u.file_exists(name) && u.is_executable(name) {
+                return v_str(u.s_dup(name))
+            }
+            return v_nil()
+        }
+        val path: ref u8 = u.env_get(c"PATH")
+        if path == none {
+            return v_nil()
+        }
+        val len: i64 = u.s_len(path)
+        val start: mut i64 = 0
+        val i: mut i64 = 0
+        for {
+            if i > len {
+                break
+            }
+            if i == len || @load8(@ptradd(path, i)) == 58 {
+                val dir: ref u8 = u.s_substr(path, start, i)
+                if u.s_len(dir) > 0 {
+                    val full: ref u8 = u.path_join(dir, name)
+                    if u.file_exists(full) && !u.is_dir(full) && u.is_executable(full) {
+                        return v_str(full)
+                    }
+                }
+                start = i + 1
+            }
+            i++
+        }
+        return v_nil()
+    }
+    if id == 41 {
+        val tmp: ref u8 = temp_dir(v_to_str(arg(args, 0)))
+        if tmp == none {
+            return v_nil()
+        }
+        return v_str(tmp)
+    }
+    if id == 42 {
+        val path: ref u8 = u.expand_tilde(v_to_str(arg(args, 0)))
+        if !u.file_exists(path) {
+            return v_bool(true)
+        }
+        return v_bool(rt.unlink(path) == 0)
+    }
+    if id == 43 {
+        val v: ref Value = arg(args, 0)
+        if v != none && v.tag == 5 {
+            val vec: ref u.Vec = v.p as ref u.Vec
+            val i: mut i64 = 0
+            val good: mut bool = true
+            for {
+                if i >= vec.len {
+                    break
+                }
+                if !remove_all_path(u.expand_tilde(v_to_str(u.vec_p(vec, i) as ref Value))) {
+                    good = false
+                }
+                i++
+            }
+            return v_bool(good)
+        }
+        if v == none {
+            return v_bool(true)
+        }
+        return v_bool(remove_all_path(u.expand_tilde(v_to_str(v))))
+    }
+    if id == 44 {
+        return v_str(u.path_dir(v_to_str(arg(args, 0))))
+    }
+    if id == 45 {
+        return v_str(u.path_base(v_to_str(arg(args, 0))))
+    }
+    if id == 46 {
+        val base: ref u8 = u.path_base(v_to_str(arg(args, 0)))
+        val n: i64 = u.s_len(base)
+        val i: mut i64 = n - 1
+        for {
+            if i <= 0 {
+                break
+            }
+            if @load8(@ptradd(base, i)) == 46 {
+                return v_str(u.s_substr(base, 0, i))
+            }
+            i--
+        }
+        return v_str(base)
+    }
+    if id == 47 {
+        return v_str(u.path_join(v_to_str(arg(args, 0)), v_to_str(arg(args, 1))))
+    }
+    if id == 48 {
+        val path: ref u8 = u.expand_tilde(v_to_str(arg(args, 0)))
+        if u.chdir(path) != 0 {
+            set_error(u.s_cat3(c"cd: ", path, c": no such directory"), n.line, n.col)
+            return v_bool(false)
+        }
+        sh.sync_cwd()
+        return v_bool(true)
+    }
+    if id == 49 {
+        val want: ref u8 = v_to_str(arg(args, 0))
+        val got: ref u8 = v_to_str(arg(args, 1))
+        val wl: ref Value = lines_of(want)
+        val gl: ref Value = lines_of(got)
+        val wv: ref u.Vec = wl.p as ref u.Vec
+        val gv: ref u.Vec = gl.p as ref u.Vec
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_add(b, c"--- expected\n+++ actual\n")
+        val n: mut i64 = wv.len
+        if gv.len > n {
+            n = gv.len
+        }
+        val i: mut i64 = 0
+        for {
+            if i >= n {
+                break
+            }
+            val a: mut ref u8 = c""
+            val g: mut ref u8 = c""
+            if i < wv.len {
+                a = v_to_str(u.vec_p(wv, i) as ref Value)
+            }
+            if i < gv.len {
+                g = v_to_str(u.vec_p(gv, i) as ref Value)
+            }
+            if !u.s_eq(a, g) {
+                if i < wv.len {
+                    u.buf_add(b, u.s_cat3(c"-", a, c"\n"))
+                }
+                if i < gv.len {
+                    u.buf_add(b, u.s_cat3(c"+", g, c"\n"))
+                }
+            }
+            i++
+        }
+        return v_str(u.buf_take(b))
+    }
     if id == 99 {
         return v_nil()
     }
@@ -1315,6 +2054,12 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
         }
         if u.s_eq(name, c"len") {
             return v_int(vec.len)
+        }
+        if u.s_eq(name, c"last") {
+            if vec.len == 0 {
+                return v_nil()
+            }
+            return u.vec_p(vec, vec.len - 1) as ref Value
         }
         if u.s_eq(name, c"insert") {
             u.vec_insert(vec, num_i(arg(args, 0)), @bitcast(arg(args, 1), i64))
@@ -1414,10 +2159,10 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
         if u.s_eq(name, c"split") {
             return v_str_split(s, v_to_str(arg(args, 0)))
         }
-        if u.s_eq(name, c"startswith") {
+        if u.s_eq(name, c"startswith") || u.s_eq(name, c"starts_with") {
             return v_bool(u.s_starts(s, v_to_str(arg(args, 0))))
         }
-        if u.s_eq(name, c"endswith") {
+        if u.s_eq(name, c"endswith") || u.s_eq(name, c"ends_with") {
             val suffix: ref u8 = v_to_str(arg(args, 0))
             val sl: i64 = u.s_len(s)
             val pl: i64 = u.s_len(suffix)
@@ -1425,6 +2170,32 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
                 return v_bool(false)
             }
             return v_bool(u.s_eq(u.s_substr(s, sl - pl, sl), suffix))
+        }
+        if u.s_eq(name, c"strip_suffix") {
+            val suffix: ref u8 = v_to_str(arg(args, 0))
+            val sl: i64 = u.s_len(s)
+            val pl: i64 = u.s_len(suffix)
+            if pl <= sl && u.s_eq(u.s_substr(s, sl - pl, sl), suffix) {
+                return v_str(u.s_substr(s, 0, sl - pl))
+            }
+            return v_str(s)
+        }
+        if u.s_eq(name, c"lines") {
+            return lines_of(s)
+        }
+        if u.s_eq(name, c"split_words") {
+            return split_words_value(s)
+        }
+        if u.s_eq(name, c"matches") {
+            return v_bool(regex_match(s, v_to_str(arg(args, 0))))
+        }
+        if u.s_eq(name, c"last") {
+            val len: i64 = u.s_len(s)
+            if len == 0 {
+                return v_nil()
+            }
+            val start: i64 = u.utf8_prev(s, len)
+            return v_str(u.s_substr(s, start, len))
         }
         if u.s_eq(name, c"contains") {
             return v_bool(u.s_contains(s, v_to_str(arg(args, 0))))
@@ -2034,6 +2805,10 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
     if n.kind == lang.NodeKind.Pass {
         return
     }
+    if n.kind == lang.NodeKind.Defer {
+        defer_register(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        return
+    }
     if n.kind == lang.NodeKind.Try {
         exec_block(u.vec_p(n.kids, 0) as ref lang.Node, env, false)
         if g_flow == 4 {
@@ -2154,6 +2929,24 @@ pub fn script_init() void = trust {
     define_native(g_env, c"rename")
     define_native(g_env, c"this")
     define_native(g_env, c"this_dir")
+    define_native(g_env, c"run")
+    define_native(g_env, c"eprint")
+    define_native(g_env, c"indent")
+    define_native(g_env, c"exists")
+    define_native(g_env, c"is_file")
+    define_native(g_env, c"is_dir")
+    define_native(g_env, c"is_executable")
+    define_native(g_env, c"which")
+    define_native(g_env, c"mktemp_dir")
+    define_native(g_env, c"remove_file")
+    define_native(g_env, c"remove_all")
+    define_native(g_env, c"parent")
+    define_native(g_env, c"basename")
+    define_native(g_env, c"stem")
+    define_native(g_env, c"join")
+    define_native(g_env, c"cd")
+    define_native(g_env, c"unified_diff")
+    g_defers = u.vec_new_perm()
     env_define(g_env, c"status", v_int(0))
     env_define(g_env, c"null", v_nil())
     env_define(g_env, c"true", v_bool(true))
@@ -2472,7 +3265,9 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
         u.scratch_end()
         return 2
     }
+    defer_push_frame()
     exec_stmt(program, g_env, true)
+    defer_run_frame()
     if g_run_depth == 1 {
         promote_roots()
     }

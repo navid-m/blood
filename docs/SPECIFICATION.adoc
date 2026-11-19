@@ -1168,6 +1168,11 @@ a string and inserted.
 Interpolation errors use the location information of the inner expression and
 may not reflect the outer source line.
 
+A raw string is written `r"..."` or `r'...'`. Raw strings perform no escape
+processing and no `{...}` interpolation, so backslashes and braces are taken
+literally. This is useful for regular expressions and other patterns that are
+dense in backslashes.
+
 ==== Command substitution literals
 
 Outside strings, `` `COMMANDS` `` and `$(COMMANDS)` denote command
@@ -1207,7 +1212,7 @@ or in expression position:
 
 ....
 if elif else while for in fn return break continue pass
-try catch except raise throw say true false null none
+try catch except raise throw say defer export true false null none
 not and or
 ....
 
@@ -1262,15 +1267,18 @@ precedence.
 * `true`, `false`, `null`, and `none`.
 * Variable references.
 * Parenthesised expressions.
-* List literals: `[e1, e2, ...]`.
+* List literals: `[e1, e2, ...]`. A leading `...` spreads a list into the
+literal: `[first, ...rest]`.
 * Dictionary literals: `key1: value1, key2: value2, ...` inside braces.
 * Command substitutions.
 
 ==== Calls, indexing, and attributes
 
 Calls have the form `callee(arg1, arg2, ...)`. A trailing comma is permitted.
-Missing arguments are bound as null; extra arguments are ignored by
-user-defined functions.
+Arguments may be named as `name: value`; named arguments bind to the parameter
+with that name, and native functions use them for optional settings such as
+`merge_stderr:` and `default:`. Missing arguments are bound as null; extra
+arguments are ignored by user-defined functions.
 
 Indexing has the form `container[index]`. Lists accept integers, including
 negative indices from the end. Dictionaries accept string keys; non-string
@@ -1469,6 +1477,26 @@ Both spellings raise a runtime error whose message is the string
 representation of the expression. If the expression is omitted, the message is
 the string representation of null, namely `null`.
 
+==== `defer`
+
+[source]
+----
+defer EXPRESSION
+defer {
+    ...
+}
+----
+
+Deferred statements run in last-in-first-out order when the enclosing function
+returns, when the script finishes, or when `exit()` is called. Pending defers
+also run while an uncaught runtime error unwinds. A deferred block runs in the
+environment where it was registered.
+
+A single-expression defer is evaluated when it runs, not when it is
+registered. Function arguments are therefore read at defer time, and variables
+changed after the `defer` statement are seen in their final state. Use a block
+form when the timing of side effects matters.
+
 ==== Other statements
 
 * `pass` does nothing.
@@ -1489,8 +1517,8 @@ lookahead heuristic:
   operators is a shell command.
 * A statement beginning with `/`, `.`, or `~` is a shell command.
 * Lines beginning with `if`, `while`, `for`, `fn`, `try`, `catch`, `except`,
-  `raise`, `throw`, `say`, `return`, `break`, `continue`, or `pass` are
-  scripting statements.
+  `raise`, `throw`, `say`, `return`, `break`, `continue`, `pass`, `defer`, or
+  `export` are scripting statements.
 
 The entire remaining source line is passed to the shell command interpreter.
 This permits pipelines, redirections, and command substitution without a
@@ -1506,6 +1534,11 @@ but cannot capture local variables of a caller.
 
 A binding created by `for` is assigned in the current environment and is
 visible after the loop.
+
+The working directory is process-global, not scoped. `cd(path)` calls `chdir`
+in the interpreter process, updates `PWD`, and affects all later shell
+commands, `run` calls, and file operations. There is no automatic restoration
+on function return.
 
 === Error handling and diagnostics
 
@@ -1554,6 +1587,11 @@ execution.
 command statement. A failed shell command does not raise a script error; it
 sets `status`.
 
+`status` is deprecated for new scripts. `shell`, `capture`, and `run` return a
+result dictionary with `status`, `stdout`, `stderr`, and `ok` fields; use
+those fields instead. `status` remains available while existing scripts are
+migrated.
+
 === Builtin functions
 
 The following names are predefined in the global environment. They are ordinary
@@ -1576,9 +1614,32 @@ standard output. Returns null.
 standard input. Returns a string, or null on end of input.
 |`sleep(ms)` |1 |Sleep for the given number of milliseconds.
 |`exit([code])` |0 or 1 |Request shell exit with the given status. Default 0.
-|`shell(command)` |1 |Execute a shell command line and return its status.
-|`capture(command)` |1 |Execute a shell command line and return its captured
-standard output.
+|`shell(command)` |1 |Execute a shell command line and return a result
+dictionary with `status`, `stdout`, `stderr`, and `ok`. Both output streams
+are captured.
+|`capture(command)` |1 |Execute a shell command line and return the same
+result dictionary as `shell`.
+|`run(argv, merge_stderr: bool, cwd: string)` |1 |Execute a list of arguments
+directly without a shell and return a result dictionary. `merge_stderr`
+combines stderr into `stdout`; `cwd` sets the child working directory.
+|`eprint(...)` |variadic |Like `print`, but writes to standard error.
+|`indent(text, n)` |2 |Prefix every line in `text` with `n` spaces.
+|`exists(path)` |1 |Whether a path exists.
+|`is_file(path)` |1 |Whether a path exists and is not a directory.
+|`is_dir(path)` |1 |Whether a path is a directory.
+|`is_executable(path)` |1 |Whether a path is executable.
+|`which(name)` |1 |Search `PATH` and return the executable path, or null.
+|`mktemp_dir(prefix)` |1 |Create and return a unique temporary directory.
+|`remove_file(path)` |1 |Remove one file. Returns a boolean.
+|`remove_all(path_or_list)` |1 |Recursively remove paths. Returns a boolean.
+|`parent(path)` |1 |Directory component of a path.
+|`basename(path)` |1 |Final component of a path.
+|`stem(path)` |1 |Final component with its last extension removed.
+|`join(a, b)` |2 |Join two path components.
+|`cd(path)` |1 |Change the interpreter working directory. Affects later shell
+and `run` calls and file operations.
+|`unified_diff(expected, actual)` |2 |Line-oriented diagnostic diff for test
+harnesses.
 |`source(path)` |1 |Execute a Blood script file and return its status.
 |`this()` |0 |Name and absolute path of the executing script as a dictionary
 with keys `name` (the final path component) and `path` (absolute). Returns null
@@ -1599,10 +1660,14 @@ list, returns the smallest element.
 matching paths. An unmatched pattern yields an empty list. A leading `~` is
 expanded.
 |`rename(from, to)` |2 |Rename or move a path. Returns a boolean. A leading `~` is expanded in both paths.
-|`read_file(path)` |1 |Read a file. Returns a string or null.
+|`read_file(path, default: x)` |1 |Read a file. Returns a string, or `x` when
+`default:` is given and the file cannot be read. Without a default, returns
+null.
 |`write_file(path, data)` |2 |Write a file. Returns a boolean.
 |`append_file(path, data)` |2 |Append to a file. Returns a boolean.
-|`env(name)` |1 |Read an environment variable. Returns a string or null.
+|`env(name, default: x)` |1 |Read an environment variable. Returns `x` when
+`default:` is given and the variable is unset or empty; otherwise returns a
+string or null.
 |`clock()` |0 |Milliseconds since the Unix epoch.
 |`chr(n)` |1 |One-byte string containing the low byte of `n`.
 |`ord(s)` |1 |Integer value of the first byte of `s`, or 0 for the empty
@@ -1623,6 +1688,7 @@ Method calls use the attribute syntax `value.name(arguments)`.
 |Method |Arity |Behaviour
 |`append(x)` |1 |Append x. Returns null.
 |`pop()` |0 |Remove and return the last element, or null when empty.
+|`last()` |0 |Return the last element, or null when empty.
 |`len()` |0 |Number of elements.
 |`insert(i,x)` |2 |Insert x at index i.
 |`remove(i)` |1 |Remove the element at index i.
@@ -1659,10 +1725,16 @@ keys should normally be accessed with indexing or assignment.
 |`lower()` |0 |ASCII lowercase.
 |`strip()` |0 |Remove leading and trailing ASCII whitespace.
 |`split(sep)` |1 |Split on `sep`. An empty separator splits UTF-8 code points.
-|`startswith(prefix)` |1 |Prefix test.
-|`endswith(suffix)` |1 |Suffix test.
+|`lines()` |0 |Split into lines. A trailing newline does not add an empty
+final element; `\r\n` is accepted.
+|`split_words()` |0 |Split on whitespace, honouring single and double quotes.
+|`startswith(prefix)` / `starts_with(prefix)` |1 |Prefix test.
+|`endswith(suffix)` / `ends_with(suffix)` |1 |Suffix test.
+|`strip_suffix(suffix)` |1 |Remove one trailing suffix when present.
 |`contains(needle)` |1 |Substring test.
+|`matches(pattern)` |1 |Regular-expression search.
 |`replace(from,to)` |2 |Replace all occurrences.
+|`last()` |0 |Return the last UTF-8 code point, or null when empty.
 |`len()` |0 |Byte length.
 |`chars()` |0 |List of UTF-8 code points as strings.
 |`join(list)` |1 |Join a list with the receiver as separator.
@@ -1693,6 +1765,7 @@ FLOAT        = digit { digit }
 exponent     = ( "e" | "E" ) [ "+" | "-" ] digit { digit } ;
 STRING       = "'" { string-byte } "'"
              | '"' { string-byte } '"' ;
+RAWSTRING    = ( "r'" { any-byte } "'" | 'r"' { any-byte } '"' ) ;
 CMDSUB       = "`" { any-byte } "`"
              | "$(" { any-byte } ")" ;
 ....
@@ -1720,6 +1793,8 @@ statement    = say-stmt
              | fn-stmt
              | try-stmt
              | assignment
+             | export-stmt
+             | defer-stmt
              | expression-stmt
              | SHELL ;
 
@@ -1728,7 +1803,8 @@ suite        = "{" { NEWLINE | INDENT | DEDENT | ";" | statement } "}"
                    | inline-stmt { ";" inline-stmt } [ NEWLINE ] ) ;
 
 inline-stmt  = say-stmt | return-stmt | break-stmt | continue-stmt
-             | pass-stmt | raise-stmt | assignment | expression-stmt ;
+             | pass-stmt | raise-stmt | assignment | export-stmt
+             | defer-stmt | expression-stmt ;
 
 say-stmt     = "say" [ expression { "," expression } ] [ NEWLINE ] ;
 return-stmt  = "return" [ expression ] [ NEWLINE ] ;
@@ -1753,6 +1829,8 @@ param        = IDENT [ ":" type-text ] ;
 try-stmt     = "try" suite ( "catch" | "except" ) [ IDENT ] suite ;
 
 assignment   = expression assign-op expression [ NEWLINE ] ;
+export-stmt  = "export" IDENT assign-op expression [ NEWLINE ] ;
+defer-stmt   = "defer" expression [ NEWLINE ] | "defer" suite ;
 assign-op    = "=" | "+=" | "-=" | "*=" | "/=" ;
 
 expression-stmt = expression [ NEWLINE ] ;
@@ -1768,13 +1846,15 @@ additive     = multiplicative { ( "+" | "-" ) multiplicative } ;
 multiplicative = unary { ( "*" | "/" | "%" ) unary } ;
 unary        = ( "-" | "+" ) unary | postfix ;
 postfix      = primary { call | index | attribute } ;
-call         = "(" [ expression { "," expression } [ "," ] ] ")" ;
+call         = "(" [ argument { "," argument } [ "," ] ] ")" ;
+argument     = [ IDENT ":" ] expression ;
 index        = "[" expression "]" ;
 attribute    = "." IDENT ;
 
 primary      = INT
              | FLOAT
              | STRING
+             | RAWSTRING
              | CMDSUB
              | "true"
              | "false"
@@ -1785,7 +1865,8 @@ primary      = INT
              | list-literal
              | dict-literal ;
 
-list-literal = "[" [ expression { "," expression } [ "," ] ] "]" ;
+list-literal = "[" [ list-item { "," list-item } [ "," ] ] "]" ;
+list-item    = [ "..." ] expression ;
 dict-literal = "{" [ expression ":" expression
                      { "," expression ":" expression } [ "," ] ] "}" ;
 ....

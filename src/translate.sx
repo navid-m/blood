@@ -1141,7 +1141,7 @@ fn unary_file_test(t: mut ref Tr, op: ref u8, operand: ref u8) ref u8 = trust {
     if u.s_eq(op, c"-h") {
         flag = c"-L"
     }
-    return u.s_cat3(c"shell(\"test ", flag, u.s_cat3(c" \" + __bx_quote(", operand, c")) == 0"))
+    return u.s_cat3(c"shell(\"test ", flag, u.s_cat3(c" \" + __bx_quote(", operand, c")).status == 0"))
 }
 
 fn pattern_match_expr(t: mut ref Tr, lhs: ref u8, pat: ref u8, negate: bool) ref u8 = trust {
@@ -1391,7 +1391,7 @@ fn test_expr(t: mut ref Tr, src: ref u8) ref u8 = trust {
     if p.pos < p.toks.len {
         // Trailing tokens are not understood; fall back to running the test.
         use_helper(t, c"__bx_quote")
-        return u.s_cat3(c"shell(\"test ", quote_plain(src), c" \") == 0")
+        return u.s_cat3(c"shell(\"test ", quote_plain(src), c" \").status == 0")
     }
     return e
 }
@@ -1459,11 +1459,11 @@ fn tr_cond(t: mut ref Tr, src: ref u8) ref u8 = trust {
         val words: ref u.Vec = split_words(rest)
         if words.len > 0 {
             val w: ref Word = u.vec_p(words, 0) as ref Word
-            return u.s_cat3(c"shell(\"type ", w.raw, c" >/dev/null 2>&1\") == 0")
+            return u.s_cat3(c"shell(\"type ", w.raw, c" >/dev/null 2>&1\").status == 0")
         }
     }
     use_helper(t, c"__bx_quote")
-    return u.s_cat3(c"shell(", quote_plain(s), c") == 0")
+    return u.s_cat3(c"shell(", quote_plain(s), c").status == 0")
 }
 
 fn parse_if_header(src: ref u8) ref u8 = trust {
@@ -2104,7 +2104,7 @@ fn tr_shell_statement(t: mut ref Tr, src: ref u8) void = trust {
     // a shell statement (for example `cat /tmp/x` reads as a division
     // expression). Running the line through `shell` is unambiguous and keeps
     // the resulting status in the script `status` variable.
-    emit(t, u.s_cat3(c"status = shell(", quote_plain(s), c")"))
+    emit(t, u.s_cat3(c"status = shell(", quote_plain(s), c").status"))
 }
 
 fn rewrite_func_positionals(src: ref u8) ref u8 = trust {
