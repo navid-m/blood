@@ -15,6 +15,7 @@ for x in ["hello", "world"] {
 - [Site](https://bloodshell.pages.dev)
 - [Specification](https://bloodshell.pages.dev/specification.html)
 - [Benchmark Results](https://navid-m.github.io/shellarena/)
+- [Discord](https://discord.gg/sPS9xQc92X)
 
 ## Examples
 
