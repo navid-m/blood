@@ -10,6 +10,12 @@ for x in ["hello", "world"] {
 }
 ```
 
+---
+
+<img src="./.github/icons/screenshot.png" style="border-radius:5px">
+
+---
+
 ## Examples
 
 The shell and the language are one. shell commands are values, strings interpolate, and loops hold real data. Thus, there are no quoting layers to get tangled with.

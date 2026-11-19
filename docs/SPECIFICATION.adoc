@@ -556,6 +556,8 @@ run `.bloodrc` again. The prompt and colours update immediately.
 |`:ft SEARCH` |Recursively find files whose name contains `SEARCH`
 (case-insensitively) under the current directory and print their absolute
 paths.
+|`:ls [PATH]` |List a directory as a Unicode table with permissions and
+human-readable sizes. Defaults to the current directory.
 |`:where` |Print the paths of `blood.ini` and `.bloodrc`.
 |`:help` or `:` |Print the escape-command summary.
 |===

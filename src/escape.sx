@@ -9,6 +9,13 @@ val script  = use("script.sx")
 val brand     = @embed("brand.txt")
 val brand_len = @embedlen("brand.txt")
 
+type LsEntry = {
+    label: mut ref u8
+    mode: mut u32
+    size: mut i64
+    valid: mut bool
+}
+
 pub fn is_command(line: ref u8) bool = trust {
     val t: ref u8 = u.s_trim(line)
     return u.s_len(t) > 0 && @load8(t) == 58
@@ -143,6 +150,7 @@ fn print_help() void = trust {
         \\  :cfg.SECTION.KEY           show current and possible values
         \\  :cfg.SECTION.KEY = VALUE   update and save configuration
         \\  :ft SEARCH                 find files by name under the current directory
+        \\  :ls [PATH]                 list a directory as a Unicode table
         \\  :rla                       reload configuration and .bloodrc
         \\  :where                     show configuration file paths
         \\
@@ -161,6 +169,268 @@ fn show_paths(c: ref cfgmod.Config) void = trust {
 
 fn show_brand() void = trust {
     u.write_fd_n(1, brand, brand_len)
+}
+
+fn ls_triplet(b: mut ref u.Buf, m: u32, rbit: u32, wbit: u32, xbit: u32, sbit: u32, sc: ref u8, cc: ref u8) void = trust {
+    if m & rbit != 0 {
+        u.buf_add(b, c"r")
+    } else {
+        u.buf_add(b, c"-")
+    }
+    if m & wbit != 0 {
+        u.buf_add(b, c"w")
+    } else {
+        u.buf_add(b, c"-")
+    }
+    if m & sbit != 0 {
+        if m & xbit != 0 {
+            u.buf_add(b, sc)
+        } else {
+            u.buf_add(b, cc)
+        }
+    } else {
+        if m & xbit != 0 {
+            u.buf_add(b, c"x")
+        } else {
+            u.buf_add(b, c"-")
+        }
+    }
+}
+
+fn ls_perms(m: u32) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val kind: u32 = m & 0xF000
+    if kind == 0x4000 {
+        u.buf_add(b, c"d")
+    } elif kind == 0xA000 {
+        u.buf_add(b, c"l")
+    } elif kind == 0x1000 {
+        u.buf_add(b, c"p")
+    } elif kind == 0xC000 {
+        u.buf_add(b, c"s")
+    } elif kind == 0x2000 || kind == 0x6000 {
+        u.buf_add(b, c"c")
+    } else {
+        u.buf_add(b, c"-")
+    }
+    ls_triplet(b, m, 0x100, 0x80, 0x40, 0x800, c"s", c"S")
+    ls_triplet(b, m, 0x20, 0x10, 0x8, 0x400, c"s", c"S")
+    ls_triplet(b, m, 0x4, 0x2, 0x1, 0x200, c"t", c"T")
+    return u.buf_take(b)
+}
+
+fn ls_unit(n: i64, div: i64, unit: ref u8) ref u8 = trust {
+    val whole: i64 = n / div
+    if whole >= 10 {
+        return u.s_cat(u.s_int((n + div / 2) / div), unit)
+    }
+    val tenths: i64 = (n * 10 + div / 2) / div
+    return u.s_cat(u.s_int(tenths / 10), u.s_cat(c".", u.s_cat(u.s_int(tenths % 10), unit)))
+}
+
+fn ls_size(n: i64) ref u8 = trust {
+    if n < 1024 {
+        return u.s_int(n)
+    }
+    if n < 1024 * 1024 {
+        return ls_unit(n, 1024, c"K")
+    }
+    if n < 1024 * 1024 * 1024 {
+        return ls_unit(n, 1024 * 1024, c"M")
+    }
+    if n < 1024 * 1024 * 1024 * 1024 {
+        return ls_unit(n, 1024 * 1024 * 1024, c"G")
+    }
+    return ls_unit(n, 1024 * 1024 * 1024 * 1024, c"T")
+}
+
+fn ls_spaces(n: i64) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        u.stdout_s(c" ")
+        i++
+    }
+}
+
+fn ls_bar(n: i64) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        u.stdout_s(c"─")
+        i++
+    }
+}
+
+fn ls_rule(left: ref u8, mid: ref u8, right: ref u8, a: i64, b: i64, c: i64) void = trust {
+    u.stdout_s(left)
+    ls_bar(a + 2)
+    u.stdout_s(mid)
+    ls_bar(b + 2)
+    u.stdout_s(mid)
+    ls_bar(c + 2)
+    u.stdout_ln(right)
+}
+
+fn ls_header(nw: i64, pw: i64, sw: i64) void = trust {
+    u.stdout_s(c"│ Name")
+    ls_spaces(nw - 4)
+    u.stdout_s(c" │ Permissions")
+    ls_spaces(pw - 11)
+    u.stdout_s(c" │ ")
+    ls_spaces(sw - 4)
+    u.stdout_s(c"Size")
+    u.stdout_ln(c" │")
+}
+
+fn ls_row(e: ref LsEntry, nw: i64, pw: i64, sw: i64) void = trust {
+    val perms: mut ref u8 = c"-"
+    val size: mut ref u8 = c"-"
+    if e.valid {
+        perms = ls_perms(e.mode)
+        size = ls_size(e.size)
+    }
+    u.stdout_s(c"│ ")
+    u.stdout_s(e.label)
+    ls_spaces(nw - u.visible_width(e.label))
+    u.stdout_s(c" │ ")
+    u.stdout_s(perms)
+    ls_spaces(pw - u.visible_width(perms))
+    u.stdout_s(c" │ ")
+    ls_spaces(sw - u.visible_width(size))
+    u.stdout_s(size)
+    u.stdout_ln(c" │")
+}
+
+fn ls_collect(dir: ref u8, out: mut ref u.Vec) void = trust {
+    val d: ref void = u.dir_open(dir)
+    if d == none {
+        return
+    }
+    for {
+        val typ: mut u8 = 0
+        val name: ref u8 = u.dir_next_type(d, @addr(typ))
+        if name == none {
+            break
+        }
+        if u.s_len(name) == 0 || @load8(name) == 46 {
+            continue
+        }
+        val full: ref u8 = u.path_join(dir, name)
+        val fi: u.FileInfo = u.file_info(full)
+        val directory: mut bool = false
+        if fi.valid {
+            directory = (fi.mode & 0xF000) == 0x4000
+        } elif typ == 4 {
+            directory = true
+        } elif typ == 0 {
+            directory = u.is_dir(full)
+        }
+        val e: mut ref LsEntry = u.xalloc(@sizeof(LsEntry) as i64) as ref LsEntry
+        if directory {
+            e.label = u.s_cat(name, c"/")
+        } else {
+            e.label = u.s_dup(name)
+        }
+        e.mode = fi.mode
+        e.size = fi.size
+        e.valid = fi.valid
+        u.vec_pushp(out, e as ref void)
+        u.s_free(full)
+    }
+    u.dir_close(d)
+}
+
+fn ls_sort(v: mut ref u.Vec) void = trust {
+    val i: mut i64 = 1
+    for {
+        if i >= v.len {
+            break
+        }
+        val key: ref LsEntry = u.vec_p(v, i) as ref LsEntry
+        val j: mut i64 = i - 1
+        for {
+            if j < 0 {
+                break
+            }
+            val cur: ref LsEntry = u.vec_p(v, j) as ref LsEntry
+            if u.s_cmp(cur.label, key.label) <= 0 {
+                break
+            }
+            u.vec_setp(v, j + 1, cur)
+            j--
+        }
+        u.vec_setp(v, j + 1, key)
+        i++
+    }
+}
+
+fn list_table(path: ref u8) i32 = trust {
+    val target: ref u8 = u.expand_tilde(u.s_trim(path))
+    if !u.is_dir(target) {
+        error(u.s_cat3(c":ls: not a directory: ", target, c""))
+        return 1
+    }
+    val out: mut ref u.Vec = u.vec_new()
+    ls_collect(target, out)
+    ls_sort(out)
+    u.s_free(target)
+
+    val nw: mut i64 = 4
+    val pw: mut i64 = 11
+    val sw: mut i64 = 4
+    val i: mut i64 = 0
+    for {
+        if i >= out.len {
+            break
+        }
+        val e: ref LsEntry = u.vec_p(out, i) as ref LsEntry
+        val n: i64 = u.visible_width(e.label)
+        if n > nw {
+            nw = n
+        }
+        if e.valid {
+            val p: i64 = u.visible_width(ls_perms(e.mode))
+            if p > pw {
+                pw = p
+            }
+            val s: i64 = u.visible_width(ls_size(e.size))
+            if s > sw {
+                sw = s
+            }
+        }
+        i++
+    }
+
+    ls_rule(c"╭", c"┬", c"╮", nw, pw, sw)
+    ls_header(nw, pw, sw)
+    ls_rule(c"├", c"┼", c"┤", nw, pw, sw)
+    i = 0
+    for {
+        if i >= out.len {
+            break
+        }
+        val e: ref LsEntry = u.vec_p(out, i) as ref LsEntry
+        ls_row(e, nw, pw, sw)
+        i++
+    }
+    ls_rule(c"╰", c"┴", c"╯", nw, pw, sw)
+
+    i = 0
+    for {
+        if i >= out.len {
+            break
+        }
+        val e: ref LsEntry = u.vec_p(out, i) as ref LsEntry
+        u.s_free(e.label)
+        u.xfree(e as ref void)
+        i++
+    }
+    return 0
 }
 
 fn reload(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = trust {
@@ -281,6 +551,12 @@ pub fn handle(line: ref u8, c: mut ref cfgmod.Config, h: mut ref histmod.History
     }
     if u.s_starts(rest, c"ft ") || u.s_starts(rest, c"ft\t") {
         return find_files(u.s_trim(u.s_substr(rest, 2, u.s_len(rest))))
+    }
+    if u.s_eq(rest, c"ls") {
+        return list_table(c".")
+    }
+    if u.s_starts(rest, c"ls ") || u.s_starts(rest, c"ls\t") {
+        return list_table(u.s_substr(rest, 2, u.s_len(rest)))
     }
     if u.s_starts(rest, c"cfg.") {
         return set_config(c, h, rest)

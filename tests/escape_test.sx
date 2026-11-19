@@ -181,3 +181,17 @@ test ":ft finds files recursively and reports absolute paths" {
         assert esc.handle(c":ft hellew", c, h) == 1
     }
 }
+
+test ":ls lists a directory and rejects missing paths" {
+    trust {
+        val dir: ref u8 = c"/tmp/blood-unit-escape/ls"
+        assert u.mkdir_p(dir)
+        assert u.write_file(u.path_join(dir, c"note.txt"), c"hello")
+        val path: ref u8 = u.path_join(dir, c"blood.ini")
+        assert u.write_file(path, c"")
+        val c: mut ref cfg.Config = setup(path)
+        val h: mut ref hist.History = new_history(c)
+        assert esc.handle(u.s_cat(c":ls ", dir), c, h) == 0
+        assert esc.handle(c":ls /tmp/blood-unit-escape/does-not-exist", c, h) == 1
+    }
+}

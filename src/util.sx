@@ -19,6 +19,20 @@ pub type TimeVal = {
     tv_usec: i64
 }
 
+/// Compact `stat` result produced by the freestanding runtime.
+pub type Stat = {
+    ino: u64
+    mode: u32
+    uid: u32
+    size: i64
+}
+
+pub type FileInfo = {
+    mode: u32
+    size: i64
+    valid: bool
+}
+
 /// A growable byte buffer, always NUL-terminated after `take`.
 pub type Buf = {
     ptr: mut ref u8
@@ -857,6 +871,12 @@ pub fn chdir(path: ref u8) i32 = trust {
 
 pub fn file_exists(path: ref u8) bool = trust {
     return rt.access(path, 0) == 0
+}
+
+pub fn file_info(path: ref u8) FileInfo = trust {
+    val st: mut Stat = @zeroed
+    val valid: bool = rt.stat(path, @addr(st) as ref void) == 0
+    return FileInfo{mode: st.mode, size: st.size, valid: valid}
 }
 
 pub fn is_executable(path: ref u8) bool = trust {
