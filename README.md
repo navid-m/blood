@@ -1,6 +1,8 @@
 # blood
 
-POSIX shell built for performance, reliability and ergonomics.
+Shell built for performance, reliability and ergonomics.
+
+Written with the [Spectre Programming Language](https://spectrelang.org)
 
 Outperforms ksh and dash on several benchmarks, outperforming Elvish and Fish by up to 120x on general purpose tasks as per [Shell Arena](https://navid-m.github.io/shellarena/).
 
