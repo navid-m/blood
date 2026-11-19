@@ -10,11 +10,11 @@ for x in ["hello", "world"] {
 }
 ```
 
----
+## Resources
 
-<img src="./.github/icons/screenshot.png" style="border-radius:5px">
-
----
+- [Site](https://bloodshell.pages.dev)
+- [Specification](https://bloodshell.pages.dev/specification.html)
+- [Benchmark Results](https://navid-m.github.io/shellarena/)
 
 ## Examples
 
@@ -24,12 +24,15 @@ The shell and the language are one. shell commands are values, strings interpola
 fn lines(path) {
     return len(read_file(path).strip().split("\n"))
 }
+
 total = 0
+
 for file in glob("src/*.sx") {
     n = lines(file)
     total += n
     say "{file}: {n} lines"
 }
+
 say "source total: {total} lines"
 ```
 
@@ -47,9 +50,7 @@ if changes != "" {
 }
 ```
 
-Parallelism is a keyword
-
-Every iteration is a child process. No thread pools or async/await.
+Parallelism is a keyword, therefore every iteration is a child process. No thread pools or async/await.
 
 ```
 para for file in glob("src/*.sx") {
