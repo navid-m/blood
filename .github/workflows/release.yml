@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            asset: linux-x86_64
+          - name: Linux arm64
+            os: ubuntu-24.04-arm
+            asset: linux-arm64
+          - name: macOS x86_64
+            os: macos-15-intel
+            asset: macos-x86_64
+          - name: macOS arm64
+            os: macos-15
+            asset: macos-arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Spectre toolchain
+        run: |
+          set -euo pipefail
+          curl -fsSL https://spectrelang.org/get.sh -o "$RUNNER_TEMP/get.sh"
+          sh "$RUNNER_TEMP/get.sh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build release binary
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          spectre build release
+          ./blood -v
+
+      - name: Package
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          archive="blood-${version}-${ASSET}.tar.gz"
+          staging="$RUNNER_TEMP/package-${ASSET}"
+          rm -rf "$staging" "$archive"
+          mkdir -p "$staging"
+          cp blood "$staging/blood"
+          if [ -f LICENSE ]; then
+            cp LICENSE "$staging/LICENSE"
+            tar -C "$staging" -czf "$archive" blood LICENSE
+          else
+            tar -C "$staging" -czf "$archive" blood
+          fi
+          tar -tzf "$archive"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: blood-${{ matrix.asset }}
+          path: blood-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: blood-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/blood-*.tar.gz
+          fail_on_unmatched_files: true
+          generate_release_notes: true
