@@ -581,6 +581,7 @@ pub fn handle(line: ref u8, c: mut ref cfgmod.Config, h: mut ref histmod.History
         return set_config(c, h, rest)
     }
     error(u.s_cat(c"unknown escape command: ", rest))
+    @print("\n")
     print_help()
     return 2
 }
