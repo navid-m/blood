@@ -19,6 +19,20 @@ fn new_history(c: ref cfg.Config) ref hist.History = trust {
     return hist.history_new(c)
 }
 
+fn vec_has_path(v: ref u.Vec, p: ref u8) bool = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= v.len {
+            break
+        }
+        if u.s_eq(u.vec_p(v, i) as ref u8, p) {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
 test "escape detection only accepts colon-prefixed lines" {
     trust {
         assert esc.is_command(c":where")
@@ -136,5 +150,34 @@ test ":where and :help succeed" {
         assert esc.handle(c":where", c, h) == 0
         assert esc.handle(c":help", c, h) == 0
         assert esc.handle(c":nonsense", c, h) == 2
+    }
+}
+
+test ":ft finds files recursively and reports absolute paths" {
+    trust {
+        val dir: ref u8 = c"/tmp/blood-unit-escape/ft"
+        assert u.mkdir_p(u.path_join(dir, c"sub/deep"))
+        val top: ref u8 = u.path_join(dir, c"foo bar.txt")
+        val nested: ref u8 = u.path_join(dir, c"sub/Foo Bar.md")
+        assert u.write_file(top, c"")
+        assert u.write_file(nested, c"")
+        assert u.write_file(u.path_join(dir, c"other.txt"), c"")
+        assert u.write_file(u.path_join(dir, c"sub/deep/foobar.h"), c"")
+
+        val saved: ref u8 = u.cwd()
+        assert u.chdir(dir) == 0
+        val hits: ref u.Vec = esc.find_matching_files(c"foo bar")
+        assert hits.len == 2
+        assert vec_has_path(hits, top)
+        assert vec_has_path(hits, nested)
+        assert esc.find_matching_files(c"HELLEW").len == 0
+        assert u.chdir(saved) == 0
+
+        val path: ref u8 = u.path_join(dir, c"blood.ini")
+        assert u.write_file(path, c"")
+        val c: mut ref cfg.Config = setup(path)
+        val h: mut ref hist.History = new_history(c)
+        assert esc.handle(c":ft", c, h) == 2
+        assert esc.handle(c":ft hellew", c, h) == 1
     }
 }

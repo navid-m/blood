@@ -1531,6 +1531,12 @@ and immediately rewrite the corresponding line in <code>blood.ini</code>. Suppor
 run <code>.bloodrc</code> again. The prompt and colours update immediately.</p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:ft SEARCH</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Recursively find files whose name contains <code>SEARCH</code>
+(case-insensitively) under the current directory and print their absolute
+paths.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>:where</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Print the paths of <code>blood.ini</code> and <code>.bloodrc</code>.</p></td>
 </tr>
@@ -1549,7 +1555,8 @@ run <code>.bloodrc</code> again. The prompt and colours update immediately.</p><
 :cfg.prompt.theme = hacker
 :cfg.colors.primary = red
 :cfg.history.max_entries = 500
-:cfg.aliases.ll = ls -l</code></pre>
+:cfg.aliases.ll = ls -l
+:ft foo bar</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -4252,7 +4259,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-19 00:17:39 UTC
+Last updated 2026-11-19 00:28:19 UTC
 </div>
 </div>
 </body>

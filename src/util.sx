@@ -1062,6 +1062,19 @@ pub fn dir_next(dir: ref void) ref u8 = trust {
     return @addr(e.d_name) as ref u8
 }
 
+/// Like `dir_next`, but also stores the raw `d_type` of the entry in `typ`.
+pub fn dir_next_type(dir: ref void, typ: ref u8) ref u8 = trust {
+    if dir == none {
+        return none
+    }
+    val e: ref DirEntry = rt.readdir(dir) as ref DirEntry
+    if e == none {
+        return none
+    }
+    @store8(typ, e.d_type)
+    return @addr(e.d_name) as ref u8
+}
+
 pub fn dir_close(dir: ref void) void = trust {
     if dir != none {
         rt.closedir(dir)

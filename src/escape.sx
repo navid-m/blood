@@ -27,10 +27,118 @@ fn error(msg: ref u8) void = trust {
     u.write_fd(2, u.s_cat3(c"blood: ", msg, c"\n"))
 }
 
+fn ft_lower(c: u8) u8 = trust {
+    if c >= 65 && c <= 90 {
+        return c + 32
+    }
+    return c
+}
+
+fn ft_contains(hay: ref u8, needle: ref u8) bool = trust {
+    val hn: i64 = u.s_len(hay)
+    val nn: i64 = u.s_len(needle)
+    if nn == 0 {
+        return true
+    }
+    if nn > hn {
+        return false
+    }
+    val i: mut i64 = 0
+    for {
+        if i + nn > hn {
+            break
+        }
+        val hit: mut bool = true
+        val j: mut i64 = 0
+        for {
+            if j >= nn {
+                break
+            }
+            if ft_lower(@load8(@ptradd(hay, i + j))) != ft_lower(@load8(@ptradd(needle, j))) {
+                hit = false
+                break
+            }
+            j++
+        }
+        if hit {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn ft_walk(dir: ref u8, q: ref u8, out: mut ref u.Vec) void = trust {
+    val d: ref void = u.dir_open(dir)
+    if d == none {
+        return
+    }
+    for {
+        val typ: mut u8 = 0
+        val name: ref u8 = u.dir_next_type(d, @addr(typ))
+        if name == none {
+            break
+        }
+        if u.s_len(name) == 0 || u.s_eq(name, c".") || u.s_eq(name, c"..") {
+            continue
+        }
+        val full: ref u8 = u.path_join(dir, name)
+        val directory: mut bool = typ == 4
+        if typ == 0 {
+            directory = u.is_dir(full)
+        }
+        if !directory && ft_contains(name, q) {
+            u.vec_pushp(out, full)
+            continue
+        }
+        if directory {
+            ft_walk(full, q, out)
+        }
+        u.s_free(full)
+    }
+    u.dir_close(d)
+}
+
+/// Recursively collect absolute paths of files whose base name contains `q`
+/// (case-insensitively) under the current directory.
+pub fn find_matching_files(q: ref u8) ref u.Vec = trust {
+    val root: mut ref u8 = u.cwd()
+    if u.s_len(root) == 0 {
+        root = u.s_dup(c".")
+    }
+    val out: mut ref u.Vec = u.vec_new()
+    if u.s_len(q) > 0 {
+        ft_walk(root, q, out)
+    }
+    return out
+}
+
+fn find_files(q: ref u8) i32 = trust {
+    if u.s_len(q) == 0 {
+        error(c":ft: expected a search term")
+        return 2
+    }
+    val out: ref u.Vec = find_matching_files(q)
+    val i: mut i64 = 0
+    for {
+        if i >= out.len {
+            break
+        }
+        u.stdout_ln(u.vec_p(out, i) as ref u8)
+        i++
+    }
+    if out.len == 0 {
+        error(u.s_cat3(c":ft: no files matching ", q, c""))
+        return 1
+    }
+    return 0
+}
+
 fn print_help() void = trust {
     u.write_fd(1, c\\Blood escape commands
         \\  :cfg.SECTION.KEY           show current and possible values
         \\  :cfg.SECTION.KEY = VALUE   update and save configuration
+        \\  :ft SEARCH                 find files by name under the current directory
         \\  :rla                       reload configuration and .bloodrc
         \\  :where                     show configuration file paths
         \\
@@ -154,6 +262,13 @@ pub fn handle(line: ref u8, c: mut ref cfgmod.Config, h: mut ref histmod.History
     }
     if u.s_eq(rest, c"rla") {
         return reload(c, h)
+    }
+    if u.s_eq(rest, c"ft") {
+        error(c":ft: expected a search term")
+        return 2
+    }
+    if u.s_starts(rest, c"ft ") || u.s_starts(rest, c"ft\t") {
+        return find_files(u.s_trim(u.s_substr(rest, 2, u.s_len(rest))))
     }
     if u.s_starts(rest, c"cfg.") {
         return set_config(c, h, rest)

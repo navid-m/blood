@@ -552,6 +552,9 @@ and immediately rewrite the corresponding line in `blood.ini`. Supports
 `prompt`, `colors`, `history`, `completion`, `shell`, `aliases`, and `env`.
 |`:rla` |Reload `blood.ini`, re-seed aliases and environment variables, and
 run `.bloodrc` again. The prompt and colours update immediately.
+|`:ft SEARCH` |Recursively find files whose name contains `SEARCH`
+(case-insensitively) under the current directory and print their absolute
+paths.
 |`:where` |Print the paths of `blood.ini` and `.bloodrc`.
 |`:help` or `:` |Print the escape-command summary.
 |===
@@ -565,6 +568,7 @@ Examples:
 :cfg.colors.primary = red
 :cfg.history.max_entries = 500
 :cfg.aliases.ll = ls -l
+:ft foo bar
 ----
 
 Saving a key creates the `blood.ini` file and the containing section when
