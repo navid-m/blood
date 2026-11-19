@@ -178,6 +178,7 @@ fn startup_files(c: ref cfgmod.Config) ref u.Vec = trust {
 }
 
 fn run_startup(c: ref cfgmod.Config) void = trust {
+    u.scratch_begin()
     val files: ref u.Vec = startup_files(c)
     val i: mut i64 = 0
     for {
@@ -191,17 +192,21 @@ fn run_startup(c: ref cfgmod.Config) void = trust {
         }
         i++
     }
+    u.scratch_end()
 }
 
 fn run_bloodrc(c: ref cfgmod.Config) void = trust {
+    u.scratch_begin()
     if !cfgmod.init_bloodrc(c) {
         u.write_fd(2, c"blood: cannot create .bloodrc\n")
+        u.scratch_end()
         return
     }
     val path: ref u8 = cfgmod.bloodrc_path(c)
     if u.file_exists(path) {
         script.run_file(path)
     }
+    u.scratch_end()
 }
 
 fn prompt_continuation() ref u8 = trust {
@@ -218,6 +223,7 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
             code = shell.exit_code()
             break
         }
+        u.scratch_begin()
         shell.reap_jobs()
         val p: prompt.PromptParts = prompt.render_parts(
             c,
@@ -231,11 +237,14 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
         if line == none {
             if term.was_cancelled(ed) {
                 u.interrupt_flag = 0
+                u.scratch_end()
                 continue
             }
+            u.scratch_end()
             break
         }
         if u.s_len(u.s_trim(line)) == 0 {
+            u.scratch_end()
             continue
         }
         val trimmed: ref u8 = u.s_trim(line)
@@ -248,12 +257,15 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
             duration = 0
             if u.script_exit_code >= 0 {
                 code = u.script_exit_code as i32
+                u.scratch_end()
                 break
             }
             if shell.exit_requested() {
                 code = shell.exit_code()
+                u.scratch_end()
                 break
             }
+            u.scratch_end()
             continue
         }
         val full: mut ref u8 = u.s_dup(line)
@@ -303,6 +315,7 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
             }
         }
         if u.s_len(u.s_trim(full)) == 0 {
+            u.scratch_end()
             continue
         }
         histmod.history_add(h, full)
@@ -325,18 +338,22 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
             script.set_external_status(status)
             if u.script_exit_code >= 0 {
                 code = u.script_exit_code as i32
+                u.scratch_end()
                 break
             }
         }
         duration = u.now_ms() - started
         if shell.exit_requested() {
             code = shell.exit_code()
+            u.scratch_end()
             break
         }
         if u.script_exit_code >= 0 {
             code = u.script_exit_code as i32
+            u.scratch_end()
             break
         }
+        u.scratch_end()
     }
     histmod.history_save(h)
     return code
@@ -344,14 +361,20 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
 
 pub fn main() i32 = trust {
     val av: list[ref u8] = @args()
+    u.scratch_begin()
     val c: mut ref cfgmod.Config = cfgmod.load_config()
+    u.scratch_end()
+    u.scratch_begin()
     ensure_config_dirs(c)
+    u.scratch_end()
     ex.signal_ignore(3)
     ex.signal_handler(2, on_interrupt)
     ex.signal_ignore(15)
     ex.signal_ignore(20)
     val h: mut ref histmod.History = histmod.history_new(c)
+    u.scratch_begin()
     histmod.history_load(h)
+    u.scratch_end()
     shell.shell_init(c, h, false)
     script.script_init()
     install_hooks()
@@ -407,6 +430,7 @@ pub fn main() i32 = trust {
     if command != none {
         val rest: ref u.Vec = vec_slice(all_args, 0)
         script.set_args(rest)
+        u.scratch_begin()
         val st: mut i32 = 0
         if script.looks_like_script(command) {
             st = script.run_text(strip_shebang(command), false, c"-c")
@@ -415,34 +439,48 @@ pub fn main() i32 = trust {
         }
         term.cooked_mode()
         if u.script_exit_code >= 0 {
-            return u.script_exit_code as i32
+            val rc: i32 = u.script_exit_code as i32
+            u.scratch_end()
+            return rc
         }
+        u.scratch_end()
         return st
     }
     if first != none {
         val rest: ref u.Vec = vec_slice(all_args, 1)
         script.set_args(rest)
+        u.scratch_begin()
         val src: ref u8 = u.read_file(first)
         if src == none {
             u.write_fd(2, u.s_cat3(c"blood: ", first, c": no such script\n"))
+            u.scratch_end()
             return 1
         }
         val st: i32 = script.run_file(first)
         if u.script_exit_code >= 0 {
-            return u.script_exit_code as i32
+            val rc: i32 = u.script_exit_code as i32
+            u.scratch_end()
+            return rc
         }
+        u.scratch_end()
         return st
     }
     val interactive: bool = term.have_tty()
     if !interactive {
+        u.scratch_begin()
         val src: ref u8 = read_all_stdin()
         if u.s_len(u.s_trim(src)) == 0 {
+            u.scratch_end()
             return 0
         }
         if script.looks_like_script(first_line(src)) {
-            return script.run_text(strip_shebang(src), false, c"stdin")
+            val st: i32 = script.run_text(strip_shebang(src), false, c"stdin")
+            u.scratch_end()
+            return st
         }
-        return shell.run_line(src)
+        val st: i32 = shell.run_line(src)
+        u.scratch_end()
+        return st
     }
     shell.shell_init(c, h, true)
     run_bloodrc(c)

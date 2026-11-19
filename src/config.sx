@@ -168,7 +168,7 @@ fn color_ansi(name: ref u8) ref u8 = trust {
         val r: i64 = parse_hex2(hex, 0)
         val g: i64 = parse_hex2(hex, 2)
         val b: i64 = parse_hex2(hex, 4)
-        return @fmtalloc("\x1b[38;2;{d};{d};{d}m", {r, g, b})
+        return u.s_format_perm(c"\x1b[38;2;{d};{d};{d}m", {r as i64, g as i64, b as i64})
     }
     val n: i64 = u.s_len(name)
     val i: mut i64 = 0
@@ -187,7 +187,7 @@ fn color_ansi(name: ref u8) ref u8 = trust {
     if all_digits {
         match u.parse_int(name) {
             some idx => {
-                return @fmtalloc("\x1b[38;5;{d}m", {idx})
+                return u.s_format_perm(c"\x1b[38;5;{d}m", {idx})
             }
             none => {
                 return c""
@@ -228,8 +228,8 @@ pub fn config_path() ref u8 = trust {
 }
 
 pub fn default_config() ref Config = trust {
-    val c: mut ref Config = u.xalloc(@sizeof(Config) as i64) as ref Config
-    c.path = config_path()
+    val c: mut ref Config = u.xalloc_perm(@sizeof(Config) as i64) as ref Config
+    c.path = u.s_dup_perm(config_path())
     c.theme = c"default"
     c.show_username = 1
     c.show_hostname = 1
@@ -256,7 +256,7 @@ pub fn default_config() ref Config = trust {
     c.color_warning = c"\x1b[33m"
     c.color_accent = c"\x1b[96m"
     c.history_enabled = 1
-    c.history_file = u.path_join(u.path_join(u.home_dir(), c".local/share/blood"), c"history")
+    c.history_file = u.s_dup_perm(u.path_join(u.path_join(u.home_dir(), c".local/share/blood"), c"history"))
     c.history_max = 10000
     c.history_ignore_dups = 1
     c.completion_enabled = 1
@@ -264,8 +264,8 @@ pub fn default_config() ref Config = trust {
     c.shell_editor = c"nano"
     c.login_message = 1
     c.startup_file = c""
-    c.alias_defs = u.vec_new()
-    c.env_defs = u.vec_new()
+    c.alias_defs = u.vec_new_perm()
+    c.env_defs = u.vec_new_perm()
     return c
 }
 
@@ -313,27 +313,27 @@ fn set_bool_field(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8
 
 fn set_string_field(c: mut ref Config, key: ref u8, value: ref u8) void = trust {
     if u.s_eq(key, c"theme") {
-        c.theme = u.s_dup(value)
+        c.theme = u.s_dup_perm(value)
     } elif u.s_eq(key, c"symbol") {
-        c.prompt_symbol = u.s_dup(value)
-        c.prompt_char = u.s_dup(value)
+        c.prompt_symbol = u.s_dup_perm(value)
+        c.prompt_char = u.s_dup_perm(value)
     } elif u.s_eq(key, c"prompt_symbol") {
-        c.prompt_symbol = u.s_dup(value)
-        c.prompt_char = u.s_dup(value)
+        c.prompt_symbol = u.s_dup_perm(value)
+        c.prompt_char = u.s_dup_perm(value)
     } elif u.s_eq(key, c"prompt_char") {
-        c.prompt_char = u.s_dup(value)
+        c.prompt_char = u.s_dup_perm(value)
     } elif u.s_eq(key, c"separator") {
-        c.separator = u.s_dup(value)
+        c.separator = u.s_dup_perm(value)
     } elif u.s_eq(key, c"directory_style") {
-        c.directory_style = u.s_dup(value)
+        c.directory_style = u.s_dup_perm(value)
     } elif u.s_eq(key, c"file") {
-        c.history_file = u.expand_tilde(value)
+        c.history_file = u.s_dup_perm(u.expand_tilde(value))
     } elif u.s_eq(key, c"history_file") {
-        c.history_file = u.expand_tilde(value)
+        c.history_file = u.s_dup_perm(u.expand_tilde(value))
     } elif u.s_eq(key, c"default_editor") || u.s_eq(key, c"editor") {
-        c.shell_editor = u.s_dup(value)
+        c.shell_editor = u.s_dup_perm(value)
     } elif u.s_eq(key, c"startup_file") {
-        c.startup_file = u.expand_tilde(value)
+        c.startup_file = u.s_dup_perm(u.expand_tilde(value))
     } elif u.s_eq(key, c"primary") {
         c.color_primary = color_ansi(value)
     } elif u.s_eq(key, c"secondary") {
@@ -373,11 +373,11 @@ fn set_int_field(c: mut ref Config, key: ref u8, value: ref u8) void = trust {
 
 fn apply(c: mut ref Config, section: ref u8, key: ref u8, value: ref u8) void = trust {
     if u.s_eq(section, c"aliases") {
-        u.vec_pushp(c.alias_defs, u.s_cat3(key, c"=", value) as ref void)
+        u.vec_pushp(c.alias_defs, u.s_cat3_perm(key, c"=", value) as ref void)
         return
     }
     if u.s_eq(section, c"env") {
-        u.vec_pushp(c.env_defs, u.s_cat3(key, c"=", value) as ref void)
+        u.vec_pushp(c.env_defs, u.s_cat3_perm(key, c"=", value) as ref void)
         return
     }
     set_bool_field(c, section, key, value)
@@ -904,7 +904,7 @@ pub fn load_config() ref Config = trust {
 
 pub fn load_config_from(path: ref u8) ref Config = trust {
     val c: mut ref Config = default_config()
-    c.path = u.s_dup(path)
+    c.path = u.s_dup_perm(path)
     val data: ref u8 = u.read_file(c.path)
     if data == none {
         return c

@@ -32,6 +32,7 @@ val g_flow: mut i64 = 0
 val g_return: mut ref Value = none
 val g_interactive: mut i64 = 1
 val g_depth: mut i64 = 0
+val g_run_depth: mut i64 = 0
 val g_args: mut ref u.Vec = none
 
 fn v_new(tag: i64) ref Value = trust {
@@ -68,7 +69,9 @@ pub fn v_float(f: f64) ref Value = trust {
 
 pub fn v_str(s: ref u8) ref Value = trust {
     val v: mut ref Value = v_new(4)
-    v.p = s
+    if s != none {
+        v.p = u.s_dup(s)
+    }
     return v
 }
 
@@ -292,11 +295,21 @@ fn set_error(msg: ref u8, line: i64, col: i64) void = trust {
     g_flow = 4
 }
 
-fn env_new(parent: ref Env) ref Env = trust {
-    val e: mut ref Env = u.xalloc(@sizeof(Env) as i64) as ref Env
-    e.vars = u.map_new()
+fn env_new_mode(parent: ref Env, perm: bool) ref Env = trust {
+    val e: mut ref Env = none
+    if perm {
+        e = u.xalloc_perm(@sizeof(Env) as i64) as ref Env
+        e.vars = u.map_new_perm()
+    } else {
+        e = u.xalloc(@sizeof(Env) as i64) as ref Env
+        e.vars = u.map_new()
+    }
     e.parent = parent
     return e
+}
+
+fn env_new(parent: ref Env) ref Env = trust {
+    return env_new_mode(parent, false)
 }
 
 fn env_define(e: mut ref Env, name: ref u8, v: ref Value) void = trust {
@@ -2066,7 +2079,7 @@ fn exec_block(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
 
 fn define_native(env: mut ref Env, name: ref u8) void = trust {
     val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
-    f.name = name
+    f.name = u.s_dup(name)
     f.params = u.vec_new()
     f.body = none
     f.native = native_id(name)
@@ -2074,13 +2087,13 @@ fn define_native(env: mut ref Env, name: ref u8) void = trust {
 }
 
 pub fn script_init() void = trust {
-    g_env = env_new(none)
+    g_env = env_new_mode(none, true)
     g_error = none
     g_flow = 0
     g_return = none
     g_depth = 0
     g_interactive = 1
-    g_args = u.vec_new()
+    g_args = u.vec_new_perm()
     define_native(g_env, c"len")
     define_native(g_env, c"str")
     define_native(g_env, c"int")
@@ -2119,7 +2132,7 @@ pub fn script_init() void = trust {
 }
 
 pub fn set_args(args: ref u.Vec) void = trust {
-    g_args = u.vec_new()
+    g_args = u.vec_new_perm()
     val i: mut i64 = 0
     for {
         if i >= args.len {
@@ -2130,6 +2143,265 @@ pub fn set_args(args: ref u.Vec) void = trust {
     }
     if g_env != none {
         env_define(g_env, c"args", v_list(g_args))
+    }
+}
+
+fn memo_get(memo: ref u.Vec, old: i64) ref void = trust {
+    val i: mut i64 = 0
+    for {
+        if i + 1 >= memo.len {
+            break
+        }
+        if u.vec_gets(memo, i) == old {
+            return u.vec_p(memo, i + 1)
+        }
+        i += 2
+    }
+    return none
+}
+
+fn memo_put(memo: mut ref u.Vec, old: ref void, new: ref void) void = trust {
+    u.vec_push(memo, @bitcast(old, i64))
+    u.vec_pushp(memo, new)
+}
+
+fn enqueue(jobs: mut ref u.Vec, old: ref void, kind: i64, slot: ref void) void = trust {
+    if old == none {
+        if slot != none {
+            @store64(slot, 0)
+        }
+        return
+    }
+    u.vec_push(jobs, @bitcast(old, i64))
+    u.vec_push(jobs, kind)
+    u.vec_pushp(jobs, slot)
+}
+
+fn queue_value_children(v: mut ref Value, jobs: mut ref u.Vec) void = trust {
+    if v.tag == 4 {
+        enqueue(jobs, v.p, 0, @ptradd(v as ref void, 16))
+    } elif v.tag == 5 {
+        enqueue(jobs, v.p, 2, @ptradd(v as ref void, 16))
+    } elif v.tag == 6 {
+        enqueue(jobs, v.p, 3, @ptradd(v as ref void, 16))
+    } elif v.tag == 7 {
+        enqueue(jobs, v.p, 4, @ptradd(v as ref void, 16))
+    }
+}
+
+fn queue_vec_from(
+    src: ref u.Vec,
+    dst: ref u.Vec,
+    kind: i64,
+    jobs: mut ref u.Vec
+) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= src.len {
+            break
+        }
+        enqueue(jobs, u.vec_p(src, i), kind, @ptradd(dst.data, i * 8))
+        i++
+    }
+}
+
+fn queue_map_children(m: mut ref u.Map, jobs: mut ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= m.cap {
+            break
+        }
+        if u.map_used_at(m, i) {
+            val e: mut ref u.MapEntry = u.map_entry_at(m, i)
+            enqueue(
+                jobs,
+                @bitcast(e.value, ref void),
+                1,
+                @addr(e.value) as ref void
+            )
+        }
+        i++
+    }
+}
+
+fn queue_func_children(f: mut ref Func, jobs: mut ref u.Vec) void = trust {
+    enqueue(jobs, f.name as ref void, 0, @ptradd(f as ref void, 0))
+    enqueue(jobs, f.params as ref void, 7, @ptradd(f as ref void, 8))
+    enqueue(jobs, f.body as ref void, 5, @ptradd(f as ref void, 16))
+}
+
+fn queue_node_children(n: mut ref lang.Node, jobs: mut ref u.Vec) void = trust {
+    enqueue(jobs, n.s as ref void, 0, @ptradd(n as ref void, 24))
+    enqueue(jobs, n.kids as ref void, 6, @ptradd(n as ref void, 32))
+    enqueue(jobs, n.params as ref void, 7, @ptradd(n as ref void, 40))
+}
+
+fn queue_env_children(e: mut ref Env, jobs: mut ref u.Vec) void = trust {
+    enqueue(jobs, e.vars as ref void, 3, @ptradd(e as ref void, 0))
+    enqueue(jobs, e.parent as ref void, 8, @ptradd(e as ref void, 8))
+}
+
+fn store_slot(slot: ref void, p: ref void) void = trust {
+    if slot != none {
+        @store64(slot, @bitcast(p, i64))
+    }
+}
+
+fn promote_all(jobs: mut ref u.Vec, memo: mut ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i + 2 >= jobs.len {
+            break
+        }
+        val old: ref void = @bitcast(u.vec_gets(jobs, i), ref void)
+        val kind: i64 = u.vec_gets(jobs, i + 1)
+        val slot: ref void = u.vec_p(jobs, i + 2)
+        i += 3
+        if old == none {
+            store_slot(slot, none)
+            continue
+        }
+        val found: ref void = memo_get(memo, @bitcast(old, i64))
+        if found != none {
+            store_slot(slot, found)
+            continue
+        }
+        if kind == 0 {
+            val ns: ref u8 = u.s_dup_perm(old as ref u8)
+            memo_put(memo, old, ns as ref void)
+            store_slot(slot, ns as ref void)
+            continue
+        }
+        if kind == 1 {
+            val ov: ref Value = old as ref Value
+            val nv: mut ref Value = u.xalloc_perm(@sizeof(Value) as i64) as ref Value
+            nv.tag = ov.tag
+            nv.i = ov.i
+            nv.p = ov.p
+            memo_put(memo, old, nv as ref void)
+            store_slot(slot, nv as ref void)
+            queue_value_children(nv, jobs)
+            continue
+        }
+        if kind == 2 {
+            val ov: ref u.Vec = old as ref u.Vec
+            val nv: mut ref u.Vec = u.vec_new_perm()
+            nv.perm = 1
+            u.vec_reserve(nv, ov.len)
+            nv.len = ov.len
+            memo_put(memo, old, nv as ref void)
+            store_slot(slot, nv as ref void)
+            queue_vec_from(ov, nv, 1, jobs)
+            continue
+        }
+        if kind == 3 {
+            val om: ref u.Map = old as ref u.Map
+            val nm: mut ref u.Map = u.map_new_perm()
+            nm.perm = 1
+            val k: mut i64 = 0
+            for {
+                if k >= om.cap {
+                    break
+                }
+                if u.map_used_at(om, k) {
+                    u.map_put(
+                        nm,
+                        u.map_key_at(om, k),
+                        u.map_val_at(om, k)
+                    )
+                }
+                k++
+            }
+            memo_put(memo, old, nm as ref void)
+            store_slot(slot, nm as ref void)
+            queue_map_children(nm, jobs)
+            continue
+        }
+        if kind == 4 {
+            val of: ref Func = old as ref Func
+            val nf: mut ref Func = u.xalloc_perm(@sizeof(Func) as i64) as ref Func
+            nf.name = of.name
+            nf.params = of.params
+            nf.body = of.body
+            nf.native = of.native
+            memo_put(memo, old, nf as ref void)
+            store_slot(slot, nf as ref void)
+            queue_func_children(nf, jobs)
+            continue
+        }
+        if kind == 5 {
+            val on: ref lang.Node = old as ref lang.Node
+            val nn: mut ref lang.Node = u.xalloc_perm(@sizeof(lang.Node) as i64) as ref lang.Node
+            nn.kind = on.kind
+            nn.a = on.a
+            nn.b = on.b
+            nn.s = on.s
+            nn.kids = on.kids
+            nn.params = on.params
+            nn.line = on.line
+            nn.col = on.col
+            memo_put(memo, old, nn as ref void)
+            store_slot(slot, nn as ref void)
+            queue_node_children(nn, jobs)
+            continue
+        }
+        if kind == 6 {
+            val ov: ref u.Vec = old as ref u.Vec
+            val nv: mut ref u.Vec = u.vec_new_perm()
+            nv.perm = 1
+            u.vec_reserve(nv, ov.len)
+            nv.len = ov.len
+            memo_put(memo, old, nv as ref void)
+            store_slot(slot, nv as ref void)
+            queue_vec_from(ov, nv, 5, jobs)
+            continue
+        }
+        if kind == 7 {
+            val ov: ref u.Vec = old as ref u.Vec
+            val nv: mut ref u.Vec = u.vec_new_perm()
+            nv.perm = 1
+            u.vec_reserve(nv, ov.len)
+            nv.len = ov.len
+            memo_put(memo, old, nv as ref void)
+            store_slot(slot, nv as ref void)
+            queue_vec_from(ov, nv, 0, jobs)
+            continue
+        }
+        val oe: ref Env = old as ref Env
+        val ne: mut ref Env = u.xalloc_perm(@sizeof(Env) as i64) as ref Env
+        ne.vars = oe.vars
+        ne.parent = oe.parent
+        memo_put(memo, old, ne as ref void)
+        store_slot(slot, ne as ref void)
+        queue_env_children(ne, jobs)
+    }
+}
+
+fn promote_roots() void = trust {
+    u.gc_start()
+    val memo: mut ref u.Vec = u.vec_new()
+    val jobs: mut ref u.Vec = u.vec_new()
+    val old_env: ref void = g_env as ref void
+    val old_args: ref void = g_args as ref void
+    val old_ret: ref void = g_return as ref void
+    val old_err: ref void = g_error as ref void
+    enqueue(jobs, old_env, 8, none)
+    enqueue(jobs, old_args, 2, none)
+    enqueue(jobs, old_ret, 1, none)
+    enqueue(jobs, old_err, 0, none)
+    promote_all(jobs, memo)
+    u.gc_finish()
+    if old_env != none {
+        g_env = memo_get(memo, @bitcast(old_env, i64)) as ref Env
+    }
+    if old_args != none {
+        g_args = memo_get(memo, @bitcast(old_args, i64)) as ref u.Vec
+    }
+    if old_ret != none {
+        g_return = memo_get(memo, @bitcast(old_ret, i64)) as ref Value
+    }
+    if old_err != none {
+        g_error = memo_get(memo, @bitcast(old_err, i64)) as ref u8
     }
 }
 
@@ -2153,6 +2425,8 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
     if g_env == none {
         script_init()
     }
+    u.scratch_begin()
+    g_run_depth++
     u.script_exit_code = -1
     g_error = none
     g_flow = 0
@@ -2164,12 +2438,20 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
     val program: ref lang.Node = lang.parse(src)
     if lang.last_error() != none {
         report_error(label, lang.last_error_line(), lang.last_error_col(), lang.last_error())
+        g_run_depth--
+        u.scratch_end()
         return 2
     }
     exec_stmt(program, g_env, true)
+    if g_run_depth == 1 {
+        promote_roots()
+    }
     if g_flow == 5 {
         g_flow = 0
-        return u.script_exit_code as i32
+        val code: i32 = u.script_exit_code as i32
+        g_run_depth--
+        u.scratch_end()
+        return code
     }
     if g_flow == 4 {
         val msg: mut ref u8 = g_error
@@ -2179,28 +2461,38 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
         if u.s_eq(msg, c"interrupted") && g_interactive != 0 {
             g_error = none
             g_flow = 0
+            g_run_depth--
+            u.scratch_end()
             return 130
         }
         report_error(label, g_err_line, g_err_col, msg)
         g_error = none
         g_flow = 0
+        g_run_depth--
+        u.scratch_end()
         return 1
     }
     g_flow = 0
+    g_run_depth--
+    u.scratch_end()
     return 0
 }
 
 pub fn run_file(path: ref u8) i32 = trust {
+    u.scratch_begin()
     val src: ref u8 = u.read_file(path)
     if src == none {
         u.write_fd(2, u.s_cat3(c"blood: ", path, c": cannot read script\n"))
+        u.scratch_end()
         return 1
     }
     if g_env == none {
         script_init()
     }
-    env_define(g_env, c"__file__", v_str(u.s_dup(path)))
-    return run_text(src, false, path)
+    env_define(g_env, c"__file__", v_str(path))
+    val st: i32 = run_text(src, false, path)
+    u.scratch_end()
+    return st
 }
 
 pub fn run_interactive(src: ref u8) i32 = trust {

@@ -69,9 +69,9 @@ fn decode(line: ref u8) ref u8 = trust {
 }
 
 pub fn history_new(c: ref cfgmod.Config) ref History = trust {
-    val h: mut ref History = u.xalloc(@sizeof(History) as i64) as ref History
-    h.items = u.vec_new()
-    h.file = u.s_dup(c.history_file)
+    val h: mut ref History = u.xalloc_perm(@sizeof(History) as i64) as ref History
+    h.items = u.vec_new_perm()
+    h.file = u.s_dup_perm(c.history_file)
     h.max = c.history_max
     h.ignore_dups = c.history_ignore_dups
     h.enabled = c.history_enabled
@@ -90,12 +90,20 @@ pub fn history_get(h: ref History, i: i64) ref u8 = trust {
     return u.vec_p(h.items, i) as ref u8
 }
 
+fn history_drop_first(h: mut ref History) void = trust {
+    if h.items.len == 0 {
+        return
+    }
+    u.s_free(u.vec_p(h.items, 0) as ref u8)
+    u.vec_remove(h.items, 0)
+}
+
 pub fn history_set_file(h: mut ref History, file: ref u8) void = trust {
-    h.file = u.s_dup(file)
+    h.file = u.s_dup_perm(file)
 }
 
 pub fn history_apply_config(h: mut ref History, c: ref cfgmod.Config) void = trust {
-    h.file = u.s_dup(c.history_file)
+    h.file = u.s_dup_perm(c.history_file)
     h.max = c.history_max
     h.ignore_dups = c.history_ignore_dups
     h.enabled = c.history_enabled
@@ -103,7 +111,7 @@ pub fn history_apply_config(h: mut ref History, c: ref cfgmod.Config) void = tru
         if h.max <= 0 || h.items.len <= h.max {
             break
         }
-        u.vec_remove(h.items, 0)
+        history_drop_first(h)
     }
 }
 
@@ -126,7 +134,7 @@ pub fn history_load(h: mut ref History) void = trust {
             if i > start {
                 val raw: ref u8 = u.s_ndup(@ptradd(data, start), i - start)
                 if u.s_len(raw) > 0 {
-                    u.vec_pushp(h.items, decode(raw) as ref void)
+                    u.vec_pushp(h.items, u.s_dup_perm(decode(raw)) as ref void)
                 }
             }
             start = i + 1
@@ -139,7 +147,7 @@ pub fn history_load(h: mut ref History) void = trust {
         if k >= over {
             break
         }
-        u.vec_remove(h.items, 0)
+        history_drop_first(h)
         k++
     }
 }
@@ -154,9 +162,9 @@ pub fn history_add(h: mut ref History, line: ref u8) void = trust {
             return
         }
     }
-    u.vec_pushp(h.items, u.s_dup(line) as ref void)
+    u.vec_pushp(h.items, u.s_dup_perm(line) as ref void)
     if h.items.len > h.max {
-        u.vec_remove(h.items, 0)
+        history_drop_first(h)
     }
     if h.enabled != 0 {
         val dir: ref u8 = u.path_dir(h.file)
@@ -188,7 +196,12 @@ pub fn history_save(h: ref History) void = trust {
 }
 
 pub fn history_clear(h: mut ref History) void = trust {
-    h.items.len = 0
+    for {
+        if h.items.len == 0 {
+            break
+        }
+        history_drop_first(h)
+    }
     u.write_file(h.file, c"")
 }
 

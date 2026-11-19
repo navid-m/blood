@@ -24,7 +24,7 @@ val host_cache: mut ref u8 = none
 
 fn host_name() ref u8 = trust {
     if host_cache == none {
-        host_cache = u.hostname()
+        host_cache = u.s_dup_perm(u.hostname())
         if u.s_eq(host_cache, c"") {
             host_cache = c"localhost"
         }
@@ -145,16 +145,16 @@ pub fn git_info(cwd: ref u8, enabled: bool) GitInfo = trust {
     val found: GitInfo = find_git(cwd)
     if found.valid == 0 {
         git_cache.valid = 0
-        git_cache.cwd = u.s_dup(cwd)
+        git_cache.cwd = u.s_dup_perm(cwd)
         git_cache.checked_ms = now
         return found
     }
     val dirty: i64 = check_dirty(found.root)
-    git_cache.branch = found.branch
-    git_cache.root = found.root
+    git_cache.branch = u.s_dup_perm(found.branch)
+    git_cache.root = u.s_dup_perm(found.root)
     git_cache.dirty = dirty
     git_cache.valid = 1
-    git_cache.cwd = u.s_dup(cwd)
+    git_cache.cwd = u.s_dup_perm(cwd)
     git_cache.checked_ms = now
     return git_cache
 }
@@ -281,7 +281,7 @@ fn time_text() ref u8 = trust {
     val hh: i64 = (@load32(@ptradd(tm, 8)) as i64) & 0xFFFFFFFF
     val mm: i64 = (@load32(@ptradd(tm, 4)) as i64) & 0xFFFFFFFF
     val ss: i64 = (@load32(tm) as i64) & 0xFFFFFFFF
-    return @fmtalloc("{02d}:{02d}:{02d}", {hh, mm, ss})
+    return u.s_format(c"{02d}:{02d}:{02d}", {hh, mm, ss})
 }
 
 fn time_hm() ref u8 = trust {
@@ -292,7 +292,7 @@ fn time_hm() ref u8 = trust {
     }
     val hh: i64 = (@load32(@ptradd(tm, 8)) as i64) & 0xFFFFFFFF
     val mm: i64 = (@load32(@ptradd(tm, 4)) as i64) & 0xFFFFFFFF
-    return @fmtalloc("{02d}:{02d}", {hh, mm})
+    return u.s_format(c"{02d}:{02d}", {hh, mm})
 }
 
 fn ascii_lower(s: ref u8) ref u8 = trust {

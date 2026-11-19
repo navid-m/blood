@@ -5,6 +5,25 @@ val rt         = use("std/runtime")
 
 val g_heap: allocators.HeapAllocator = @zeroed
 
+val g_scratch: allocators.ScopedArenaAllocator = @zeroed
+val g_scratch_ready: mut i64 = 0
+val g_scratch_depth: mut i64 = 0
+
+val g_session_a: allocators.ScopedArenaAllocator = @zeroed
+val g_session_b: allocators.ScopedArenaAllocator = @zeroed
+val g_session_ready: mut i64 = 0
+val g_session_cur: mut i64 = 0
+val g_session_target: mut i64 = 0
+val g_gc_mode: mut i64 = 0
+
+/// Header preceding every pointer returned by `xalloc`.
+/// `perm == 1` marks a long-lived heap allocation; `perm == 0` marks an
+/// allocation owned by the current scratch scope.
+type AllocHdr = {
+    size: mut usize
+    perm: mut i64
+}
+
 /// Linux `struct dirent` (x86_64 and aarch64).
 pub type DirEntry = {
     d_ino: u64
@@ -45,6 +64,7 @@ pub type Vec = {
     data: mut ref void
     len: mut i64
     cap: mut i64
+    perm: mut i64
 }
 
 pub type MapEntry = {
@@ -58,6 +78,7 @@ pub type Map = {
     slots: mut ref MapEntry
     cap: mut i64
     len: mut i64
+    perm: mut i64
 }
 
 pub val run_shell_hook: mut fn(ref u8) i32 = @zeroed
@@ -68,18 +89,169 @@ pub val hook_status: mut i64 = 0
 pub val script_exit_code: mut i64 = -1
 pub val interrupt_flag: mut i64 = 0
 
-pub fn xalloc(n: i64) ref void = trust {
-    if n <= 0 {
-        return none
+fn scratch_ready() bool = trust {
+    if g_scratch_ready != 0 {
+        return true
     }
-    match allocators.alloc_in[allocators.HeapAllocator](g_heap, n as usize) {
-        some p => {
-            return p
+    match allocators.ScopedArena.new(65536 as usize) {
+        ok a => {
+            g_scratch = a
+            g_scratch_ready = 1
+            return true
+        }
+        err _ => {
+            return false
+        }
+    }
+}
+
+fn heap_alloc(n: i64) ref void = trust {
+    match allocators.alloc_in[allocators.HeapAllocator](g_heap, (n + 16) as usize) {
+        some raw => {
+            val h: mut ref AllocHdr = raw as ref AllocHdr
+            h.size = n as usize
+            h.perm = 1
+            return @ptradd(raw, 16)
         }
         none => {
             return none
         }
     }
+}
+
+fn scratch_alloc(n: i64) ref void = trust {
+    if !scratch_ready() {
+        return heap_alloc(n)
+    }
+    val raw: ref void = allocators.ScopedArena.alloc_raw(
+        g_scratch,
+        (n + 16) as usize
+    )
+    if raw == none {
+        return heap_alloc(n)
+    }
+    val h: mut ref AllocHdr = raw as ref AllocHdr
+    h.size = n as usize
+    h.perm = 0
+    return @ptradd(raw, 16)
+}
+
+/// Start a scratch scope. Allocations made while a scope is active are
+/// reclaimed in bulk by the matching `scratch_end`.
+pub fn scratch_begin() void = trust {
+    if scratch_ready() {
+        g_scratch_depth++
+    }
+}
+
+/// End the innermost scratch scope. When the outermost scope ends all
+/// scratch allocations made since `scratch_begin` are released at once.
+pub fn scratch_end() void = trust {
+    if g_scratch_depth <= 0 {
+        return
+    }
+    g_scratch_depth--
+    if g_scratch_depth == 0 && g_scratch_ready != 0 {
+        allocators.ScopedArena.reset(g_scratch)
+    }
+}
+
+fn session_ready() bool = trust {
+    if g_session_ready != 0 {
+        return true
+    }
+    val a = allocators.ScopedArena.new(65536 as usize)
+    match a {
+        ok x => {
+            g_session_a = x
+        }
+        err _ => {
+            return false
+        }
+    }
+    val b = allocators.ScopedArena.new(65536 as usize)
+    match b {
+        ok x => {
+            g_session_b = x
+        }
+        err _ => {
+            return false
+        }
+    }
+    g_session_ready = 1
+    g_session_cur = 0
+    g_session_target = 1
+    return true
+}
+
+/// Begin a copying collection. All `*_perm` allocations made until
+/// `gc_finish` are placed in the alternate session arena.
+pub fn gc_start() void = trust {
+    if !session_ready() {
+        return
+    }
+    if g_session_cur == 0 {
+        g_session_target = 1
+    } else {
+        g_session_target = 0
+    }
+    g_gc_mode = 1
+}
+
+/// Finish a copying collection, releasing the previous session arena.
+pub fn gc_finish() void = trust {
+    if g_gc_mode == 0 {
+        return
+    }
+    g_gc_mode = 0
+    if g_session_cur == 0 {
+        allocators.ScopedArena.reset(g_session_a)
+    } else {
+        allocators.ScopedArena.reset(g_session_b)
+    }
+    g_session_cur = g_session_target
+}
+
+fn session_alloc(n: i64) ref void = trust {
+    if !session_ready() {
+        return heap_alloc(n)
+    }
+    val aren: mut allocators.ScopedArenaAllocator = g_session_a
+    if g_session_target != 0 {
+        aren = g_session_b
+    }
+    val raw: ref void = allocators.ScopedArena.alloc_raw(
+        aren,
+        (n + 16) as usize
+    )
+    if raw == none {
+        return none
+    }
+    val h: mut ref AllocHdr = raw as ref AllocHdr
+    h.size = n as usize
+    h.perm = 2
+    return @ptradd(raw, 16)
+}
+
+pub fn xalloc(n: i64) ref void = trust {
+    if n <= 0 {
+        return none
+    }
+    if g_scratch_depth > 0 {
+        return scratch_alloc(n)
+    }
+    return heap_alloc(n)
+}
+
+/// Allocate memory that survives scratch-scope resets.
+pub fn xalloc_perm(n: i64) ref void = trust {
+    if n <= 0 {
+        return none
+    }
+    if g_gc_mode != 0 {
+        return session_alloc(n)
+    }
+    return heap_alloc(n)
 }
 
 pub fn mem_copy(dst: ref void, src: ref void, n: i64) void = trust {
@@ -98,18 +270,56 @@ pub fn mem_realloc(p: ref void, n: i64) ref u8 = trust {
     if n <= 0 {
         return none
     }
-    match allocators.realloc_in[allocators.HeapAllocator](g_heap, p, n as usize) {
-        some out => {
-            return out as ref u8
-        }
-        none => {
-            return none
+    if p == none {
+        return xalloc(n) as ref u8
+    }
+    val raw: ref void = @ptradd(p, -16)
+    val h: ref AllocHdr = raw as ref AllocHdr
+    if h.perm == 1 {
+        match allocators.realloc_in[allocators.HeapAllocator](g_heap, raw, (n + 16) as usize) {
+            some out => {
+                val nh: mut ref AllocHdr = out as ref AllocHdr
+                nh.size = n as usize
+                nh.perm = 1
+                return @ptradd(out, 16) as ref u8
+            }
+            none => {
+                return none
+            }
         }
     }
+    if !scratch_ready() {
+        return none
+    }
+    val out: ref void = allocators.ScopedArena.alloc_raw(
+        g_scratch,
+        (n + 16) as usize
+    )
+    if out == none {
+        return none
+    }
+    val nh: mut ref AllocHdr = out as ref AllocHdr
+    nh.size = n as usize
+    nh.perm = 0
+    val copy_len: mut usize = h.size
+    if (n as usize) < copy_len {
+        copy_len = n as usize
+    }
+    if copy_len > 0 {
+        rt.memcpy(@ptradd(out, 16), p, copy_len)
+    }
+    return @ptradd(out, 16) as ref u8
 }
 
 pub fn xfree(p: ref void) void = trust {
-    allocators.free_in[allocators.HeapAllocator](g_heap, p)
+    if p == none {
+        return
+    }
+    val raw: ref void = @ptradd(p, -16)
+    val h: ref AllocHdr = raw as ref AllocHdr
+    if h.perm == 1 {
+        allocators.free_in[allocators.HeapAllocator](g_heap, raw)
+    }
 }
 
 pub fn s_len(s: ref u8) i64 = trust {
@@ -180,6 +390,135 @@ pub fn s_alloc(n: i64) ref u8 = trust {
 
 pub fn s_free(s: ref u8) void = trust {
     xfree(s)
+}
+
+fn s_alloc_mode(n: i64, perm: bool) ref u8 = trust {
+    val real: mut i64 = n
+    if real < 0 {
+        real = 0
+    }
+    val out: mut ref u8 = none
+    if perm {
+        out = xalloc_perm(real + 1) as ref u8
+    } else {
+        out = xalloc(real + 1) as ref u8
+    }
+    if out == none {
+        return none
+    }
+    @store8(@ptradd(out, real), 0)
+    return out
+}
+
+pub fn s_dup_perm(s: ref u8) ref u8 = trust {
+    if s == none {
+        return none
+    }
+    val n: i64 = s_len(s)
+    val out: ref u8 = xalloc_perm(n + 1) as ref u8
+    if out == none {
+        return none
+    }
+    if n > 0 {
+        rt.memcpy(out, s, n as usize)
+    }
+    @store8(@ptradd(out, n), 0)
+    return out
+}
+
+pub fn s_ndup_perm(p: ref u8, n: i64) ref u8 = trust {
+    if p == none || n <= 0 {
+        return s_alloc_mode(0, true)
+    }
+    val out: ref u8 = xalloc_perm(n + 1) as ref u8
+    if out == none {
+        return none
+    }
+    rt.memcpy(out, p, n as usize)
+    @store8(@ptradd(out, n), 0)
+    return out
+}
+
+pub fn s_substr_perm(s: ref u8, start: i64, end: i64) ref u8 = trust {
+    if s == none {
+        return s_alloc_mode(0, true)
+    }
+    val n: i64 = s_len(s)
+    val a: mut i64 = start
+    val b: mut i64 = end
+    if a < 0 {
+        a = 0
+    }
+    if b > n {
+        b = n
+    }
+    if b < a {
+        b = a
+    }
+    return s_ndup_perm(@ptradd(s, a), b - a)
+}
+
+pub fn s_cat3_perm(a: ref u8, b: ref u8, c: ref u8) ref u8 = trust {
+    val la: i64 = s_len(a)
+    val lb: i64 = s_len(b)
+    val lc: i64 = s_len(c)
+    val out: ref u8 = xalloc_perm(la + lb + lc + 1) as ref u8
+    if out == none {
+        return none
+    }
+    if la > 0 {
+        rt.memcpy(out, a, la as usize)
+    }
+    if lb > 0 {
+        rt.memcpy(@ptradd(out, la), b, lb as usize)
+    }
+    if lc > 0 {
+        rt.memcpy(@ptradd(out, la + lb), c, lc as usize)
+    }
+    @store8(@ptradd(out, la + lb + lc), 0)
+    return out
+}
+
+fn format_mode(fmt: ref u8, args: argspack, perm: bool) ref u8 = trust {
+    val cap: i64 = 512
+    val out: mut ref u8 = none
+    if perm {
+        out = xalloc_perm(cap) as ref u8
+    } else {
+        out = xalloc(cap) as ref u8
+    }
+    if out == none {
+        return none
+    }
+    val n: i64 = @snprintf(out, cap as usize, fmt, args) as i64
+    if n < 0 {
+        return none
+    }
+    if n < cap {
+        return out
+    }
+    xfree(out as ref void)
+    val grown: mut ref u8 = none
+    if perm {
+        grown = xalloc_perm(n + 1) as ref u8
+    } else {
+        grown = xalloc(n + 1) as ref u8
+    }
+    if grown == none {
+        return none
+    }
+    @snprintf(grown, (n + 1) as usize, fmt, args)
+    return grown
+}
+
+/// Format a string using the current allocation scope.
+pub fn s_format(fmt: ref u8, args: argspack) ref u8 = trust {
+    return format_mode(fmt, args, false)
+}
+
+/// Format a string that survives scratch-scope resets.
+pub fn s_format_perm(fmt: ref u8, args: argspack) ref u8 = trust {
+    return format_mode(fmt, args, true)
 }
 
 pub fn s_cat(a: ref u8, b: ref u8) ref u8 = trust {
@@ -384,11 +723,16 @@ pub fn s_int(v: i64) ref u8 = trust {
 }
 
 pub fn s_float(v: f64) ref u8 = trust {
-    return @fmtalloc("{g}", {v})
+    val out: ref u8 = xalloc(64) as ref u8
+    if out == none {
+        return none
+    }
+    @snprintf(out, 64 as usize, c"{g}", {v})
+    return out
 }
 
 pub fn s_hex(v: i64) ref u8 = trust {
-    return @fmtalloc("{x}", {v})
+    return s_format(c"{x}", {v})
 }
 
 pub fn parse_int(s: ref u8) option[i64] = trust {
@@ -509,12 +853,29 @@ pub fn buf_free(b: mut ref Buf) void = trust {
     b.ptr = none
 }
 
-pub fn vec_new() ref Vec = trust {
-    val v: mut ref Vec = xalloc(@sizeof(Vec) as i64) as ref Vec
+fn vec_new_mode(perm: bool) ref Vec = trust {
+    val v: mut ref Vec = none
+    if perm {
+        v = xalloc_perm(@sizeof(Vec) as i64) as ref Vec
+    } else {
+        v = xalloc(@sizeof(Vec) as i64) as ref Vec
+    }
     v.data = none
     v.len = 0
     v.cap = 0
+    v.perm = 0
+    if perm {
+        v.perm = 1
+    }
     return v
+}
+
+pub fn vec_new() ref Vec = trust {
+    return vec_new_mode(false)
+}
+
+pub fn vec_new_perm() ref Vec = trust {
+    return vec_new_mode(true)
 }
 
 pub fn vec_reserve(v: mut ref Vec, extra: i64) void = trust {
@@ -532,7 +893,11 @@ pub fn vec_reserve(v: mut ref Vec, extra: i64) void = trust {
         }
         nc = nc * 2
     }
-    v.data = mem_realloc(v.data, nc * 8) as ref void
+    if v.data == none && v.perm != 0 {
+        v.data = xalloc_perm(nc * 8) as ref void
+    } else {
+        v.data = mem_realloc(v.data, nc * 8) as ref void
+    }
     v.cap = nc
 }
 
@@ -595,6 +960,7 @@ pub fn vec_free(v: mut ref Vec) void = trust {
     v.data = none
     v.len = 0
     v.cap = 0
+    v.perm = 0
 }
 
 fn map_hash(s: ref u8) u64 = trust {
@@ -612,13 +978,32 @@ fn map_hash(s: ref u8) u64 = trust {
     return h
 }
 
-pub fn map_new() ref Map = trust {
-    val m: mut ref Map = xalloc(@sizeof(Map) as i64) as ref Map
+fn map_new_mode(perm: bool) ref Map = trust {
+    val m: mut ref Map = none
+    if perm {
+        m = xalloc_perm(@sizeof(Map) as i64) as ref Map
+    } else {
+        m = xalloc(@sizeof(Map) as i64) as ref Map
+    }
     m.cap = 32
     m.len = 0
-    m.slots = xalloc(32 * @sizeof(MapEntry) as i64) as ref MapEntry
+    m.perm = 0
+    if perm {
+        m.perm = 1
+        m.slots = xalloc_perm(32 * @sizeof(MapEntry) as i64) as ref MapEntry
+    } else {
+        m.slots = xalloc(32 * @sizeof(MapEntry) as i64) as ref MapEntry
+    }
     rt.memset(m.slots as ref void, 0, (32 * @sizeof(MapEntry)) as usize)
     return m
+}
+
+pub fn map_new() ref Map = trust {
+    return map_new_mode(false)
+}
+
+pub fn map_new_perm() ref Map = trust {
+    return map_new_mode(true)
 }
 
 fn map_slot(m: ref Map, key: ref u8) i64 = trust {
@@ -649,7 +1034,11 @@ fn map_grow(m: mut ref Map) void = trust {
     val old_slots: ref MapEntry = m.slots
     val old_cap: i64 = m.cap
     m.cap = old_cap * 2
-    m.slots = xalloc(m.cap * @sizeof(MapEntry) as i64) as ref MapEntry
+    if m.perm != 0 {
+        m.slots = xalloc_perm(m.cap * @sizeof(MapEntry) as i64) as ref MapEntry
+    } else {
+        m.slots = xalloc(m.cap * @sizeof(MapEntry) as i64) as ref MapEntry
+    }
     rt.memset(m.slots as ref void, 0, (m.cap * @sizeof(MapEntry)) as usize)
     val i: mut i64 = 0
     for {
@@ -696,7 +1085,11 @@ pub fn map_put(m: mut ref Map, key: ref u8, value: i64) void = trust {
         e.value = value
         return
     }
-    e.key = s_dup(key)
+    if m.perm != 0 {
+        e.key = s_dup_perm(key)
+    } else {
+        e.key = s_dup(key)
+    }
     e.value = value
     e.used = 1
     m.len++
@@ -749,8 +1142,17 @@ pub fn map_del(m: mut ref Map, key: ref u8) void = trust {
     ) as ref MapEntry
     if e.used == 1 {
         e.used = 2
+        xfree(e.key as ref void)
+        e.key = none
         m.len--
     }
+}
+
+pub fn map_entry_at(m: ref Map, i: i64) ref MapEntry = trust {
+    return @ptradd(
+        m.slots as ref void,
+        i * @sizeof(MapEntry) as i64
+    ) as ref MapEntry
 }
 
 pub fn map_key_at(m: ref Map, i: i64) ref u8 = trust {
@@ -769,10 +1171,25 @@ pub fn map_used_at(m: ref Map, i: i64) bool = trust {
 }
 
 pub fn map_free(m: mut ref Map) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= m.cap {
+            break
+        }
+        val e: ref MapEntry = @ptradd(
+            m.slots as ref void,
+            i * @sizeof(MapEntry) as i64
+        ) as ref MapEntry
+        if e.used != 0 {
+            xfree(e.key as ref void)
+        }
+        i++
+    }
     xfree(m.slots as ref void)
     m.slots = none
     m.len = 0
     m.cap = 0
+    m.perm = 0
 }
 
 pub fn path_join(a: ref u8, b: ref u8) ref u8 = trust {

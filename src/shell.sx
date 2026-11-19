@@ -61,10 +61,10 @@ val sh_oldpwd: mut ref u8 = none
 pub fn shell_init(c: ref cfgmod.Config, h: ref histmod.History, interactive: bool) void = trust {
     sh_cfg = c
     sh_hist = h
-    sh_vars = u.map_new()
-    sh_aliases = u.map_new()
-    sh_jobs = u.vec_new()
-    sh_args = u.vec_new()
+    sh_vars = u.map_new_perm()
+    sh_aliases = u.map_new_perm()
+    sh_jobs = u.vec_new_perm()
+    sh_args = u.vec_new_perm()
     sh_interactive = 0
     if interactive {
         sh_interactive = 1
@@ -74,10 +74,10 @@ pub fn shell_init(c: ref cfgmod.Config, h: ref histmod.History, interactive: boo
     sh_exit_requested = 0
     sh_exit_code = 0
     sh_error = none
-    sh_oldpwd = u.cwd()
+    sh_oldpwd = u.s_dup_perm(u.cwd())
     seed_aliases(c)
     seed_env()
-    u.map_put(sh_vars, c"PWD", @bitcast(u.cwd(), i64))
+    u.map_put(sh_vars, c"PWD", @bitcast(u.s_dup_perm(u.cwd()), i64))
     u.map_put(sh_vars, c"OLDPWD", @bitcast(sh_oldpwd, i64))
 }
 
@@ -92,8 +92,8 @@ fn seed_aliases(c: ref cfgmod.Config) void = trust {
         if eq > 0 {
             u.map_put(
                 sh_aliases,
-                u.s_substr(def, 0, eq),
-                @bitcast(u.s_substr(def, eq + 1, u.s_len(def)), i64)
+                u.s_substr_perm(def, 0, eq),
+                @bitcast(u.s_substr_perm(def, eq + 1, u.s_len(def)), i64)
             )
         }
         i++
@@ -119,15 +119,15 @@ fn util_env_set(name: ref u8, value: ref u8) void = trust {
 pub fn seed_env() void = trust {
     val p: ref u8 = u.env_get(c"PATH")
     if p != none {
-        u.map_put(sh_vars, c"PATH", @bitcast(u.s_dup(p), i64))
+        u.map_put(sh_vars, c"PATH", @bitcast(u.s_dup_perm(p), i64))
     }
     val h: ref u8 = u.env_get(c"HOME")
     if h != none {
-        u.map_put(sh_vars, c"HOME", @bitcast(u.s_dup(h), i64))
+        u.map_put(sh_vars, c"HOME", @bitcast(u.s_dup_perm(h), i64))
     }
     val s: ref u8 = u.env_get(c"SHELL")
     if s != none {
-        u.map_put(sh_vars, c"SHELL", @bitcast(u.s_dup(s), i64))
+        u.map_put(sh_vars, c"SHELL", @bitcast(u.s_dup_perm(s), i64))
     }
 }
 
@@ -176,18 +176,18 @@ pub fn set_last_status(s: i32) void = trust {
 }
 
 pub fn set_alias(name: ref u8, value: ref u8) void = trust {
-    u.map_put(sh_aliases, name, @bitcast(u.s_dup(value), i64))
+    u.map_put(sh_aliases, name, @bitcast(u.s_dup_perm(value), i64))
 }
 
 pub fn set_env(name: ref u8, value: ref u8) void = trust {
     u.env_set(name, value)
-    u.map_put(sh_vars, name, @bitcast(u.s_dup(value), i64))
+    u.map_put(sh_vars, name, @bitcast(u.s_dup_perm(value), i64))
 }
 
 pub fn reload_config(c: ref cfgmod.Config, h: ref histmod.History) void = trust {
     sh_cfg = c
     sh_hist = h
-    sh_aliases = u.map_new()
+    sh_aliases = u.map_new_perm()
     seed_aliases(c)
 }
 
@@ -434,7 +434,7 @@ pub fn get_var(name: ref u8) ref u8 = trust {
 }
 
 fn set_var(name: ref u8, value: ref u8) void = trust {
-    u.map_put(sh_vars, name, @bitcast(u.s_dup(value), i64))
+    u.map_put(sh_vars, name, @bitcast(u.s_dup_perm(value), i64))
 }
 
 fn capture_cmd(inner: ref u8) ref u8 = trust {
@@ -1799,7 +1799,7 @@ fn bi_cd(cmd: ref Command) i32 = trust {
         u.write_fd(2, u.s_cat3(c"blood: cd: ", target, c": no such directory\n"))
         return 1
     }
-    sh_oldpwd = old
+    sh_oldpwd = u.s_dup_perm(old)
     val now: ref u8 = u.cwd()
     set_var(c"PWD", now)
     set_var(c"OLDPWD", old)
@@ -1921,8 +1921,8 @@ fn bi_alias(cmd: ref Command) i32 = trust {
         val def: ref u8 = argv_at(cmd, i)
         val eq: i64 = u.s_index_of_char(def, 61, 0)
         if eq > 0 {
-            val name: ref u8 = u.s_substr(def, 0, eq)
-            val value: ref u8 = strip_alias_quotes(u.s_substr(def, eq + 1, u.s_len(def)))
+            val name: ref u8 = u.s_substr_perm(def, 0, eq)
+            val value: ref u8 = u.s_dup_perm(strip_alias_quotes(u.s_substr(def, eq + 1, u.s_len(def))))
             u.map_put(sh_aliases, name, @bitcast(value, i64))
         } else {
             if u.map_has(sh_aliases, def) {
@@ -1952,7 +1952,7 @@ fn strip_alias_quotes(s: ref u8) ref u8 = trust {
 fn bi_unalias(cmd: ref Command) i32 = trust {
     if cmd.argv.len > 1 && u.s_eq(argv_at(cmd, 1), c"-a") {
         u.map_free(sh_aliases)
-        sh_aliases = u.map_new()
+        sh_aliases = u.map_new_perm()
         return 0
     }
     val i: mut i64 = 1

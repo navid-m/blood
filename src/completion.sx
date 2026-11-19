@@ -14,14 +14,14 @@ val path_cache: mut ref u.Vec = none
 val builtin_names: mut ref u.Vec = none
 
 fn add_builtin(names: mut ref u.Vec, name: ref u8) void = trust {
-    u.vec_pushp(names, u.s_dup(name) as ref void)
+    u.vec_pushp(names, u.s_dup_perm(name) as ref void)
 }
 
 pub fn builtin_list() ref u.Vec = trust {
     if builtin_names != none {
         return builtin_names
     }
-    val v: mut ref u.Vec = u.vec_new()
+    val v: mut ref u.Vec = u.vec_new_perm()
     add_builtin(v, c"cd")
     add_builtin(v, c"pwd")
     add_builtin(v, c"exit")
@@ -51,7 +51,7 @@ fn is_executable_dir(path: ref u8) bool = trust {
 }
 
 fn scan_path() ref u.Vec = trust {
-    val v: mut ref u.Vec = u.vec_new()
+    val v: mut ref u.Vec = u.vec_new_perm()
     val path: ref u8 = u.env_get(c"PATH")
     if path == none || u.s_len(path) == 0 {
         add_builtin(v, c"/bin")
@@ -96,7 +96,7 @@ fn scan_dir_into(v: mut ref u.Vec, dir: ref u8) void = trust {
         }
         val full: ref u8 = u.path_join(dir, name)
         if !u.is_dir(full) && u.is_executable(full) {
-            val namecopy: ref u8 = u.s_dup(name)
+            val namecopy: ref u8 = u.s_dup_perm(name)
             if !vec_has(v, namecopy) {
                 u.vec_pushp(v, namecopy)
             }
@@ -487,5 +487,8 @@ pub fn complete(
 }
 
 pub fn free_result(res: mut ref CompResult) void = trust {
+    if res == none {
+        return
+    }
     u.vec_free(res.items)
 }
