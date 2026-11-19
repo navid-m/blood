@@ -6,6 +6,9 @@ val histmod = use("history.sx")
 val shell   = use("shell.sx")
 val script  = use("script.sx")
 
+val brand     = @embed("brand.txt")
+val brand_len = @embedlen("brand.txt")
+
 pub fn is_command(line: ref u8) bool = trust {
     val t: ref u8 = u.s_trim(line)
     return u.s_len(t) > 0 && @load8(t) == 58
@@ -136,6 +139,7 @@ fn find_files(q: ref u8) i32 = trust {
 
 fn print_help() void = trust {
     u.write_fd(1, c\\Blood escape commands
+        \\  :blood                     show the Blood brand art
         \\  :cfg.SECTION.KEY           show current and possible values
         \\  :cfg.SECTION.KEY = VALUE   update and save configuration
         \\  :ft SEARCH                 find files by name under the current directory
@@ -153,6 +157,10 @@ fn print_help() void = trust {
 fn show_paths(c: ref cfgmod.Config) void = trust {
     u.stdout_ln(u.s_cat(c"config:  ", c.path))
     u.stdout_ln(u.s_cat(c"bloodrc: ", cfgmod.bloodrc_path(c)))
+}
+
+fn show_brand() void = trust {
+    u.write_fd_n(1, brand, brand_len)
 }
 
 fn reload(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = trust {
@@ -258,6 +266,10 @@ pub fn handle(line: ref u8, c: mut ref cfgmod.Config, h: mut ref histmod.History
     }
     if u.s_eq(rest, c"where") {
         show_paths(c)
+        return 0
+    }
+    if u.s_eq(rest, c"blood") {
+        show_brand()
         return 0
     }
     if u.s_eq(rest, c"rla") {

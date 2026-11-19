@@ -1081,11 +1081,10 @@ pub fn dir_close(dir: ref void) void = trust {
     }
 }
 
-pub fn write_fd(fd: i32, s: ref u8) void = trust {
-    if s == none {
+pub fn write_fd_n(fd: i32, s: ref u8, n: i64) void = trust {
+    if s == none || n <= 0 {
         return
     }
-    val n: i64 = s_len(s)
     val done: mut i64 = 0
     for {
         if done >= n {
@@ -1097,6 +1096,10 @@ pub fn write_fd(fd: i32, s: ref u8) void = trust {
         }
         done = done + w
     }
+}
+
+pub fn write_fd(fd: i32, s: ref u8) void = trust {
+    write_fd_n(fd, s, s_len(s))
 }
 
 pub fn stdout_s(s: ref u8) void = trust {
