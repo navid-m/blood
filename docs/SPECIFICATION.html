@@ -534,7 +534,8 @@ when an input cannot be read or written.</p>
 file or a directory. Directories are walked recursively and every <code>.bx</code> or
 <code>.blood</code> file below them is formatted. The formatter normalises indentation to
 four spaces, places opening braces on the same line as their header, removes
-Allman-style brace lines, aligns consecutive assignments, and writes calls
+Allman-style brace lines, aligns consecutive assignments and var declarations
+(including bulk <code>var</code> blocks), and writes calls
 with parentheses where the call is unambiguous. Files that cannot be read or
 written are reported and produce status 1.</p>
 </div>
@@ -2932,10 +2933,15 @@ used, including function parameters and local variables.</p>
 <div class="sect2">
 <h3 id="_statements">Statements</h3>
 <div class="sect3">
-<h4 id="_assignment">Assignment</h4>
+<h4 id="_assignment_and_declaration">Assignment and declaration</h4>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code>NAME = expression
+<pre class="highlight"><code>var NAME = expression
+var (
+    NAME = expression
+    OTHER = expression
+)
+NAME = expression
 PLACE += expression
 PLACE -= expression
 PLACE *= expression
@@ -2944,14 +2950,20 @@ PLACE %= expression</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p><code>PLACE</code> may be a variable, an index expression, or a dictionary attribute.
-Assignments are statements, not expressions. Chained assignment is not
-supported.</p>
+<p>Variables must be introduced with <code>var</code> before they can be assigned. A <code>var</code>
+declaration creates a binding in the current scope and reports an error if the
+name is already declared there. The bulk form declares several variables at
+once. Declarations in a bulk block are separated by newlines or commas.</p>
 </div>
 <div class="paragraph">
-<p>If the target variable does not exist in the current environment chain, it is
-created in the current scope. If it exists in an enclosing scope, that binding
-is updated.</p>
+<p>Plain assignments do not create bindings. If the target variable does not exist
+in the current environment chain, evaluation reports <code>undefined variable</code>. If
+it exists in an enclosing scope, that binding is updated.</p>
+</div>
+<div class="paragraph">
+<p><code>PLACE</code> may be a variable, an index expression, or a dictionary attribute for
+plain and compound assignments. Assignments are statements, not expressions.
+Chained assignment is not supported.</p>
 </div>
 <div class="paragraph">
 <p>Prefixing a variable assignment with <code>export</code> also writes the value to the
@@ -3890,6 +3902,7 @@ statement    = say-stmt
              | para-for-stmt
              | fn-stmt
              | try-stmt
+             | var-stmt
              | assignment
              | export-stmt
              | defer-stmt
@@ -3901,7 +3914,7 @@ suite        = "{" { NEWLINE | INDENT | DEDENT | ";" | statement } "}"
                    | inline-stmt { ";" inline-stmt } [ NEWLINE ] ) ;
 
 inline-stmt  = say-stmt | return-stmt | break-stmt | continue-stmt
-             | pass-stmt | raise-stmt | assignment | export-stmt
+             | pass-stmt | raise-stmt | var-stmt | assignment | export-stmt
              | defer-stmt | expression-stmt ;
 
 say-stmt     = "say" [ expression { "," expression } ] [ NEWLINE ] ;
@@ -3926,6 +3939,10 @@ param        = IDENT [ ":" type-text ] ;
 
 try-stmt     = "try" suite ( "catch" | "except" ) [ IDENT ] suite ;
 
+var-stmt     = "var" ( var-item
+                     | "(" { NEWLINE | "," | ";" | var-item } ")"
+                     ) [ NEWLINE ] ;
+var-item     = IDENT "=" expression ;
 assignment   = expression assign-op expression [ NEWLINE ] ;
 export-stmt  = "export" IDENT assign-op expression [ NEWLINE ] ;
 defer-stmt   = "defer" expression [ NEWLINE ] | "defer" suite ;
@@ -4254,8 +4271,8 @@ unset EDITOR</code></pre>
 <h3 id="_scripting_language_2">Scripting language</h3>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code>name = "Blood"
-version = 1
+<pre class="highlight"><code>var name = "Blood"
+var version = 1
 
 say "Welcome to {name} {version}"
 
@@ -4283,7 +4300,7 @@ try {
     say "caught: {message}"
 }
 
-output = `printf "a\nb\n"`
+var output = `printf "a\nb\n"`
 say output
 say "status is {status}"
 
@@ -4487,7 +4504,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-19 19:44:41 UTC
+Last updated 2026-11-19 22:50:53 UTC
 </div>
 </div>
 </body>

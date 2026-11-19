@@ -84,3 +84,19 @@ test "formatter writes files in place" {
         assert u.s_eq(u.read_file(path), c"if true {\n    say(\"hi\")\n}\n")
     }
 }
+
+test "formatter aligns consecutive var declarations" {
+    trust {
+        val src: ref u8 = c"var something = \"hello\"\nvar something_else = \"hello, world\"\n"
+        val want: ref u8 = c"var something      = \"hello\"\nvar something_else = \"hello, world\"\n"
+        assert u.s_eq(format.format_text(src), want)
+    }
+}
+
+test "formatter indents and aligns bulk var declarations" {
+    trust {
+        val src: ref u8 = c"var (\nsome_variable = \"hello\"\nsome_other_variable = \"world\"\n)\n"
+        val want: ref u8 = c"var (\n    some_variable       = \"hello\"\n    some_other_variable = \"world\"\n)\n"
+        assert u.s_eq(format.format_text(src), want)
+    }
+}

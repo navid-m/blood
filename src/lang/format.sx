@@ -190,7 +190,7 @@ fn excluded_call(name: ref u8) bool = trust {
     ) || u.s_eq(name, c"not") || u.s_eq(name, c"and") || u.s_eq(name, c"or") || u.s_eq(
         name,
         c"in"
-    ) || u.s_eq(name, c"defer")
+    ) || u.s_eq(name, c"defer") || u.s_eq(name, c"var")
 }
 
 fn previous_nonspace(s: ref u8, at: i64) u8 = trust {
@@ -491,7 +491,13 @@ fn find_assign(s: ref u8) i64 = trust {
 }
 
 fn valid_lhs(s: ref u8) bool = trust {
-    val t: ref u8 = u.s_trim(s)
+    val t: mut ref u8 = u.s_trim(s)
+    if u.s_len(t) > 4 && u.s_starts(t, c"var") {
+        val sep: u8 = @load8(@ptradd(t, 3))
+        if sep == 32 || sep == 9 {
+            t = u.s_trim(u.s_substr(t, 4, u.s_len(t)))
+        }
+    }
     val n: i64 = u.s_len(t)
     if n == 0 || !is_alpha(@load8(t)) {
         return false
@@ -509,6 +515,27 @@ fn valid_lhs(s: ref u8) bool = trust {
         return false
     }
     return true
+}
+
+fn is_var_block_open(s: ref u8) bool = trust {
+    val t: ref u8 = u.s_trim(s)
+    val n: i64 = u.s_len(t)
+    if n < 4 || !u.s_starts(t, c"var") {
+        return false
+    }
+    val i: mut i64 = 3
+    for {
+        if i >= n {
+            return false
+        }
+        val c: u8 = @load8(@ptradd(t, i))
+        if c == 32 || c == 9 {
+            i++
+            continue
+        }
+        break
+    }
+    return i == n - 1 && @load8(@ptradd(t, i)) == 40
 }
 
 fn align_assignments(codes: mut ref u.Vec, indents: ref u.Vec) void = trust {
@@ -866,6 +893,7 @@ pub fn format_text(src: ref u8) ref u8 = trust {
     val comments: mut ref u.Vec = u.vec_new()
     val indents: mut ref u.Vec = u.vec_new()
     val depth: mut i64 = 0
+    val var_depth: mut i64 = 0
     val start: mut i64 = 0
     val i: mut i64 = 0
     for {
@@ -892,10 +920,13 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                     code = u.s_trim(u.s_substr(line, 0, at))
                     comment = u.s_trim(u.s_substr(line, at, u.s_len(line)))
                 }
+                if var_depth > 0 && u.s_eq(code, c")") {
+                    var_depth--
+                }
                 if u.s_len(code) == 0 {
                     u.vec_pushp(codes, c"" as ref void)
                     u.vec_pushp(comments, comment as ref void)
-                    u.vec_push(indents, depth)
+                    u.vec_push(indents, depth + var_depth)
                 } elif u.s_eq(code, c"{") && codes.len > 0 {
                     val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
                     if u.s_len(prev) > 0 && !u.s_starts(prev, c"#") {
@@ -925,7 +956,7 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                         }
                     } else {
                         val alloc: i64 = leading_closes(code)
-                        val level: mut i64 = depth - alloc
+                        val level: mut i64 = depth - alloc + var_depth
                         if level < 0 {
                             level = 0
                         }
@@ -939,7 +970,7 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                     }
                 } else {
                     val alloc: i64 = leading_closes(code)
-                    val level: mut i64 = depth - alloc
+                    val level: mut i64 = depth - alloc + var_depth
                     if level < 0 {
                         level = 0
                     }
@@ -950,6 +981,9 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                     if depth < 0 {
                         depth = 0
                     }
+                }
+                if is_var_block_open(code) {
+                    var_depth++
                 }
             }
             start = i + 1

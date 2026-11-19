@@ -17,6 +17,7 @@ test "translator rewrites variables, tests, loops and functions" {
         val src: ref u8 = c"#!/bin/bash\nGREETING=\"hello\"\nname=world\necho \"$GREETING $name\"\nif [ -f /etc/passwd ]; then\n  echo yes\nelse\n  echo no\nfi\nfor f in *.txt; do\n  echo \"file: $f\"\ndone\ncount=0\nwhile [ $count -lt 2 ]; do\n  count=$((count + 1))\ndone\ngreet() {\n  local who=$1\n  echo \"hi $who\"\n}\ngreet alice\n"
         val out: ref u8 = tr.translate_text(src)
         assert has(out, c"#!/usr/bin/env blood")
+        assert has(out, c"var GREETING = __bx_s(env(")
         assert has(out, c"GREETING = \"hello\"")
         assert has(out, c"say \"{__bx_s(GREETING)} {__bx_s(name)}\"")
         assert has(out, c"test -f")

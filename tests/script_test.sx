@@ -33,7 +33,7 @@ test "script runs arithmetic, comparison and boolean expressions" {
 test "script supports string methods and indexing" {
     trust {
         fresh()
-        val src: ref u8 = c"s = \"  Hello World  \"\nif s.strip() != \"Hello World\" {\n    raise \"strip\"\n}\nif s.upper().strip() != \"HELLO WORLD\" {\n    raise \"upper\"\n}\nif s.lower().strip() != \"hello world\" {\n    raise \"lower\"\n}\nparts = \"a,b,c\".split(\",\")\nif len(parts) != 3 {\n    raise \"split length\"\n}\nif parts[1] != \"b\" {\n    raise \"split value\"\n}\nif \"-\".join([\"a\", \"b\", \"c\"]) != \"a-b-c\" {\n    raise \"join\"\n}\nif \"banana\".replace(\"a\", \"o\") != \"bonono\" {\n    raise \"replace\"\n}\nif \"abc\".startswith(\"ab\") != true {\n    raise \"startswith\"\n}\nif \"abc\".endswith(\"bc\") != true {\n    raise \"endswith\"\n}\nif \"abc\".contains(\"b\") != true {\n    raise \"contains\"\n}\nif \"hello\"[1] != \"e\" {\n    raise \"index\"\n}\nif \"hello\"[-1] != \"o\" {\n    raise \"negative index\"\n}\nif \"hello\".chars().len() != 5 {\n    raise \"chars\"\n}\n"
+        val src: ref u8 = c"var s = \"  Hello World  \"\nif s.strip() != \"Hello World\" {\n    raise \"strip\"\n}\nif s.upper().strip() != \"HELLO WORLD\" {\n    raise \"upper\"\n}\nif s.lower().strip() != \"hello world\" {\n    raise \"lower\"\n}\nvar parts = \"a,b,c\".split(\",\")\nif len(parts) != 3 {\n    raise \"split length\"\n}\nif parts[1] != \"b\" {\n    raise \"split value\"\n}\nif \"-\".join([\"a\", \"b\", \"c\"]) != \"a-b-c\" {\n    raise \"join\"\n}\nif \"banana\".replace(\"a\", \"o\") != \"bonono\" {\n    raise \"replace\"\n}\nif \"abc\".startswith(\"ab\") != true {\n    raise \"startswith\"\n}\nif \"abc\".endswith(\"bc\") != true {\n    raise \"endswith\"\n}\nif \"abc\".contains(\"b\") != true {\n    raise \"contains\"\n}\nif \"hello\"[1] != \"e\" {\n    raise \"index\"\n}\nif \"hello\"[-1] != \"o\" {\n    raise \"negative index\"\n}\nif \"hello\".chars().len() != 5 {\n    raise \"chars\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -41,7 +41,7 @@ test "script supports string methods and indexing" {
 test "script supports list mutation and methods" {
     trust {
         fresh()
-        val src: ref u8 = c"xs = [3, 1, 2]\nxs.append(4)\nif len(xs) != 4 {\n    raise \"append\"\n}\nxs.sort()\nif xs[0] != 1 or xs[3] != 4 {\n    raise \"sort\"\n}\nif 2 not in xs {\n    raise \"membership\"\n}\nif xs.contains(3) != true {\n    raise \"contains\"\n}\nif xs.join(\"-\") != \"1-2-3-4\" {\n    raise \"join\"\n}\nif xs.pop() != 4 {\n    raise \"pop\"\n}\nif xs.len() != 3 {\n    raise \"len\"\n}\nxs.insert(0, 9)\nif xs[0] != 9 {\n    raise \"insert\"\n}\nxs.remove(0)\nif xs[0] != 1 {\n    raise \"remove\"\n}\nxs[0] = 5\nif xs[0] != 5 {\n    raise \"index assignment\"\n}\nif xs[-1] != 3 {\n    raise \"negative index\"\n}\n"
+        val src: ref u8 = c"var xs = [3, 1, 2]\nxs.append(4)\nif len(xs) != 4 {\n    raise \"append\"\n}\nxs.sort()\nif xs[0] != 1 or xs[3] != 4 {\n    raise \"sort\"\n}\nif 2 not in xs {\n    raise \"membership\"\n}\nif xs.contains(3) != true {\n    raise \"contains\"\n}\nif xs.join(\"-\") != \"1-2-3-4\" {\n    raise \"join\"\n}\nif xs.pop() != 4 {\n    raise \"pop\"\n}\nif xs.len() != 3 {\n    raise \"len\"\n}\nxs.insert(0, 9)\nif xs[0] != 9 {\n    raise \"insert\"\n}\nxs.remove(0)\nif xs[0] != 1 {\n    raise \"remove\"\n}\nxs[0] = 5\nif xs[0] != 5 {\n    raise \"index assignment\"\n}\nif xs[-1] != 3 {\n    raise \"negative index\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -62,7 +62,7 @@ test "script classifies existing .blood and .bx files as commands" {
 test "script supports dictionaries and attributes" {
     trust {
         fresh()
-        val src: ref u8 = c"d = {\"a\": 1, \"b\": 2}\nif d[\"a\"] != 1 {\n    raise \"index\"\n}\nif d.get(\"z\", 9) != 9 {\n    raise \"get default\"\n}\nif d.contains(\"b\") != true {\n    raise \"contains\"\n}\nd[\"c\"] = 3\nif len(d) != 3 {\n    raise \"len\"\n}\nif d.len() != 3 {\n    raise \"method len\"\n}\nkeys = d.keys()\nkeys.sort()\nif keys[0] != \"a\" or keys[2] != \"c\" {\n    raise \"keys\"\n}\nif len(d.values()) != 3 {\n    raise \"values\"\n}\nif len(d.items()) != 3 {\n    raise \"items\"\n}\nd.remove(\"a\")\nif d.contains(\"a\") {\n    raise \"remove\"\n}\nd.set(\"x\", 5)\nif d[\"x\"] != 5 {\n    raise \"set\"\n}\nd.a = 9\nif d[\"a\"] != 9 or d.a != 9 {\n    raise \"attribute\"\n}\n"
+        val src: ref u8 = c"var d = {\"a\": 1, \"b\": 2}\nif d[\"a\"] != 1 {\n    raise \"index\"\n}\nif d.get(\"z\", 9) != 9 {\n    raise \"get default\"\n}\nif d.contains(\"b\") != true {\n    raise \"contains\"\n}\nd[\"c\"] = 3\nif len(d) != 3 {\n    raise \"len\"\n}\nif d.len() != 3 {\n    raise \"method len\"\n}\nvar keys = d.keys()\nkeys.sort()\nif keys[0] != \"a\" or keys[2] != \"c\" {\n    raise \"keys\"\n}\nif len(d.values()) != 3 {\n    raise \"values\"\n}\nif len(d.items()) != 3 {\n    raise \"items\"\n}\nd.remove(\"a\")\nif d.contains(\"a\") {\n    raise \"remove\"\n}\nd.set(\"x\", 5)\nif d[\"x\"] != 5 {\n    raise \"set\"\n}\nd.a = 9\nif d[\"a\"] != 9 or d.a != 9 {\n    raise \"attribute\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -80,7 +80,7 @@ test "script export assignments update the environment" {
 test "script run and shell return result objects" {
     trust {
         fresh()
-        val src: ref u8 = c"r = run([\"sh\", \"-c\", \"printf out; printf err >&2; exit 3\"])\nif r.status != 3 or r.ok or r.stdout != \"out\" or r.stderr != \"err\" {\n    raise \"run result\"\n}\nm = run([\"sh\", \"-c\", \"printf out; printf err >&2\"], merge_stderr: true)\nif m.stdout != \"outerr\" or m.stderr != \"\" {\n    raise \"merge stderr\"\n}\n"
+        val src: ref u8 = c"var r = run([\"sh\", \"-c\", \"printf out; printf err >&2; exit 3\"])\nif r.status != 3 or r.ok or r.stdout != \"out\" or r.stderr != \"err\" {\n    raise \"run result\"\n}\nvar m = run([\"sh\", \"-c\", \"printf out; printf err >&2\"], merge_stderr: true)\nif m.stdout != \"outerr\" or m.stderr != \"\" {\n    raise \"merge stderr\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -88,7 +88,7 @@ test "script run and shell return result objects" {
 test "script defers run LIFO on return and errors" {
     trust {
         fresh()
-        val src: ref u8 = c"log = []\nfn ok() {\n    defer { log.append(\"a\") }\n    defer { log.append(\"b\") }\n    return 1\n}\nfn bad() {\n    defer { log.append(\"c\") }\n    raise \"boom\"\n}\nok()\ntry {\n    bad()\n} catch err {\n    if err != \"boom\" {\n        raise \"error lost\"\n    }\n}\nif log.join(\"\") != \"bac\" {\n    raise \"defer order\"\n}\n"
+        val src: ref u8 = c"var log = []\nfn ok() {\n    defer { log.append(\"a\") }\n    defer { log.append(\"b\") }\n    return 1\n}\nfn bad() {\n    defer { log.append(\"c\") }\n    raise \"boom\"\n}\nok()\ntry {\n    bad()\n} catch err {\n    if err != \"boom\" {\n        raise \"error lost\"\n    }\n}\nif log.join(\"\") != \"bac\" {\n    raise \"defer order\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -97,7 +97,7 @@ test "script filesystem, path and cd builtins" {
     trust {
         fresh()
         val old: ref u8 = u.cwd()
-        val src: ref u8 = c"dir = mktemp_dir(\"blood-script-test\")\nif not is_dir(dir) {\n    raise \"mktemp_dir\"\n}\nfile = join(dir, \"a.txt\")\nwrite_file(file, \"hello\")\nif not exists(file) or not is_file(file) or is_dir(file) {\n    raise \"file checks\"\n}\nif basename(file) != \"a.txt\" or stem(file) != \"a\" {\n    raise \"path names\"\n}\nif parent(file) != dir {\n    raise \"parent\"\n}\ncd(dir)\nif run([\"pwd\"]).stdout.strip() != dir {\n    raise \"cd\"\n}\nremove_all(dir)\nif exists(dir) {\n    raise \"remove_all\"\n}\n"
+        val src: ref u8 = c"var dir = mktemp_dir(\"blood-script-test\")\nif not is_dir(dir) {\n    raise \"mktemp_dir\"\n}\nvar file = join(dir, \"a.txt\")\nwrite_file(file, \"hello\")\nif not exists(file) or not is_file(file) or is_dir(file) {\n    raise \"file checks\"\n}\nif basename(file) != \"a.txt\" or stem(file) != \"a\" {\n    raise \"path names\"\n}\nif parent(file) != dir {\n    raise \"parent\"\n}\ncd(dir)\nif run([\"pwd\"]).stdout.strip() != dir {\n    raise \"cd\"\n}\nremove_all(dir)\nif exists(dir) {\n    raise \"remove_all\"\n}\n"
         assert run(src) == 0
         u.chdir(old)
     }
@@ -106,7 +106,7 @@ test "script filesystem, path and cd builtins" {
 test "script supports compound assignment" {
     trust {
         fresh()
-        val src: ref u8 = c"n = 17\nn %= 5\nif n != 2 {\n    raise \"modulo assign\"\n}\nn += 3\nif n != 5 {\n    raise \"add assign\"\n}\nn -= 1\nif n != 4 {\n    raise \"subtract assign\"\n}\nn *= 3\nif n != 12 {\n    raise \"multiply assign\"\n}\nn /= 5\nif n != 2 {\n    raise \"divide assign\"\n}\ns = \"a\"\ns += \"b\"\nif s != \"ab\" {\n    raise \"string add assign\"\n}\n"
+        val src: ref u8 = c"var n = 17\nn %= 5\nif n != 2 {\n    raise \"modulo assign\"\n}\nn += 3\nif n != 5 {\n    raise \"add assign\"\n}\nn -= 1\nif n != 4 {\n    raise \"subtract assign\"\n}\nn *= 3\nif n != 12 {\n    raise \"multiply assign\"\n}\nn /= 5\nif n != 2 {\n    raise \"divide assign\"\n}\nvar s = \"a\"\ns += \"b\"\nif s != \"ab\" {\n    raise \"string add assign\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -121,7 +121,7 @@ test "script glob returns sorted matching paths" {
         assert u.write_file(u.path_join(root, c"c.txt"), c"")
         val old: ref u8 = u.cwd()
         assert u.chdir(root) == 0
-        val src: ref u8 = c"files = glob(\"*.blood\")\nif len(files) != 2 {\n    raise \"length\"\n}\nif files[0] != \"a.blood\" or files[1] != \"b.blood\" {\n    raise \"sorted\"\n}\nif len(glob(\"missing*\")) != 0 {\n    raise \"empty\"\n}\n"
+        val src: ref u8 = c"var files = glob(\"*.blood\")\nif len(files) != 2 {\n    raise \"length\"\n}\nif files[0] != \"a.blood\" or files[1] != \"b.blood\" {\n    raise \"sorted\"\n}\nif len(glob(\"missing*\")) != 0 {\n    raise \"empty\"\n}\n"
         val st: i32 = run(src)
         assert u.chdir(old) == 0
         assert st == 0
@@ -146,7 +146,7 @@ test "script rename moves and renames paths" {
 test "script supports loops, break and continue" {
     trust {
         fresh()
-        val src: ref u8 = c"total = 0\nfor i in range(1, 11) {\n    if i == 3 {\n        continue\n    }\n    if i == 9 {\n        break\n    }\n    total += i\n}\nif total != 33 {\n    raise \"for loop\"\n}\nn = 0\nwhile n < 5 {\n    n += 1\n}\nif n != 5 {\n    raise \"while loop\"\n}\ncount = 0\nfor ch in \"abc\" {\n    count += 1\n}\nif count != 3 {\n    raise \"string loop\"\n}\nvalues = []\nfor x in [1, 2, 3] {\n    values.append(x * 2)\n}\nif values.join(\",\") != \"2,4,6\" {\n    raise \"list loop\"\n}\n"
+        val src: ref u8 = c"var total = 0\nfor i in range(1, 11) {\n    if i == 3 {\n        continue\n    }\n    if i == 9 {\n        break\n    }\n    total += i\n}\nif total != 33 {\n    raise \"for loop\"\n}\nvar n = 0\nwhile n < 5 {\n    n += 1\n}\nif n != 5 {\n    raise \"while loop\"\n}\nvar count = 0\nfor ch in \"abc\" {\n    count += 1\n}\nif count != 3 {\n    raise \"string loop\"\n}\nvar values = []\nfor x in [1, 2, 3] {\n    values.append(x * 2)\n}\nif values.join(\",\") != \"2,4,6\" {\n    raise \"list loop\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -162,7 +162,7 @@ test "script supports functions and recursion" {
 test "script supports try, catch and raise" {
     trust {
         fresh()
-        val src: ref u8 = c"caught = \"\"\ntry {\n    raise \"oops\"\n} catch err {\n    caught = err\n}\nif caught != \"oops\" {\n    raise \"catch\"\n}\ntry {\n    x = missing_value\n} catch err {\n    caught = err\n}\nif \"undefined\" not in caught {\n    raise \"undefined variable\"\n}\ntry {\n    z = 1 / 0\n} catch err {\n    caught = err\n}\nif \"division\" not in caught {\n    raise \"division by zero\"\n}\n"
+        val src: ref u8 = c"var caught = \"\"\ntry {\n    raise \"oops\"\n} catch err {\n    caught = err\n}\nif caught != \"oops\" {\n    raise \"catch\"\n}\ntry {\n    var x = missing_value\n} catch err {\n    caught = err\n}\nif \"undefined\" not in caught {\n    raise \"undefined variable\"\n}\ntry {\n    var z = 1 / 0\n} catch err {\n    caught = err\n}\nif \"division\" not in caught {\n    raise \"division by zero\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -170,7 +170,7 @@ test "script supports try, catch and raise" {
 test "script supports string interpolation" {
     trust {
         fresh()
-        val src: ref u8 = c"name = \"world\"\nif \"hello {name}\" != \"hello world\" {\n    raise \"variable\"\n}\nexpected = chr(123) + \"braces\" + chr(125)\nif \"literal {{braces}}\" != \"literal \" + expected {\n    raise \"escaped braces\"\n}\nif \"math {1 + 2}\" != \"math 3\" {\n    raise \"expression\"\n}\nn = 4\nif \"{n * n}\" != \"16\" {\n    raise \"nested expression\"\n}\n"
+        val src: ref u8 = c"var name = \"world\"\nif \"hello {name}\" != \"hello world\" {\n    raise \"variable\"\n}\nvar expected = chr(123) + \"braces\" + chr(125)\nif \"literal {{braces}}\" != \"literal \" + expected {\n    raise \"escaped braces\"\n}\nif \"math {1 + 2}\" != \"math 3\" {\n    raise \"expression\"\n}\nvar n = 4\nif \"{n * n}\" != \"16\" {\n    raise \"nested expression\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -178,7 +178,7 @@ test "script supports string interpolation" {
 test "script supports brace block style" {
     trust {
         fresh()
-        val src: ref u8 = c"fn main {\n    total = 0\n    for i in range(4) {\n        total += i\n    }\n    if total != 6 {\n        raise \"brace loop\"\n    }\n}\nmain()\n"
+        val src: ref u8 = c"fn main {\n    var total = 0\n    for i in range(4) {\n        total += i\n    }\n    if total != 6 {\n        raise \"brace loop\"\n    }\n}\nmain()\n"
         assert run(src) == 0
     }
 }
@@ -206,9 +206,9 @@ test "script reports parse and evaluation errors" {
     trust {
         fresh()
         assert run(c"if true\n") == 2
-        assert run(c"x = missing_value\n") == 1
+        assert run(c"var x = missing_value\n") == 1
         assert run(c"raise \"boom\"\n") == 1
-        assert run(c"z = 1 / 0\n") == 1
+        assert run(c"var z = 1 / 0\n") == 1
         assert !script.has_error()
     }
 }
@@ -221,7 +221,7 @@ test "script supports command substitution hooks" {
         u.run_capture_hook = fake_capture
         u.hooks_ready = 1
 
-        val src: ref u8 = c"a = `cmd`\nif a != \"captured:cmd\" {\n    raise \"backtick\"\n}\nb = $(other)\nif b != \"captured:other\" {\n    raise \"dollar\"\n}\n"
+        val src: ref u8 = c"var a = `cmd`\nif a != \"captured:cmd\" {\n    raise \"backtick\"\n}\nvar b = $(other)\nif b != \"captured:other\" {\n    raise \"dollar\"\n}\n"
         assert run(src) == 0
 
         u.run_capture_hook = old_hook
@@ -252,7 +252,7 @@ test "script file natives read, write and append" {
         fresh()
         val dir: ref u8 = c"/tmp/blood-unit-script"
         assert u.mkdir_p(dir)
-        val src: ref u8 = c"path = \"/tmp/blood-unit-script/note.txt\"\nif write_file(path, \"abc\") != true {\n    raise \"write\"\n}\nif read_file(path) != \"abc\" {\n    raise \"read\"\n}\nif append_file(path, \"def\") != true {\n    raise \"append\"\n}\nif read_file(path) != \"abcdef\" {\n    raise \"read append\"\n}\nif read_file(\"/tmp/blood-unit-script/missing\") != null {\n    raise \"missing\"\n}\n"
+        val src: ref u8 = c"var path = \"/tmp/blood-unit-script/note.txt\"\nif write_file(path, \"abc\") != true {\n    raise \"write\"\n}\nif read_file(path) != \"abc\" {\n    raise \"read\"\n}\nif append_file(path, \"def\") != true {\n    raise \"append\"\n}\nif read_file(path) != \"abcdef\" {\n    raise \"read append\"\n}\nif read_file(\"/tmp/blood-unit-script/missing\") != null {\n    raise \"missing\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -324,7 +324,7 @@ test "script this builtins report script name, path and directory" {
         val main: ref u8 = u.path_join(dir, c"main.bx")
         val child: ref u8 = u.path_join(dir, c"child.bx")
         val child_head: ref u8 = u.s_cat4(
-            c"info = this()\nif info.name != \"child.bx\" {\n    raise \"child name\"\n}\nif info.path != \"",
+            c"var child_info = this()\nif child_info.name != \"child.bx\" {\n    raise \"child name\"\n}\nif child_info.path != \"",
             child,
             c"\" {\n    raise \"child path\"\n}\nif this_dir() != \"",
             dir
@@ -332,7 +332,7 @@ test "script this builtins report script name, path and directory" {
         val child_src: ref u8 = u.s_cat(child_head, c"\" {\n    raise \"child dir\"\n}\n")
 
         val main_head: ref u8 = u.s_cat4(
-            c"info = this()\nif info.name != \"main.bx\" {\n    raise \"name\"\n}\nif info.path != \"",
+            c"var info = this()\nif info.name != \"main.bx\" {\n    raise \"name\"\n}\nif info.path != \"",
             main,
             c"\" {\n    raise \"path\"\n}\nif this_dir() != \"",
             dir
@@ -381,5 +381,39 @@ test "script classifies script-looking lines" {
         assert !script.looks_like_script(c"ls -la")
         assert !script.looks_like_script(c"FOO=bar echo hi")
         assert !script.looks_like_script(c"")
+        assert script.looks_like_script(c"var x = 1")
+        assert script.looks_like_script(c"var (")
+    }
+}
+
+test "script requires var for the first assignment" {
+    trust {
+        fresh()
+        val src: ref u8 = c"try {\n    x = 1\n} catch err {\n    if \"undefined\" not in err {\n        raise \"expected undefined variable\"\n    }\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script var declarations allow reassignment" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var x = 1\nx = 2\nif x != 2 {\n    raise \"reassign\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script rejects duplicate var declarations" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var x = 1\ntry {\n    var x = 2\n} catch err {\n    if \"already declared\" not in err {\n        raise \"expected redeclaration error\"\n    }\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script supports bulk var declarations" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var (\n    some_variable = \"hello\"\n    some_other_variable = \"world\"\n)\nif some_variable != \"hello\" or some_other_variable != \"world\" {\n    raise \"bulk var\"\n}\n"
+        assert run(src) == 0
     }
 }

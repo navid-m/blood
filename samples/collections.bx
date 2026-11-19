@@ -1,16 +1,16 @@
 # Blood sample: lists, dictionaries and their methods.
 
-numbers = [5, 3, 8, 1]
+var numbers = [5, 3, 8, 1]
 numbers.sort()
 say("sorted: " + numbers.join(", "))
 numbers.append(13)
 say("count: " + str(len(numbers)))
 say("largest: " + str(numbers[-1]))
 
-scores = {"apple": 3, "pear": 1, "kiwi": 2}
-keys   = scores.keys()
+var scores = {"apple": 3, "pear": 1, "kiwi": 2}
+var keys   = scores.keys()
 keys.sort()
-total = 0
+var total = 0
 for key in keys {
     total += scores[key]
     say(key + " -> " + str(scores[key]))

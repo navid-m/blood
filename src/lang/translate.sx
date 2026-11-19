@@ -1620,7 +1620,11 @@ fn emit_sync(t: mut ref Tr, name: ref u8, exported: bool) void = trust {
 
 fn emit_assignment(t: mut ref Tr, name: ref u8, value: ref u8, exported: bool) void = trust {
     val expr: ref u8 = conv_assignment_value(t, value)
-    emit(t, u.s_cat3(name, c" = ", expr))
+    val left: mut ref u8 = name
+    if !is_assigned(t, name) {
+        left = u.s_cat(c"var ", name)
+    }
+    emit(t, u.s_cat3(left, c" = ", expr))
     u.map_put(t.assigned, name, 1)
     if u.s_len(expr) == 0 || ch_at(expr, 0) != 91 {
         emit_sync(t, name, exported)
@@ -1691,9 +1695,8 @@ fn try_assignments(t: mut ref Tr, src: ref u8, exported: bool) bool = trust {
         }
         val name: ref u8 = u.vec_p(names, k) as ref u8
         val value: ref u8 = u.vec_p(values, k) as ref u8
-        if u.vec_gets(appends, k) != 0 {
+        if u.vec_gets(appends, k) != 0 && is_assigned(t, name) {
             emit(t, u.s_cat3(name, c" += ", conv_assignment_value(t, value)))
-            u.map_put(t.assigned, name, 1)
             if !u.s_starts(value, c"(") {
                 emit_sync(t, name, exported)
             }
@@ -1988,8 +1991,12 @@ fn tr_local(t: mut ref Tr, src: ref u8) bool = trust {
         return true
     }
     if is_ident(rest) {
-        emit(t, u.s_cat(rest, c" = null"))
-        u.map_put(t.assigned, rest, 1)
+        if is_assigned(t, rest) {
+            emit(t, u.s_cat(rest, c" = null"))
+        } else {
+            emit(t, u.s_cat3(c"var ", rest, c" = null"))
+            u.map_put(t.assigned, rest, 1)
+        }
         return true
     }
     emit_comment(t, u.s_cat(c"declaration not translated: ", s))
@@ -2950,25 +2957,25 @@ fn helper_prelude(t: mut ref Tr) ref u8 = trust {
     if u.map_has(t.helpers, c"__bx_argc") {
         u.buf_add(
             b,
-            c"fn __bx_argc(a, b, c, d, e, f, g, h, i) {\n    n = 0\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            n += 1\n        }\n    }\n    return n\n}\n\n"
+            c"fn __bx_argc(a, b, c, d, e, f, g, h, i) {\n    var n = 0\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            n += 1\n        }\n    }\n    return n\n}\n\n"
         )
     }
     if u.map_has(t.helpers, c"__bx_args") {
         u.buf_add(
             b,
-            c"fn __bx_args(a, b, c, d, e, f, g, h, i) {\n    out = []\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            out.append(v)\n        }\n    }\n    return out\n}\n\n"
+            c"fn __bx_args(a, b, c, d, e, f, g, h, i) {\n    var out = []\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            out.append(v)\n        }\n    }\n    return out\n}\n\n"
         )
     }
     if u.map_has(t.helpers, c"__bx_range") {
         u.buf_add(
             b,
-            c"fn __bx_range(a, b) {\n    lo = int(a)\n    hi = int(b)\n    out = []\n    if lo <= hi {\n        for i in range(lo, hi + 1) {\n            out.append(i)\n        }\n    } else {\n        for i in range(hi, lo + 1) {\n            out.append(i)\n        }\n        out.sort()\n    }\n    return out\n}\n\n"
+            c"fn __bx_range(a, b) {\n    var lo = int(a)\n    var hi = int(b)\n    var out = []\n    if lo <= hi {\n        for i in range(lo, hi + 1) {\n            out.append(i)\n        }\n    } else {\n        for i in range(hi, lo + 1) {\n            out.append(i)\n        }\n        out.sort()\n    }\n    return out\n}\n\n"
         )
     }
     if u.map_has(t.helpers, c"__bx_glob") {
         u.buf_add(
             b,
-            c"fn __bx_glob(p, s) {\n    pi = 0\n    si = 0\n    star = -1\n    mark = 0\n    while si < len(s) {\n        if pi < len(p) and (p[pi] == \"?\" or p[pi] == s[si]) {\n            pi += 1\n            si += 1\n        } elif pi < len(p) and p[pi] == \"*\" {\n            star = pi\n            mark = si\n            pi += 1\n        } elif star != -1 {\n            pi = star + 1\n            mark += 1\n            si = mark\n        } else {\n            return false\n        }\n    }\n    while pi < len(p) and p[pi] == \"*\" {\n        pi += 1\n    }\n    return pi == len(p)\n}\n\n"
+            c"fn __bx_glob(p, s) {\n    var pi = 0\n    var si = 0\n    var star = -1\n    var mark = 0\n    while si < len(s) {\n        if pi < len(p) and (p[pi] == \"?\" or p[pi] == s[si]) {\n            pi += 1\n            si += 1\n        } elif pi < len(p) and p[pi] == \"*\" {\n            star = pi\n            mark = si\n            pi += 1\n        } elif star != -1 {\n            pi = star + 1\n            mark += 1\n            si = mark\n        } else {\n            return false\n        }\n    }\n    while pi < len(p) and p[pi] == \"*\" {\n        pi += 1\n    }\n    return pi == len(p)\n}\n\n"
         )
         u.map_put(t.helpers, c"__bx_s", 1)
     }
@@ -3001,6 +3008,7 @@ fn finish(t: mut ref Tr) ref u8 = trust {
                 break
             }
             val name: ref u8 = u.vec_p(t.seeds, i) as ref u8
+            u.buf_add(b, c"var ")
             u.buf_add(b, name)
             u.buf_add(b, c" = __bx_s(env(")
             u.buf_add(b, quote_sq(name))
@@ -3155,7 +3163,21 @@ fn scan_assigned(t: mut ref Tr, lines: ref u.Vec) void = trust {
                 i = next + 1
                 continue
             }
-            if next < n && ch_at(line, next) == 43 && next + 1 < n && ch_at(line, next + 1) == 61 {
+            if next < n && ch_at(line, next) == 43 && next + 1 < n && (ch_at(
+                line,
+                next + 1
+            ) == 61 || ch_at(line, next + 1) == 43) {
+                if allow {
+                    seed_name(t, name)
+                }
+                allow = false
+                i = next + 2
+                continue
+            }
+            if next < n && ch_at(line, next) == 45 && next + 1 < n && (ch_at(
+                line,
+                next + 1
+            ) == 61 || ch_at(line, next + 1) == 45) {
                 if allow {
                     seed_name(t, name)
                 }
@@ -3169,7 +3191,10 @@ fn scan_assigned(t: mut ref Tr, lines: ref u.Vec) void = trust {
             ) || u.s_eq(
                 name,
                 c"local"
-            ) || u.s_eq(name, c"declare") || u.s_eq(name, c"typeset") || u.s_eq(name, c"readonly") {
+            ) || u.s_eq(name, c"declare") || u.s_eq(name, c"typeset") || u.s_eq(name, c"readonly") || u.s_eq(
+                name,
+                c"let"
+            ) {
                 allow = true
                 i = next
                 continue

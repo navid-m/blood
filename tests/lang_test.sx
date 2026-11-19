@@ -334,3 +334,22 @@ test "parser reports syntax errors with positions" {
         assert lang.last_error_col() == 0
     }
 }
+
+test "parser builds var declarations and bulk var blocks" {
+    trust {
+        val one: ref lang.Node = lang.parse(c"var x = 1\n")
+        val vd: ref lang.Node = kid(one, 0)
+        assert vd.kind == lang.NodeKind.VarDecl
+        assert u.s_eq(vd.s, c"x")
+        assert kid(vd, 0).kind == lang.NodeKind.IntLit
+
+        val bulk: ref lang.Node = lang.parse(c"var (\n    a = 1\n    b = 2\n)\n")
+        val block: ref lang.Node = kid(bulk, 0)
+        assert block.kind == lang.NodeKind.Block
+        assert block.kids.len == 2
+        assert kid(block, 0).kind == lang.NodeKind.VarDecl
+        assert u.s_eq(kid(block, 0).s, c"a")
+        assert kid(block, 1).kind == lang.NodeKind.VarDecl
+        assert u.s_eq(kid(block, 1).s, c"b")
+    }
+}

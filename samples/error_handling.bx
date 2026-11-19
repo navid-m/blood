@@ -7,7 +7,7 @@ try {
 }
 
 try {
-    value = 10 / 0
+    var value = 10 / 0
 } catch err {
     say("caught: " + err)
 }

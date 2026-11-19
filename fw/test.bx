@@ -5,10 +5,10 @@ fn fail(message) {
     exit(1)
 }
 
-root = parent(this_dir())
+var root = parent(this_dir())
 cd(root)
 
-tmp = mktemp_dir("blood-fw")
+var tmp = mktemp_dir("blood-fw")
 
 defer {
     remove_all(tmp)
@@ -16,7 +16,8 @@ defer {
     remove_file("/tmp/blood_sample_file_io.txt")
 }
 
-blood_bin = env("BLOOD", default: "")
+var blood_bin = env("BLOOD", default: "")
+var r = null
 
 if blood_bin == "" {
     if not which("spectre") {
@@ -46,7 +47,7 @@ if which("spectre") {
         fail("unit tests failed")
     }
 
-    passes = 0
+    var passes = 0
     for line in r.stdout.lines() {
         if line.starts_with("[pass]") {
             passes += 1
@@ -60,8 +61,12 @@ if which("spectre") {
 
 say("==> running samples")
 
-failures = 0
-count    = 0
+var failures = 0
+var count    = 0
+var name     = ""
+var expected = ""
+var sample_args = []
+var want     = ""
 
 for sample in glob("samples/*.bx") {
     name     = stem(sample)

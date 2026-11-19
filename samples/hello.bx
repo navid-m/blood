@@ -1,6 +1,6 @@
 # Blood sample: hello world, interpolation and printing.
 
 say("hello, blood!")
-name = "world"
+var name = "world"
 say("greetings, {name}!")
 print("one plus two is", 1 + 2)

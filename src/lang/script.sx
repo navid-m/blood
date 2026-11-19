@@ -2339,17 +2339,17 @@ fn do_replace(s: ref u8, from: ref u8, to: ref u8) ref u8 = trust {
 
 fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: i64) void = trust {
     if target.kind == lang.NodeKind.Var {
+        val cur: ref Value = env_lookup(env, target.s)
+        if cur == none {
+            set_error(
+                u.s_cat3(c"undefined variable '", target.s, c"'"),
+                target.line,
+                target.col
+            )
+            return
+        }
         val final: mut ref Value = value
         if op > 1 {
-            val cur: ref Value = env_lookup(env, target.s)
-            if cur == none {
-                set_error(
-                    u.s_cat3(c"undefined variable '", target.s, c"'"),
-                    target.line,
-                    target.col
-                )
-                return
-            }
             final = bin_op(op - 2, cur, value)
         }
         env_assign(env, target.s, final)
@@ -2606,12 +2606,35 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         }
         return
     }
+    if n.kind == lang.NodeKind.VarDecl {
+        if u.map_has(env.vars, n.s) {
+            set_error(
+                u.s_cat3(c"variable '", n.s, c"' is already declared"),
+                n.line,
+                n.col
+            )
+            return
+        }
+        if n.kids.len == 0 {
+            set_error(c"variable declaration needs a value", n.line, n.col)
+            return
+        }
+        val value: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        if g_flow != 0 {
+            return
+        }
+        env_define(env, n.s, value)
+        return
+    }
     if n.kind == lang.NodeKind.Assign {
         val value: ref Value = eval(u.vec_p(n.kids, 1) as ref lang.Node, env)
         if g_flow != 0 {
             return
         }
         val target: ref lang.Node = u.vec_p(n.kids, 0) as ref lang.Node
+        if n.b != 0 && target.kind == lang.NodeKind.Var && env_lookup(env, target.s) == none {
+            env_define(env, target.s, v_nil())
+        }
         assign_target(target, value, env, n.a)
         if n.b != 0 && g_flow == 0 && target.kind == lang.NodeKind.Var {
             val bound: ref Value = env_lookup(env, target.s)
@@ -2915,7 +2938,7 @@ fn define_native(env: mut ref Env, name: ref u8) void = trust {
 }
 
 pub fn script_init() void = trust {
-    g_env = env_new_mode(none, true)
+    val builtins: mut ref Env = env_new_mode(none, true)
     g_error = none
     g_flow = 0
     g_return = none
@@ -2923,55 +2946,56 @@ pub fn script_init() void = trust {
     g_interactive = 1
     g_script_path = none
     g_args = u.vec_new_perm()
-    define_native(g_env, c"len")
-    define_native(g_env, c"str")
-    define_native(g_env, c"int")
-    define_native(g_env, c"float")
-    define_native(g_env, c"bool")
-    define_native(g_env, c"range")
-    define_native(g_env, c"print")
-    define_native(g_env, c"input")
-    define_native(g_env, c"sleep")
-    define_native(g_env, c"exit")
-    define_native(g_env, c"shell")
-    define_native(g_env, c"capture")
-    define_native(g_env, c"abs")
-    define_native(g_env, c"min")
-    define_native(g_env, c"max")
-    define_native(g_env, c"sum")
-    define_native(g_env, c"type")
-    define_native(g_env, c"keys")
-    define_native(g_env, c"values")
-    define_native(g_env, c"items")
-    define_native(g_env, c"read_file")
-    define_native(g_env, c"write_file")
-    define_native(g_env, c"append_file")
-    define_native(g_env, c"env")
-    define_native(g_env, c"clock")
-    define_native(g_env, c"chr")
-    define_native(g_env, c"ord")
-    define_native(g_env, c"source")
-    define_native(g_env, c"glob")
-    define_native(g_env, c"rename")
-    define_native(g_env, c"this")
-    define_native(g_env, c"this_dir")
-    define_native(g_env, c"run")
-    define_native(g_env, c"eprint")
-    define_native(g_env, c"indent")
-    define_native(g_env, c"exists")
-    define_native(g_env, c"is_file")
-    define_native(g_env, c"is_dir")
-    define_native(g_env, c"is_executable")
-    define_native(g_env, c"which")
-    define_native(g_env, c"mktemp_dir")
-    define_native(g_env, c"remove_file")
-    define_native(g_env, c"remove_all")
-    define_native(g_env, c"parent")
-    define_native(g_env, c"basename")
-    define_native(g_env, c"stem")
-    define_native(g_env, c"join")
-    define_native(g_env, c"cd")
-    define_native(g_env, c"unified_diff")
+    define_native(builtins, c"len")
+    define_native(builtins, c"str")
+    define_native(builtins, c"int")
+    define_native(builtins, c"float")
+    define_native(builtins, c"bool")
+    define_native(builtins, c"range")
+    define_native(builtins, c"print")
+    define_native(builtins, c"input")
+    define_native(builtins, c"sleep")
+    define_native(builtins, c"exit")
+    define_native(builtins, c"shell")
+    define_native(builtins, c"capture")
+    define_native(builtins, c"abs")
+    define_native(builtins, c"min")
+    define_native(builtins, c"max")
+    define_native(builtins, c"sum")
+    define_native(builtins, c"type")
+    define_native(builtins, c"keys")
+    define_native(builtins, c"values")
+    define_native(builtins, c"items")
+    define_native(builtins, c"read_file")
+    define_native(builtins, c"write_file")
+    define_native(builtins, c"append_file")
+    define_native(builtins, c"env")
+    define_native(builtins, c"clock")
+    define_native(builtins, c"chr")
+    define_native(builtins, c"ord")
+    define_native(builtins, c"source")
+    define_native(builtins, c"glob")
+    define_native(builtins, c"rename")
+    define_native(builtins, c"this")
+    define_native(builtins, c"this_dir")
+    define_native(builtins, c"run")
+    define_native(builtins, c"eprint")
+    define_native(builtins, c"indent")
+    define_native(builtins, c"exists")
+    define_native(builtins, c"is_file")
+    define_native(builtins, c"is_dir")
+    define_native(builtins, c"is_executable")
+    define_native(builtins, c"which")
+    define_native(builtins, c"mktemp_dir")
+    define_native(builtins, c"remove_file")
+    define_native(builtins, c"remove_all")
+    define_native(builtins, c"parent")
+    define_native(builtins, c"basename")
+    define_native(builtins, c"stem")
+    define_native(builtins, c"join")
+    define_native(builtins, c"cd")
+    define_native(builtins, c"unified_diff")
+    g_env = env_new_mode(builtins, true)
     g_defers = u.vec_new_perm()
     env_define(g_env, c"status", v_int(0))
     env_define(g_env, c"null", v_nil())
@@ -3440,7 +3464,10 @@ pub fn looks_like_script(line: ref u8) bool = trust {
     ) || u.s_starts(
         t,
         c"catch"
-    ) || u.s_starts(t, c"except") || u.s_starts(t, c"raise ") || u.s_starts(t, c"throw ") {
+    ) || u.s_starts(t, c"except") || u.s_starts(t, c"raise ") || u.s_starts(t, c"throw ") || u.s_starts(
+        t,
+        c"var "
+    ) || u.s_starts(t, c"var\t") || u.s_eq(t, c"var") {
         return true
     }
     if @load8(t) == 91 || @load8(t) == 123 {

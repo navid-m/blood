@@ -7,7 +7,7 @@ fn fib(n) {
     return fib(n - 1) + fib(n - 2)
 }
 
-values = []
+var values = []
 for i in range(10) {
     values.append(fib(i))
 }
