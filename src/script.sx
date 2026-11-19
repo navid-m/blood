@@ -34,6 +34,7 @@ val g_interactive: mut i64 = 1
 val g_depth: mut i64 = 0
 val g_run_depth: mut i64 = 0
 val g_args: mut ref u.Vec = none
+val g_script_path: mut ref u8 = none
 
 fn v_new(tag: i64) ref Value = trust {
     val v: mut ref Value = u.xalloc(@sizeof(Value) as i64) as ref Value
@@ -959,6 +960,12 @@ fn native_id(name: ref u8) i64 = trust {
     if u.s_eq(name, c"rename") {
         return 30
     }
+    if u.s_eq(name, c"this") {
+        return 31
+    }
+    if u.s_eq(name, c"this_dir") {
+        return 32
+    }
     return 0
 }
 
@@ -1264,6 +1271,21 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         val from: ref u8 = u.expand_tilde(v_to_str(arg(args, 0)))
         val to: ref u8 = u.expand_tilde(v_to_str(arg(args, 1)))
         return v_bool(rt.rename(from, to) == 0)
+    }
+    if id == 31 {
+        if g_script_path == none {
+            return v_nil()
+        }
+        val m: mut ref u.Map = dict_new()
+        u.map_put(m, c"name", @bitcast(v_str(u.path_base(g_script_path)), i64))
+        u.map_put(m, c"path", @bitcast(v_str(g_script_path), i64))
+        return v_dict(m)
+    }
+    if id == 32 {
+        if g_script_path == none {
+            return v_nil()
+        }
+        return v_str(u.path_dir(g_script_path))
     }
     if id == 99 {
         return v_nil()
@@ -2093,6 +2115,7 @@ pub fn script_init() void = trust {
     g_return = none
     g_depth = 0
     g_interactive = 1
+    g_script_path = none
     g_args = u.vec_new_perm()
     define_native(g_env, c"len")
     define_native(g_env, c"str")
@@ -2124,6 +2147,8 @@ pub fn script_init() void = trust {
     define_native(g_env, c"source")
     define_native(g_env, c"glob")
     define_native(g_env, c"rename")
+    define_native(g_env, c"this")
+    define_native(g_env, c"this_dir")
     env_define(g_env, c"status", v_int(0))
     env_define(g_env, c"null", v_nil())
     env_define(g_env, c"true", v_bool(true))
@@ -2480,7 +2505,8 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
 
 pub fn run_file(path: ref u8) i32 = trust {
     u.scratch_begin()
-    val src: ref u8 = u.read_file(path)
+    val resolved: ref u8 = u.absolute_path(path)
+    val src: ref u8 = u.read_file(resolved)
     if src == none {
         u.write_fd(2, u.s_cat3(c"blood: ", path, c": cannot read script\n"))
         u.scratch_end()
@@ -2489,8 +2515,11 @@ pub fn run_file(path: ref u8) i32 = trust {
     if g_env == none {
         script_init()
     }
+    val previous: ref u8 = g_script_path
+    g_script_path = resolved
     env_define(g_env, c"__file__", v_str(path))
     val st: i32 = run_text(src, false, path)
+    g_script_path = previous
     u.scratch_end()
     return st
 }

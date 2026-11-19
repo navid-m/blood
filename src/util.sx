@@ -1270,6 +1270,83 @@ pub fn path_dir(s: ref u8) ref u8 = trust {
     return s_dup(c".")
 }
 
+pub fn path_clean(s: ref u8) ref u8 = trust {
+    if s == none || s_len(s) == 0 {
+        return s_dup(c".")
+    }
+    val absolute: bool = @load8(s) == 47
+    val parts: mut ref Vec = vec_new()
+    val n: i64 = s_len(s)
+    val i: mut i64 = 0
+    for {
+        for {
+            if i >= n {
+                break
+            }
+            if @load8(@ptradd(s, i)) != 47 {
+                break
+            }
+            i++
+        }
+        if i >= n {
+            break
+        }
+        val start: i64 = i
+        for {
+            if i >= n {
+                break
+            }
+            if @load8(@ptradd(s, i)) == 47 {
+                break
+            }
+            i++
+        }
+        val len: i64 = i - start
+        if len == 1 && @load8(@ptradd(s, start)) == 46 {
+            continue
+        }
+        if len == 2 && @load8(@ptradd(s, start)) == 46 && @load8(@ptradd(s, start + 1)) == 46 {
+            if parts.len > 0 && !s_eq(vec_p(parts, parts.len - 1) as ref u8, c"..") {
+                vec_pop(parts)
+            } elif !absolute {
+                vec_pushp(parts, s_ndup(@ptradd(s, start), 2) as ref void)
+            }
+            continue
+        }
+        vec_pushp(parts, s_ndup(@ptradd(s, start), len) as ref void)
+    }
+    val b: mut ref Buf = buf_new()
+    if absolute {
+        buf_ch(b, 47)
+    }
+    val j: mut i64 = 0
+    for {
+        if j >= parts.len {
+            break
+        }
+        if j > 0 {
+            buf_ch(b, 47)
+        }
+        buf_add(b, vec_p(parts, j) as ref u8)
+        j++
+    }
+    if b.len == 0 {
+        buf_add(b, c".")
+    }
+    return buf_take(b)
+}
+
+pub fn absolute_path(s: ref u8) ref u8 = trust {
+    if s == none || s_len(s) == 0 {
+        return cwd()
+    }
+    val p: ref u8 = expand_tilde(s)
+    if s_len(p) > 0 && @load8(p) == 47 {
+        return path_clean(p)
+    }
+    return path_clean(path_join(cwd(), p))
+}
+
 pub fn path_base(s: ref u8) ref u8 = trust {
     if s == none {
         return s_dup(c"")

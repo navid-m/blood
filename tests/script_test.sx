@@ -254,6 +254,59 @@ test "script detects lines that need continuation" {
     }
 }
 
+test "script this builtins return null without a script file" {
+    trust {
+        fresh()
+        assert run(c"if this() != null {\n    raise \"this\"\n}\nif this_dir() != null {\n    raise \"this_dir\"\n}\n") == 0
+    }
+}
+
+test "script this builtins report script name, path and directory" {
+    trust {
+        fresh()
+        val old: ref u8 = u.cwd()
+        assert u.mkdir_p(c"/tmp/blood-unit-script/this")
+        assert u.chdir(c"/tmp/blood-unit-script/this") == 0
+        val dir: ref u8 = u.cwd()
+        val main: ref u8 = u.path_join(dir, c"main.bx")
+        val child: ref u8 = u.path_join(dir, c"child.bx")
+        val child_head: ref u8 = u.s_cat4(
+            c"info = this()\nif info.name != \"child.bx\" {\n    raise \"child name\"\n}\nif info.path != \"",
+            child,
+            c"\" {\n    raise \"child path\"\n}\nif this_dir() != \"",
+            dir
+        )
+        val child_src: ref u8 = u.s_cat(child_head, c"\" {\n    raise \"child dir\"\n}\n")
+
+        val main_head: ref u8 = u.s_cat4(
+            c"info = this()\nif info.name != \"main.bx\" {\n    raise \"name\"\n}\nif info.path != \"",
+            main,
+            c"\" {\n    raise \"path\"\n}\nif this_dir() != \"",
+            dir
+        )
+        val main_mid: ref u8 = u.s_cat3(
+            c"\" {\n    raise \"dir\"\n}\nif source(\"child.bx\") != 0 {\n    raise \"source\"\n}\ninfo = this()\nif info.path != \"",
+            main,
+            c"\" {\n    raise \"restore\"\n}\nif this_dir() != \""
+        )
+        val main_src: ref u8 = u.s_cat(
+            u.s_cat(main_head, main_mid),
+            u.s_cat(dir, c"\" {\n    raise \"restore dir\"\n}\n")
+        )
+        assert u.write_file(child, child_src)
+        assert u.write_file(main, main_src)
+        val old_hook: fn(ref u8) i32 = u.run_script_file_hook
+        val old_ready: i64 = u.hooks_ready
+        u.run_script_file_hook = script.run_file
+        u.hooks_ready = 1
+        val st: i32 = script.run_file(c"main.bx")
+        u.run_script_file_hook = old_hook
+        u.hooks_ready = old_ready
+        assert u.chdir(old) == 0
+        assert st == 0
+    }
+}
+
 test "script classifies script-looking lines" {
     trust {
         assert script.looks_like_script(c"say hello")

@@ -1597,6 +1597,11 @@ standard input. Returns a string, or null on end of input.
 |`capture(command)` |1 |Execute a shell command line and return its captured
 standard output.
 |`source(path)` |1 |Execute a Blood script file and return its status.
+|`this()` |0 |Name and absolute path of the executing script as a dictionary
+with keys `name` (the final path component) and `path` (absolute). Returns null
+when no script file is executing.
+|`this_dir()` |0 |Absolute path of the directory containing the executing
+script. Returns null when no script file is executing.
 |`abs(x)` |1 |Absolute numeric value, returned as a float.
 |`min(x)` / `min(a,b)` |1 or 2 |Minimum of a list, or of two values. With a
 list, returns the smallest element.
