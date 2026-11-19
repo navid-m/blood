@@ -2892,13 +2892,14 @@ used, including function parameters and local variables.</p>
 PLACE += expression
 PLACE -= expression
 PLACE *= expression
-PLACE /= expression</code></pre>
+PLACE /= expression
+PLACE %= expression</code></pre>
 </div>
 </div>
 <div class="paragraph">
 <p><code>PLACE</code> may be a variable, an index expression, or a dictionary attribute.
 Assignments are statements, not expressions. Chained assignment is not
-supported. <code>%=</code> is not implemented.</p>
+supported.</p>
 </div>
 <div class="paragraph">
 <p>If the target variable does not exist in the current environment chain, it is
@@ -3338,6 +3339,13 @@ list, returns the smallest element.</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>items(dict)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">List of <code>[key, value]</code> pairs.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>glob(pattern)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Expand a pathname pattern and return a sorted list of
+matching paths. An unmatched pattern yields an empty list. A leading <code>~</code> is
+expanded.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>read_file(path)</code></p></td>
@@ -4239,7 +4247,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-18 21:56:01 UTC
+Last updated 2026-11-19 00:00:45 UTC
 </div>
 </div>
 </body>

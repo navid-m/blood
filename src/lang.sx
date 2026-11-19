@@ -692,7 +692,7 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
         val two: mut ref u8 = c""
         if lx.pos + 1 < lx.len {
             val d: u8 = @load8(@ptradd(lx.src, lx.pos + 1))
-            if (c == 61 && d == 61) || (c == 33 && d == 61) || (c == 60 && d == 61) || (c == 62 && d == 61) || (c == 43 && d == 61) || (c == 45 && d == 61) || (c == 42 && d == 61) || (c == 47 && d == 61) || (c == 42 && d == 42) {
+            if (c == 61 && d == 61) || (c == 33 && d == 61) || (c == 60 && d == 61) || (c == 62 && d == 61) || (c == 43 && d == 61) || (c == 45 && d == 61) || (c == 42 && d == 61) || (c == 47 && d == 61) || (c == 37 && d == 61) || (c == 42 && d == 42) {
                 two = u.s_ndup(@ptradd(lx.src, lx.pos), 2)
                 lx.pos += 2
                 lx.col += 2
@@ -1205,6 +1205,9 @@ fn is_assign_op(t: ref Token) i64 = trust {
     if u.s_eq(t.text, c"/=") {
         return 5
     }
+    if u.s_eq(t.text, c"%=") {
+        return 6
+    }
     return 0
 }
 
@@ -1239,7 +1242,7 @@ fn starts_shell(p: ref Parser) bool = trust {
         ) || u.s_eq(
             b.text,
             c"+="
-        ) || u.s_eq(b.text, c"-=") || u.s_eq(b.text, c"*=") || u.s_eq(b.text, c"/=") {
+        ) || u.s_eq(b.text, c"-=") || u.s_eq(b.text, c"*=") || u.s_eq(b.text, c"/=") || u.s_eq(b.text, c"%=") {
             return false
         }
         if u.s_eq(

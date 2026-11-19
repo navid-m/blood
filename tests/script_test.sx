@@ -67,6 +67,31 @@ test "script supports dictionaries and attributes" {
     }
 }
 
+test "script supports compound assignment" {
+    trust {
+        fresh()
+        val src: ref u8 = c"n = 17\nn %= 5\nif n != 2 {\n    raise \"modulo assign\"\n}\nn += 3\nif n != 5 {\n    raise \"add assign\"\n}\nn -= 1\nif n != 4 {\n    raise \"subtract assign\"\n}\nn *= 3\nif n != 12 {\n    raise \"multiply assign\"\n}\nn /= 5\nif n != 2 {\n    raise \"divide assign\"\n}\ns = \"a\"\ns += \"b\"\nif s != \"ab\" {\n    raise \"string add assign\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script glob returns sorted matching paths" {
+    trust {
+        fresh()
+        val root: ref u8 = c"/tmp/blood-unit-script/glob"
+        assert u.mkdir_p(root)
+        assert u.write_file(u.path_join(root, c"b.blood"), c"")
+        assert u.write_file(u.path_join(root, c"a.blood"), c"")
+        assert u.write_file(u.path_join(root, c"c.txt"), c"")
+        val old: ref u8 = u.cwd()
+        assert u.chdir(root) == 0
+        val src: ref u8 = c"files = glob(\"*.blood\")\nif len(files) != 2 {\n    raise \"length\"\n}\nif files[0] != \"a.blood\" or files[1] != \"b.blood\" {\n    raise \"sorted\"\n}\nif len(glob(\"missing*\")) != 0 {\n    raise \"empty\"\n}\n"
+        val st: i32 = run(src)
+        assert u.chdir(old) == 0
+        assert st == 0
+    }
+}
+
 test "script supports loops, break and continue" {
     trust {
         fresh()

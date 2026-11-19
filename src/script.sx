@@ -3,6 +3,7 @@
 val u    = use("util.sx")
 val lang = use("lang.sx")
 val term = use("terminal.sx")
+val sh   = use("shell.sx")
 val rt   = use("std/runtime")
 
 pub type Value = {
@@ -939,6 +940,9 @@ fn native_id(name: ref u8) i64 = trust {
     if u.s_eq(name, c"source") {
         return 28
     }
+    if u.s_eq(name, c"glob") {
+        return 29
+    }
     return 0
 }
 
@@ -1219,6 +1223,22 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
                     u.vec_pushp(pair, @bitcast(u.map_val_at(m, i), ref void))
                     u.vec_pushp(out, v_list(pair) as ref void)
                 }
+                i++
+            }
+        }
+        return v_list(out)
+    }
+    if id == 29 {
+        val pattern: ref u8 = u.expand_tilde(v_to_str(arg(args, 0)))
+        val out: mut ref u.Vec = list_new()
+        if u.s_len(pattern) > 0 {
+            val matches: ref u.Vec = sh.glob_expand(pattern)
+            val i: mut i64 = 0
+            for {
+                if i >= matches.len {
+                    break
+                }
+                u.vec_pushp(out, v_str(u.vec_p(matches, i) as ref u8) as ref void)
                 i++
             }
         }
@@ -2081,6 +2101,7 @@ pub fn script_init() void = trust {
     define_native(g_env, c"chr")
     define_native(g_env, c"ord")
     define_native(g_env, c"source")
+    define_native(g_env, c"glob")
     env_define(g_env, c"status", v_int(0))
     env_define(g_env, c"null", v_nil())
     env_define(g_env, c"true", v_bool(true))

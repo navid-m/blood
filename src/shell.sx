@@ -718,7 +718,7 @@ fn expand_dollar(src: ref u8, at: i64, b: mut ref u.Buf) i64 = trust {
     return at + 1
 }
 
-fn glob_expand(pattern: ref u8) ref u.Vec = trust {
+pub fn glob_expand(pattern: ref u8) ref u.Vec = trust {
     val out: mut ref u.Vec = u.vec_new()
     glob_walk(pattern, 0, out)
     sort_glob(out)

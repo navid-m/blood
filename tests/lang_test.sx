@@ -200,6 +200,10 @@ test "parser builds assignments, conditions and loops" {
         assert kid(compound, 0).kind == lang.NodeKind.Assign
         assert kid(compound, 0).a == 2
 
+        val modulo_assign: ref lang.Node = lang.parse(c"x %= 2\n")
+        assert kid(modulo_assign, 0).kind == lang.NodeKind.Assign
+        assert kid(modulo_assign, 0).a == 6
+
         val cond: ref lang.Node = lang.parse(c"if a {\n  say 1\n} elif b {\n  say 2\n} else {\n  say 3\n}\n")
         val ifn: ref lang.Node = kid(cond, 0)
         assert ifn.kind == lang.NodeKind.If

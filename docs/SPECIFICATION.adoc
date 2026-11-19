@@ -1307,11 +1307,12 @@ PLACE += expression
 PLACE -= expression
 PLACE *= expression
 PLACE /= expression
+PLACE %= expression
 ----
 
 `PLACE` may be a variable, an index expression, or a dictionary attribute.
 Assignments are statements, not expressions. Chained assignment is not
-supported. `%=` is not implemented.
+supported.
 
 If the target variable does not exist in the current environment chain, it is
 created in the current scope. If it exists in an enclosing scope, that binding
@@ -1553,6 +1554,9 @@ list, returns the smallest element.
 |`keys(dict)` |1 |List of dictionary keys.
 |`values(dict)` |1 |List of dictionary values.
 |`items(dict)` |1 |List of `[key, value]` pairs.
+|`glob(pattern)` |1 |Expand a pathname pattern and return a sorted list of
+matching paths. An unmatched pattern yields an empty list. A leading `~` is
+expanded.
 |`read_file(path)` |1 |Read a file. Returns a string or null.
 |`write_file(path, data)` |2 |Write a file. Returns a boolean.
 |`append_file(path, data)` |2 |Append to a file. Returns a boolean.
