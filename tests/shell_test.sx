@@ -357,6 +357,15 @@ test "run_line manages aliases" {
     }
 }
 
+test "dir is seeded as an alias for ls" {
+    trust {
+        init_shell()
+        assert u.map_has(sh.aliases(), c"dir")
+        assert u.s_eq(@bitcast(u.map_get(sh.aliases(), c"dir"), ref u8), c"ls")
+        assert sh.run_line(c"type dir") == 0
+    }
+}
+
 test "run_line changes directories and reports exit" {
     trust {
         init_shell()

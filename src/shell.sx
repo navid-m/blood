@@ -82,6 +82,8 @@ pub fn shell_init(c: ref cfgmod.Config, h: ref histmod.History, interactive: boo
 }
 
 fn seed_aliases(c: ref cfgmod.Config) void = trust {
+    // Convenience alias: `dir ARGS` behaves like `ls ARGS`.
+    u.map_put(sh_aliases, c"dir", @bitcast(c"ls", i64))
     val i: mut i64 = 0
     for {
         if i >= c.alias_defs.len {
