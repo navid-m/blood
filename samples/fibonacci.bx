@@ -12,4 +12,4 @@ for i in range(10) {
     values.append(fib(i))
 }
 
-say "fibonacci: " + values.join(", ")
+say("fibonacci: " + values.join(", "))

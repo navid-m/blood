@@ -2,12 +2,12 @@
 
 for n in range(1, 16) {
     if n % 15 == 0 {
-        say "FizzBuzz"
+        say("FizzBuzz")
     } elif n % 3 == 0 {
-        say "Fizz"
+        say("Fizz")
     } elif n % 5 == 0 {
-        say "Buzz"
+        say("Buzz")
     } else {
-        say n
+        say(n)
     }
 }

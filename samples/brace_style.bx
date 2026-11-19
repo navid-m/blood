@@ -5,12 +5,12 @@ fn greet(name) {
 }
 
 fn main() {
-    say greet("brace style")
+    say(greet("brace style"))
     total = 0
     for n in range(1, 6) {
         total += n
     }
-    say "total=" + str(total)
+    say("total=" + str(total))
 }
 
 main()

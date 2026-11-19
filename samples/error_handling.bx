@@ -3,13 +3,13 @@
 try {
     raise "something went wrong"
 } catch err {
-    say "caught: " + err
+    say("caught: " + err)
 }
 
 try {
     value = 10 / 0
 } catch err {
-    say "caught: " + err
+    say("caught: " + err)
 }
 
-say "still running"
+say("still running")
