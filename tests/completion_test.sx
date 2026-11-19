@@ -1,6 +1,7 @@
 val u = use("../src/util.sx")
 val cfg = use("../src/config.sx")
 val comp = use("../src/completion.sx")
+val appcomp = use("../src/app_completion.sx")
 
 fn has_item(v: ref u.Vec, value: ref u8) bool = trust {
     val i: mut i64 = 0
@@ -55,6 +56,7 @@ test "completion honours case sensitivity and enabled flag" {
         val vars: mut ref u.Map = u.map_new()
         val aliases: mut ref u.Map = u.map_new()
 
+        assert c.completion_external == 0
         c.completion_case_sensitive = 0
         val insensitive: mut comp.CompResult = comp.complete(c, c"EC", 2, vars, aliases)
         assert has_item(insensitive.items, c"echo")
@@ -158,6 +160,43 @@ test "completion lists directory contents after a path" {
         comp.free_result(@addr(prefixed))
 
         assert u.chdir(old) == 0
+    }
+}
+
+test "application completion uses bash definitions when enabled" {
+    trust {
+        if appcomp.bash_available() {
+            val root: ref u8 = c"/tmp/blood-unit-completion-bash"
+            assert u.mkdir_p(root)
+            assert u.write_file(
+                u.path_join(root, c".bash_completion"),
+                c"complete -W 'alpha beta' demo\n"
+            )
+            val old_home: ref u8 = u.env_get(c"HOME")
+            u.env_set(c"HOME", root)
+            val c: mut ref cfg.Config = cfg.default_config()
+            c.completion_external = 1
+            val vars: mut ref u.Map = u.map_new()
+            val aliases: mut ref u.Map = u.map_new()
+
+            val res: mut comp.CompResult = comp.complete(c, c"demo al", 7, vars, aliases)
+            assert res.kind == 4
+            assert has_item(res.items, c"alpha")
+            assert !has_item(res.items, c"beta")
+            assert res.descriptions.len == res.items.len
+            comp.free_result(@addr(res))
+
+            val piped: mut comp.CompResult = comp.complete(c, c"echo | demo al", 14, vars, aliases)
+            assert piped.kind == 4
+            assert has_item(piped.items, c"alpha")
+            comp.free_result(@addr(piped))
+
+            if old_home == none {
+                u.env_unset(c"HOME")
+            } else {
+                u.env_set(c"HOME", old_home)
+            }
+        }
     }
 }
 

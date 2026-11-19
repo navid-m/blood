@@ -85,6 +85,7 @@ pub type Editor = {
     drawn_rows: mut i64
     menu_active: mut i64
     menu_items: mut ref u.Vec
+    menu_descriptions: mut ref u.Vec
     menu_index: mut i64
     menu_start: mut i64
     menu_end: mut i64
@@ -454,6 +455,7 @@ pub fn editor_new(
     e.drawn_rows = 1
     e.menu_active = 0
     e.menu_items = none
+    e.menu_descriptions = none
     e.menu_index = 0
     e.menu_start = 0
     e.menu_end = 0
@@ -725,6 +727,9 @@ fn menu_label(kind: i64) ref u8 = trust {
     if kind == 3 {
         return c"variables"
     }
+    if kind == 4 {
+        return c"completions"
+    }
     return c"commands"
 }
 
@@ -797,6 +802,9 @@ fn draw_menu_box(b: mut ref u.Buf, e: ref Editor, prompt_rows: i64) i64 = trust 
     val total: i64 = e.menu_items.len
     if total == 0 {
         return 0
+    }
+    if e.menu_kind == 4 {
+        return draw_menu_list(b, e, prompt_rows)
     }
     val termw: i64 = cols()
     val avail_below: i64 = rows() - prompt_rows - 1
@@ -903,6 +911,172 @@ fn draw_menu_box(b: mut ref u.Buf, e: ref Editor, prompt_rows: i64) i64 = trust 
                 buf_spaces(b, colw)
             }
             cidx++
+        }
+        u.buf_add(b, c"\x1b[90m│\x1b[0m")
+        r++
+    }
+
+    u.buf_add(b, c"\r\n\x1b[90m└")
+    buf_rule(b, interior)
+    u.buf_add(b, c"┘\x1b[0m")
+    return inner + 2
+}
+
+fn min_width(a: i64, b: i64) i64 = trust {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn menu_description(e: ref Editor, index: i64) ref u8 = trust {
+    if e.menu_descriptions == none || index < 0 || index >= e.menu_descriptions.len {
+        return c""
+    }
+    return u.vec_p(e.menu_descriptions, index) as ref u8
+}
+
+fn draw_menu_list(b: mut ref u.Buf, e: ref Editor, prompt_rows: i64) i64 = trust {
+    val total: i64 = e.menu_items.len
+    if total == 0 {
+        return 0
+    }
+    val termw: i64 = cols()
+    val avail_below: i64 = rows() - prompt_rows - 1
+    if termw < 12 || avail_below < 3 {
+        return 0
+    }
+    val max_total: i64 = 10
+    val inner_cap: mut i64 = avail_below - 2
+    if inner_cap > max_total - 2 {
+        inner_cap = max_total - 2
+    }
+    if inner_cap < 1 {
+        return 0
+    }
+    val scan: mut i64 = total
+    if scan > 512 {
+        scan = 512
+    }
+    val max_name: mut i64 = 1
+    val max_desc: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= scan {
+            break
+        }
+        val item: ref u8 = u.vec_p(e.menu_items, i) as ref u8
+        val namew: i64 = u.visible_width(item)
+        if namew > max_name {
+            max_name = namew
+        }
+        val desc: ref u8 = menu_description(e, i)
+        val descw: i64 = u.visible_width(desc)
+        if descw > max_desc {
+            max_desc = descw
+        }
+        i++
+    }
+    val boxw: i64 = termw - 2
+    val interior: i64 = boxw - 2
+    if interior < 4 {
+        return 0
+    }
+    val name_col: mut i64 = max_name + 2
+    val desc_col: mut i64 = 0
+    if max_desc > 0 {
+        if name_col > interior - 12 {
+            name_col = interior - 12
+        }
+        if name_col < 6 {
+            name_col = 6
+        }
+        if name_col > interior - 2 {
+            name_col = interior - 2
+        }
+        desc_col = interior - name_col - 2
+        if desc_col < 0 {
+            desc_col = 0
+            name_col = interior - 2
+        }
+    } else {
+        name_col = interior - 2
+    }
+    if name_col < 1 {
+        return 0
+    }
+    val needed_rows: i64 = total
+    val inner: mut i64 = needed_rows
+    if inner > inner_cap {
+        inner = inner_cap
+    }
+    val sel_row: mut i64 = -1
+    if e.menu_index >= 0 {
+        sel_row = e.menu_index
+    }
+    val off: mut i64 = 0
+    if sel_row >= 0 {
+        if sel_row >= inner {
+            off = sel_row - inner + 1
+        }
+    }
+    val maxoff: i64 = needed_rows - inner
+    if off > maxoff {
+        off = maxoff
+    }
+    if off < 0 {
+        off = 0
+    }
+
+    u.buf_add(b, c"\x1b[90m")
+    val label: ref u8 = u.s_cat3(menu_label(e.menu_kind), c" ", u.s_int(total))
+    val lw: i64 = u.s_len(label)
+    if interior >= lw + 4 {
+        u.buf_add(b, c"┌─ ")
+        u.buf_add(b, label)
+        u.buf_ch(b, 32)
+        buf_rule(b, interior - 3 - lw)
+    } else {
+        u.buf_add(b, c"┌")
+        buf_rule(b, interior)
+    }
+    u.buf_add(b, c"┐\x1b[0m")
+
+    val r: mut i64 = 0
+    for {
+        if r >= inner {
+            break
+        }
+        u.buf_add(b, c"\r\n\x1b[90m│\x1b[0m")
+        val idx: i64 = off + r
+        if idx < total {
+            val item: ref u8 = u.vec_p(e.menu_items, idx) as ref u8
+            val desc: ref u8 = menu_description(e, idx)
+            val selected: bool = idx == e.menu_index
+            if selected {
+                u.buf_add(b, c"\x1b[7m")
+            }
+            u.buf_ch(b, 32)
+            val name_used: i64 = min_width(u.visible_width(item), name_col)
+            buf_clipped(b, item, name_col)
+            buf_spaces(b, name_col - name_used)
+            if desc_col > 0 {
+                val desc_used: i64 = min_width(u.visible_width(desc), desc_col)
+                if !selected && u.s_len(desc) > 0 {
+                    u.buf_add(b, c"\x1b[90m")
+                }
+                buf_clipped(b, desc, desc_col)
+                buf_spaces(b, desc_col - desc_used)
+                if !selected && u.s_len(desc) > 0 {
+                    u.buf_add(b, c"\x1b[0m")
+                }
+            }
+            u.buf_ch(b, 32)
+            if selected {
+                u.buf_add(b, c"\x1b[0m")
+            }
+        } else {
+            buf_spaces(b, interior)
         }
         u.buf_add(b, c"\x1b[90m│\x1b[0m")
         r++
@@ -1123,6 +1297,7 @@ fn open_completion(e: mut ref Editor) void = trust {
     }
     e.menu_active = 1
     e.menu_items = res.items
+    e.menu_descriptions = res.descriptions
     e.menu_index = -1
     e.menu_start = start
     e.menu_end = end

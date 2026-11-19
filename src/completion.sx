@@ -2,12 +2,14 @@
 
 val u      = use("util.sx")
 val cfgmod = use("config.sx")
+val app    = use("app_completion.sx")
 
 pub type CompResult = {
     start: mut i64
     end: mut i64
     kind: mut i64
     items: mut ref u.Vec
+    descriptions: mut ref u.Vec
 }
 
 val path_cache: mut ref u.Vec = none
@@ -249,7 +251,7 @@ fn has_previous_word(line: ref u8, start: i64) bool = trust {
 }
 
 fn first_word(line: ref u8, end: i64) ref u8 = trust {
-    val leading: mut i64 = 0
+    val leading: mut i64 = segment_start(line, end)
     for {
         if leading >= end {
             break
@@ -276,10 +278,96 @@ fn first_word(line: ref u8, end: i64) ref u8 = trust {
 
 
 
-fn add_candidate(res: mut ref CompResult, s: ref u8) void = trust {
-    if !vec_has(res.items, s) {
-        u.vec_pushp(res.items, s)
+fn add_described_candidate(
+    res: mut ref CompResult,
+    s: ref u8,
+    description: ref u8
+) void = trust {
+    if u.s_len(s) == 0 {
+        return
     }
+    val i: mut i64 = 0
+    for {
+        if i >= res.items.len {
+            break
+        }
+        if u.s_eq(u.vec_p(res.items, i) as ref u8, s) {
+            if u.s_len(description) > 0 {
+                val old: ref u8 = u.vec_p(res.descriptions, i) as ref u8
+                if u.s_len(old) == 0 {
+                    u.vec_setp(res.descriptions, i, u.s_dup(description))
+                }
+            }
+            return
+        }
+        i++
+    }
+    u.vec_pushp(res.items, s)
+    u.vec_pushp(res.descriptions, u.s_dup(description))
+}
+
+fn add_candidate(res: mut ref CompResult, s: ref u8) void = trust {
+    add_described_candidate(res, s, c"")
+}
+
+fn add_external(res: mut ref CompResult, raw: ref u8) void = trust {
+    val n: i64 = u.s_len(raw)
+    val tab: i64 = u.s_index_of_char(raw, 9, 0)
+    if tab >= 0 {
+        val value: ref u8 = u.s_trim(u.s_substr(raw, 0, tab))
+        val description: ref u8 = u.s_trim(u.s_substr(raw, tab + 1, n))
+        add_described_candidate(res, value, description)
+    } else {
+        add_described_candidate(res, u.s_trim(raw), c"")
+    }
+}
+
+fn is_builtin_command(cmd: ref u8) bool = trust {
+    return vec_has(builtin_list(), cmd)
+}
+
+fn alias_command(aliases: ref u.Map, cmd: ref u8) ref u8 = trust {
+    if aliases == none || u.s_len(cmd) == 0 || !u.map_has(aliases, cmd) {
+        return cmd
+    }
+    val value: ref u8 = @bitcast(u.map_get(aliases, cmd), ref u8)
+    val n: i64 = u.s_len(value)
+    val end: mut i64 = 0
+    for {
+        if end >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(value, end))
+        if c == 32 || c == 9 {
+            break
+        }
+        end++
+    }
+    if end == 0 {
+        return cmd
+    }
+    return u.s_substr(value, 0, end)
+}
+
+fn looks_like_path(word: ref u8) bool = trust {
+    if u.s_len(word) == 0 {
+        return false
+    }
+    val first: u8 = @load8(word)
+    if first == 47 || first == 46 || first == 126 {
+        return true
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= u.s_len(word) {
+            break
+        }
+        if @load8(@ptradd(word, i)) == 47 {
+            return true
+        }
+        i++
+    }
+    return false
 }
 
 fn complete_commands(
@@ -449,6 +537,7 @@ pub fn complete(
     res.end = end
     res.kind = 0
     res.items = u.vec_new()
+    res.descriptions = u.vec_new()
     if c.completion_enabled == 0 {
         return res
     }
@@ -482,6 +571,27 @@ pub fn complete(
         complete_env(res, word, c, vars)
         return res
     }
+    if c.completion_external != 0 && !looks_like_path(word) {
+        val external_cmd: ref u8 = alias_command(aliases, cmd)
+        if !is_builtin_command(external_cmd) {
+            val prefix: ref u8 = u.s_substr(line, 0, cursor)
+            val candidates: ref u.Vec = app.bash_candidates(prefix, cursor, external_cmd)
+            if candidates.len > 0 {
+                res.kind = 4
+                val i: mut i64 = 0
+                for {
+                    if i >= candidates.len {
+                        break
+                    }
+                    add_external(res, u.vec_p(candidates, i) as ref u8)
+                    i++
+                }
+                if res.items.len > 0 {
+                    return res
+                }
+            }
+        }
+    }
     complete_files(res, word, c, false)
     return res
 }
@@ -491,4 +601,5 @@ pub fn free_result(res: mut ref CompResult) void = trust {
         return
     }
     u.vec_free(res.items)
+    u.vec_free(res.descriptions)
 }

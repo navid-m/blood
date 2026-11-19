@@ -1,0 +1,217 @@
+/// Application completion through the Bash programmable-completion engine.
+///
+/// Bash completion definitions are shell programs, so the only faithful way
+/// to evaluate them is to ask Bash. The helper below loads the completion
+/// definition for one command, populates the `COMP_*` state, and prints the
+/// resulting `COMPREPLY` entries one per line.
+
+val u  = use("util.sx")
+val ex = use("exec.sx")
+
+val BASH_TIMEOUT_MS: i64 = 500
+
+fn helper_script() ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"line=${1-}\n")
+    u.buf_add(b, c"point=${2-${#line}}\n")
+    u.buf_add(b, c"cmd=${3-}\n")
+    u.buf_add(b, c"if [ -z \"$cmd\" ]; then\n")
+    u.buf_add(b, c"  read -r -a __bc_words <<< \"$line\"\n")
+    u.buf_add(b, c"  if [ ${#__bc_words[@]} -gt 0 ]; then cmd=${__bc_words[0]}; fi\n")
+    u.buf_add(b, c"fi\n")
+    u.buf_add(b, c"case \"$cmd\" in\n")
+    u.buf_add(b, c"  */*) cmd=${cmd##*/} ;;\n")
+    u.buf_add(b, c"esac\n")
+    u.buf_add(b, c"case \"$cmd\" in\n")
+    u.buf_add(b, c"  ''|*[!A-Za-z0-9._+-]*) exit 0 ;;\n")
+    u.buf_add(b, c"esac\n")
+    u.buf_add(b, c"for f in \\\n")
+    u.buf_add(b, c"  /opt/homebrew/share/bash-completion/bash_completion \\\n")
+    u.buf_add(b, c"  /usr/local/share/bash-completion/bash_completion \\\n")
+    u.buf_add(b, c"  /usr/share/bash-completion/bash_completion \\\n")
+    u.buf_add(b, c"  /etc/bash_completion; do\n")
+    u.buf_add(b, c"  if [ -r \"$f\" ]; then . \"$f\" >/dev/null 2>&1; break; fi\n")
+    u.buf_add(b, c"done\n")
+    u.buf_add(b, c"if declare -F _completion_loader >/dev/null 2>&1; then\n")
+    u.buf_add(b, c"  _completion_loader \"$cmd\" >/dev/null 2>&1\n")
+    u.buf_add(b, c"fi\n")
+    u.buf_add(b, c"for f in \\\n")
+    u.buf_add(b, c"  \"$HOME/.bash_completion\" \\\n")
+    u.buf_add(b, c"  \"/opt/homebrew/etc/bash_completion.d/$cmd\" \\\n")
+    u.buf_add(b, c"  \"/usr/local/etc/bash_completion.d/$cmd\" \\\n")
+    u.buf_add(b, c"  \"/etc/bash_completion.d/$cmd\" \\\n")
+    u.buf_add(b, c"  \"/opt/homebrew/share/bash-completion/completions/$cmd\" \\\n")
+    u.buf_add(b, c"  \"/usr/local/share/bash-completion/completions/$cmd\" \\\n")
+    u.buf_add(b, c"  \"/usr/share/bash-completion/completions/$cmd\"; do\n")
+    u.buf_add(b, c"  if [ -r \"$f\" ]; then . \"$f\" >/dev/null 2>&1; fi\n")
+    u.buf_add(b, c"done\n")
+    u.buf_add(b, c"if [ \"$cmd\" = git ]; then\n")
+    u.buf_add(b, c"  for f in \\\n")
+    u.buf_add(b, c"    /Library/Developer/CommandLineTools/usr/share/git-core/git-completion.bash \\\n")
+    u.buf_add(b, c"    /Applications/Xcode.app/Contents/Developer/usr/share/git-core/git-completion.bash \\\n")
+    u.buf_add(b, c"    /opt/homebrew/share/git-core/git-completion.bash; do\n")
+    u.buf_add(b, c"    if [ -r \"$f\" ]; then . \"$f\" >/dev/null 2>&1; break; fi\n")
+    u.buf_add(b, c"  done\n")
+    u.buf_add(b, c"fi\n")
+    u.buf_add(b, c"spec=$(complete -p -- \"$cmd\" 2>/dev/null) || spec=''\n")
+    u.buf_add(b, c"fn_name=''\n")
+    u.buf_add(b, c"word_list=''\n")
+    u.buf_add(b, c"action=''\n")
+    u.buf_add(b, c"if [ -n \"$spec\" ]; then\n")
+    u.buf_add(b, c"  if [[ $spec =~ -F[[:space:]]+([^[:space:]]+) ]]; then fn_name=${BASH_REMATCH[1]}; fi\n")
+    u.buf_add(b, c"  if [[ $spec =~ -W[[:space:]]+(.+) ]]; then\n")
+    u.buf_add(b, c"    word_list=${BASH_REMATCH[1]}\n")
+    u.buf_add(b, c"    word_list=${word_list%\" $cmd\"}\n")
+    u.buf_add(b, c"    word_list=${word_list#\\\"}; word_list=${word_list%\\\"}\n")
+    u.buf_add(b, c"    word_list=${word_list#\"'\"}; word_list=${word_list%\"'\"}\n")
+    u.buf_add(b, c"  fi\n")
+    u.buf_add(b, c"  if [[ $spec =~ -A[[:space:]]+([^[:space:]]+) ]]; then action=${BASH_REMATCH[1]}; fi\n")
+    u.buf_add(b, c"fi\n")
+    u.buf_add(b, c"COMP_LINE=$line\n")
+    u.buf_add(b, c"COMP_POINT=$point\n")
+    u.buf_add(b, c"read -r -a COMP_WORDS <<< \"${line:0:point}\"\n")
+    u.buf_add(b, c"if [[ ${line:0:point} =~ [[:space:]]$ ]]; then COMP_WORDS+=(\"\"); fi\n")
+    u.buf_add(b, c"if [ ${#COMP_WORDS[@]} -eq 0 ]; then COMP_WORDS=(\"$cmd\"); fi\n")
+    u.buf_add(b, c"COMP_CWORD=$((${#COMP_WORDS[@]} - 1))\n")
+    u.buf_add(b, c"cur=${COMP_WORDS[COMP_CWORD]}\n")
+    u.buf_add(b, c"prev=''\n")
+    u.buf_add(b, c"if [ $COMP_CWORD -gt 0 ]; then prev=${COMP_WORDS[COMP_CWORD-1]}; fi\n")
+    u.buf_add(b, c"COMPREPLY=()\n")
+    u.buf_add(b, c"if [ -n \"$fn_name\" ] && declare -F \"$fn_name\" >/dev/null 2>&1; then\n")
+    u.buf_add(b, c"  \"$fn_name\" \"$cmd\" \"$cur\" \"$prev\" >/dev/null 2>&1\n")
+    u.buf_add(b, c"elif [ -n \"$word_list\" ]; then\n")
+    u.buf_add(b, c"  while IFS= read -r __bc_item; do COMPREPLY+=(\"$__bc_item\"); done < <(compgen -W \"$word_list\" -- \"$cur\" 2>/dev/null)\n")
+    u.buf_add(b, c"elif [ -n \"$action\" ]; then\n")
+    u.buf_add(b, c"  while IFS= read -r __bc_item; do COMPREPLY+=(\"$__bc_item\"); done < <(compgen -A \"$action\" -- \"$cur\" 2>/dev/null)\n")
+    u.buf_add(b, c"fi\n")
+    u.buf_add(b, c"if [ ${#COMPREPLY[@]} -eq 0 ] && [[ $spec =~ -o[[:space:]]+default ]]; then\n")
+    u.buf_add(b, c"  while IFS= read -r __bc_item; do COMPREPLY+=(\"$__bc_item\"); done < <(compgen -f -- \"$cur\" 2>/dev/null)\n")
+    u.buf_add(b, c"fi\n")
+    u.buf_add(b, c"for __bc_item in \"${COMPREPLY[@]}\"; do\n")
+    u.buf_add(b, c"  [ -n \"$__bc_item\" ] && printf '%s\\n' \"$__bc_item\"\n")
+    u.buf_add(b, c"done\n")
+    u.buf_add(b, c"exit 0\n")
+    return u.buf_take(b)
+}
+
+fn find_bash() ref u8 = trust {
+    val path: ref u8 = u.env_get(c"PATH")
+    if path != none {
+        val n: i64 = u.s_len(path)
+        val start: mut i64 = 0
+        val i: mut i64 = 0
+        for {
+            if i > n {
+                break
+            }
+            if i == n || @load8(@ptradd(path, i)) == 58 {
+                val dir: ref u8 = u.s_ndup(@ptradd(path, start), i - start)
+                val candidate: ref u8 = u.path_join(dir, c"bash")
+                if u.is_executable(candidate) {
+                    return candidate
+                }
+                start = i + 1
+            }
+            i++
+        }
+    }
+    if u.is_executable(c"/bin/bash") {
+        return c"/bin/bash"
+    }
+    if u.is_executable(c"/usr/local/bin/bash") {
+        return c"/usr/local/bin/bash"
+    }
+    if u.is_executable(c"/opt/homebrew/bin/bash") {
+        return c"/opt/homebrew/bin/bash"
+    }
+    return none
+}
+
+pub fn bash_available() bool = trust {
+    return find_bash() != none
+}
+
+fn trim_line(s: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(s)
+    val end: mut i64 = n
+    for {
+        if end <= 0 {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, end - 1))
+        if c != 32 && c != 9 && c != 13 {
+            break
+        }
+        end--
+    }
+    val start: mut i64 = 0
+    for {
+        if start >= end {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, start))
+        if c != 32 && c != 9 {
+            break
+        }
+        start++
+    }
+    if start == 0 && end == n {
+        return s
+    }
+    return u.s_substr(s, start, end)
+}
+
+fn add_unique(out: mut ref u.Vec, value: ref u8) void = trust {
+    if u.s_len(value) == 0 {
+        return
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= out.len {
+            break
+        }
+        if u.s_eq(u.vec_p(out, i) as ref u8, value) {
+            return
+        }
+        i++
+    }
+    u.vec_pushp(out, u.s_dup(value))
+}
+
+/// Return the Bash completion candidates for `line` at `cursor`.
+///
+/// Candidates are returned as `value<TAB>description` strings. Bash itself
+/// does not provide descriptions, so the description field is normally empty.
+pub fn bash_candidates(line: ref u8, cursor: i64, cmd: ref u8) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val bash: ref u8 = find_bash()
+    if bash == none || cmd == none || u.s_len(cmd) == 0 {
+        return out
+    }
+    val argv: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(argv, u.s_dup(bash) as ref void)
+    u.vec_pushp(argv, u.s_dup(c"--noprofile") as ref void)
+    u.vec_pushp(argv, u.s_dup(c"--norc") as ref void)
+    u.vec_pushp(argv, u.s_dup(c"-c") as ref void)
+    u.vec_pushp(argv, helper_script() as ref void)
+    u.vec_pushp(argv, u.s_dup(c"blood-complete") as ref void)
+    u.vec_pushp(argv, u.s_dup(line) as ref void)
+    u.vec_pushp(argv, u.s_int(cursor) as ref void)
+    u.vec_pushp(argv, u.s_dup(cmd) as ref void)
+    val raw: ref u8 = ex.capture_argv_timeout(argv, true, BASH_TIMEOUT_MS)
+    val n: i64 = u.s_len(raw)
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(raw, i)) == 10 {
+            val item: ref u8 = trim_line(u.s_substr(raw, start, i))
+            add_unique(out, item)
+            start = i + 1
+        }
+        i++
+    }
+    return out
+}

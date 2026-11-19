@@ -104,6 +104,12 @@ pub type Pipe = {
     write_fd: i32
 }
 
+pub type PollFd = {
+    fd: mut i32
+    events: mut i16
+    revents: mut i16
+}
+
 pub fn make_pipe() Pipe = trust {
     val fds: mut [2]i32 = [0, 0]
     rt.pipe(@addr(fds) as ref i32)
@@ -255,5 +261,77 @@ pub fn capture_argv(argv: ref u.Vec, quiet_err: bool) ref u8 = trust {
     u.xfree(chunk)
     fd_close(p.read_fd)
     wait_pid(pid)
+    return u.buf_take(b)
+}
+
+/// Capture stdout like `capture_argv`, but terminate the child if it has not
+/// finished within `timeout_ms`. Timed-out commands return an empty string.
+pub fn capture_argv_timeout(
+    argv: ref u.Vec,
+    quiet_err: bool,
+    timeout_ms: i64
+) ref u8 = trust {
+    if argv.len == 0 {
+        return u.s_dup(c"")
+    }
+    val p: Pipe = make_pipe()
+    val pid: i32 = rt.fork()
+    if pid == 0 {
+        child_reset()
+        fd_close(p.read_fd)
+        fd_dup2(p.write_fd, 1)
+        if quiet_err {
+            val nullfd: i32 = open_fd(c"/dev/null", 1, 438)
+            if nullfd >= 0 {
+                fd_dup2(nullfd, 2)
+                fd_close(nullfd)
+            }
+        }
+        fd_close(p.write_fd)
+        child_exec(argv)
+        p_exit(127)
+    }
+    fd_close(p.write_fd)
+    if pid < 0 {
+        fd_close(p.read_fd)
+        return u.s_dup(c"")
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
+    val started: i64 = u.now_ms()
+    val timed_out: mut bool = false
+    for {
+        val remaining: i64 = timeout_ms - (u.now_ms() - started)
+        if remaining <= 0 {
+            timed_out = true
+            break
+        }
+        val pfd: mut PollFd = @zeroed
+        pfd.fd = p.read_fd
+        pfd.events = 1
+        pfd.revents = 0
+        val ready: i32 = rt.poll(@addr(pfd) as ref void, 1, remaining as i32)
+        if ready < 0 {
+            break
+        }
+        if ready == 0 {
+            timed_out = true
+            break
+        }
+        val n: i64 = fd_read(p.read_fd, chunk, 4096)
+        if n <= 0 {
+            break
+        }
+        u.buf_addn(b, chunk, n)
+    }
+    u.xfree(chunk)
+    fd_close(p.read_fd)
+    if timed_out {
+        p_kill(pid, 9)
+    }
+    wait_pid(pid)
+    if timed_out {
+        return u.s_dup(c"")
+    }
     return u.buf_take(b)
 }

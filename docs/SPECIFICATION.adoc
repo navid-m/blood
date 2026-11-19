@@ -364,6 +364,9 @@ immediately preceding command.
 |Key |Type |Default and effect
 |`enabled` |boolean |`true`. Enables Tab completion.
 |`case_sensitive` |boolean |`false`. Controls prefix matching.
+|`history_suggestions` |boolean |`false`. Enables inline history suggestions.
+|`external` |boolean |`false`. Enables application completion through
+installed Bash completion definitions.
 |===
 
 ==== `[shell]`
@@ -824,6 +827,15 @@ Command completion considers:
 The `PATH` scan is performed lazily on the first command completion and cached
 for the life of the process. Only entries that are not directories and that
 pass the executable access check are included.
+
+When `[completion] external` is enabled, argument completion for a non-builtin
+command is delegated to the Bash programmable-completion engine. Blood loads
+the command's `complete` definition from the standard Bash completion
+directories and from `~/.bash_completion`, evaluates it in a child Bash
+process, and uses the resulting `COMPREPLY` candidates. Path-like words and
+commands with no matching Bash definition continue to use Blood's filesystem
+completion. Bash does not provide completion descriptions, so externally
+completed candidates are displayed without them.
 
 Filesystem completion splits the word at its final `/`. The directory portion
 is expanded for `~` and listed. Entries whose names begin with `.` are offered
