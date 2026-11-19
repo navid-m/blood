@@ -1,6 +1,6 @@
 /// Lexer, AST and parser for the Blood scripting language.
 
-val u = use("util.sx")
+val u = use("../core/util.sx")
 
 pub enum TokenKind = {
     Eof

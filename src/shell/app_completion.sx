@@ -5,8 +5,8 @@
 /// definition for one command, populates the `COMP_*` state, and prints the
 /// resulting `COMPREPLY` entries one per line.
 
-val u  = use("util.sx")
-val ex = use("exec.sx")
+val u  = use("../core/util.sx")
+val ex = use("../core/exec.sx")
 
 val BASH_TIMEOUT_MS: i64 = 500
 

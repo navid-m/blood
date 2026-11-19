@@ -6,7 +6,7 @@
 /// understand is preserved as a shell statement so the generated script stays
 /// readable and easy to fix up by hand.
 
-val u = use("util.sx")
+val u = use("../core/util.sx")
 
 // ---------------------------------------------------------------------------
 // Small string helpers

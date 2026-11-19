@@ -1,7 +1,7 @@
 /// Tab completion for commands, paths, directories, and variables.
 
-val u      = use("util.sx")
-val cfgmod = use("config.sx")
+val u      = use("../core/util.sx")
+val cfgmod = use("../core/config.sx")
 val app    = use("app_completion.sx")
 
 pub type CompResult = {

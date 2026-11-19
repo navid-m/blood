@@ -1,8 +1,8 @@
 /// Terminal handling, raw mode, and the interactive line editor.
 
-val u       = use("util.sx")
-val cfgmod  = use("config.sx")
-val histmod = use("history.sx")
+val u       = use("../core/util.sx")
+val cfgmod  = use("../core/config.sx")
+val histmod = use("../core/history.sx")
 val comp    = use("completion.sx")
 val rt      = use("std/runtime")
 

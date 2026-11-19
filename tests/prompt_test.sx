@@ -1,6 +1,6 @@
-val u      = use("../src/util.sx")
-val cfg    = use("../src/config.sx")
-val prompt = use("../src/prompt.sx")
+val u      = use("../src/core/util.sx")
+val cfg    = use("../src/core/config.sx")
+val prompt = use("../src/shell/prompt.sx")
 
 fn plain_config() ref cfg.Config = trust {
     val c: mut ref cfg.Config = cfg.default_config()

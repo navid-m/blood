@@ -1,5 +1,5 @@
-val u = use("../src/util.sx")
-val ex = use("../src/exec.sx")
+val u = use("../src/core/util.sx")
+val ex = use("../src/core/exec.sx")
 
 test "status_code decodes wait status values" {
     trust {

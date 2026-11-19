@@ -1,10 +1,10 @@
 /// Interpreter for the Blood scripting language.
 
-val u    = use("util.sx")
+val u    = use("../core/util.sx")
 val lang = use("lang.sx")
-val term = use("terminal.sx")
-val sh   = use("shell.sx")
-val ex   = use("exec.sx")
+val term = use("../shell/terminal.sx")
+val sh   = use("../shell/shell.sx")
+val ex   = use("../core/exec.sx")
 val re   = use("std/regex")
 val rt   = use("std/runtime")
 

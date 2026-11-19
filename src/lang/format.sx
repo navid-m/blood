@@ -1,6 +1,6 @@
 /// Source formatter for Blood scripts.
 
-val u    = use("util.sx")
+val u    = use("../core/util.sx")
 val lang = use("lang.sx")
 
 fn is_alpha(c: u8) bool = trust {

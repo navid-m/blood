@@ -1,4 +1,4 @@
-val u = use("../src/util.sx")
+val u = use("../src/core/util.sx")
 
 fn tmp_root() ref u8 = trust {
     return u.s_dup(c"/tmp/blood-unit-util")

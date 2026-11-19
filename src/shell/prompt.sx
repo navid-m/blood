@@ -1,8 +1,8 @@
 /// Prompt rendering: git discovery, directory formatting, and themed output.
 
-val u      = use("util.sx")
-val cfgmod = use("config.sx")
-val ex     = use("exec.sx")
+val u      = use("../core/util.sx")
+val cfgmod = use("../core/config.sx")
+val ex     = use("../core/exec.sx")
 val rt     = use("std/runtime")
 
 pub type GitInfo = {
