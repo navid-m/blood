@@ -28,10 +28,10 @@ fn lines(path) {
     return len(read_file(path).strip().split("\n"))
 }
 
-total = 0
+var total = 0
 
 for file in glob("src/*.sx") {
-    n = lines(file)
+    var n = lines(file)
     total += n
     say "{file}: {n} lines"
 }
