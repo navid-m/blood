@@ -14,8 +14,6 @@ val loginmod  = use("login.sx")
 val flags     = use("std/flags")
 val env       = use("std/env")
 
-val VERSION: ref u8 = c"0.1.0"
-
 fn arg_at(av: list[ref u8], i: i64) ref u8 = trust {
     val n: i64 = @len(av) as i64
     if i < 0 || i >= n {
@@ -110,7 +108,7 @@ fn banner(c: ref cfgmod.Config) void = trust {
     u.buf_add(b, c.color_primary)
     u.buf_add(b, c"╭─ ")
     u.buf_add(b, c"blood ")
-    u.buf_add(b, VERSION)
+    u.buf_add(b, env.get(c"SPECTRE_MOD_VERSION"))
     u.buf_add(b, c"\x1b[0m")
     u.buf_add(b, c.color_muted)
     u.buf_add(b, c" — type ")
