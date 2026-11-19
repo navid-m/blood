@@ -1,5 +1,5 @@
 entry "./src/main.sx"
-version "v0.1.0"
+version "v0.1.1"
 spectre_version "v0.0.18"
 
 build release {
