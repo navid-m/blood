@@ -1962,9 +1962,6 @@ part of the implemented contract:
 * String length and `ord`/`chr` are byte-oriented. String indexing advances by
   UTF-8 code points only at index boundaries.
 * The line editor counts display width in code points, not terminal cells.
-* The shell does not attempt to free most per-command allocations.
-* The scripting runtime does not collect garbage. Script values persist for the
-  lifetime of the process or until the process exits.
 
 == Examples
 
