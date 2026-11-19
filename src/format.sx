@@ -713,3 +713,55 @@ pub fn format_file(path: ref u8) i32 = trust {
     }
     return 0
 }
+
+fn blood_script(path: ref u8) bool = trust {
+    return u.s_ends_with(path, c".bx") || u.s_ends_with(path, c".blood")
+}
+
+fn skip_dir(name: ref u8) bool = trust {
+    return u.s_eq(name, c".git") || u.s_eq(name, c"node_modules") || u.s_eq(name, c".sxb")
+}
+
+fn format_dir(path: ref u8) i32 = trust {
+    val d: ref void = u.dir_open(path)
+    if d == none {
+        u.write_fd(2, u.s_cat3(c"blood: -fmt: ", path, c": cannot read directory\n"))
+        return 1
+    }
+    val names: mut ref u.Vec = u.vec_new()
+    for {
+        val name: ref u8 = u.dir_next(d)
+        if name == none {
+            break
+        }
+        if u.s_eq(name, c".") || u.s_eq(name, c"..") {
+            continue
+        }
+        u.vec_pushp(names, u.s_dup(name) as ref void)
+    }
+    u.dir_close(d)
+    val rc: mut i32 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= names.len {
+            break
+        }
+        val child: ref u8 = u.path_join(path, u.vec_p(names, i) as ref u8)
+        if u.is_dir(child) {
+            if !skip_dir(u.vec_p(names, i) as ref u8) && format_dir(child) != 0 {
+                rc = 1
+            }
+        } elif blood_script(child) && format_file(child) != 0 {
+            rc = 1
+        }
+        i++
+    }
+    return rc
+}
+
+pub fn format_path(path: ref u8) i32 = trust {
+    if u.is_dir(path) {
+        return format_dir(path)
+    }
+    return format_file(path)
+}

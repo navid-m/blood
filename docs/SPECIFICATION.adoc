@@ -66,9 +66,11 @@ the directory structure relative to the translated directory. The command
 prints one `SOURCE -> TARGET` line per translated file and exits with status 1
 when an input cannot be read or written.
 
-`blood -fmt PATH...` formats Blood scripts in place. It normalises indentation
-to four spaces, places opening braces on the same line as their header,
-removes Allman-style brace lines, aligns consecutive assignments, and prefers
+`blood -fmt PATH...` formats Blood scripts in place. Each `PATH` may be a
+file or a directory. Directories are walked recursively and every `.bx` or
+`.blood` file below them is formatted. The formatter normalises indentation to
+four spaces, places opening braces on the same line as their header, removes
+Allman-style brace lines, aligns consecutive assignments, and prefers
 unparenthesised calls where the arguments are unambiguous. Files that cannot
 be read or written are reported and produce status 1.
 

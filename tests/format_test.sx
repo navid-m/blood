@@ -42,6 +42,24 @@ test "formatter is idempotent" {
     }
 }
 
+test "formatter walks directories and filters Blood scripts" {
+    trust {
+        val dir: ref u8 = c"/tmp/blood-unit-format-dir"
+        val sub: ref u8 = u.path_join(dir, c"nested")
+        assert u.mkdir_p(sub)
+        val one: ref u8 = u.path_join(dir, c"one.bx")
+        val two: ref u8 = u.path_join(sub, c"two.blood")
+        val other: ref u8 = u.path_join(dir, c"keep.txt")
+        assert u.write_file(one, c"if true\n{\n  say(\"one\")\n}\n")
+        assert u.write_file(two, c"if true\n{\n  say(\"two\")\n}\n")
+        assert u.write_file(other, c"if true\n{\n  say(\"keep\")\n}\n")
+        assert format.format_path(dir) == 0
+        assert u.s_eq(u.read_file(one), c"if true {\n    say \"one\"\n}\n")
+        assert u.s_eq(u.read_file(two), c"if true {\n    say \"two\"\n}\n")
+        assert u.s_eq(u.read_file(other), c"if true\n{\n  say(\"keep\")\n}\n")
+    }
+}
+
 test "formatter writes files in place" {
     trust {
         val dir: ref u8 = c"/tmp/blood-unit-format"
