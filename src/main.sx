@@ -10,6 +10,7 @@ val shell   = use("shell.sx")
 val script  = use("script.sx")
 val escape  = use("escape.sx")
 val flags   = use("std/flags")
+val env     = use("std/env")
 
 val VERSION: ref u8 = c"0.1.0"
 
@@ -43,7 +44,12 @@ fn install_hooks() void = trust {
 }
 
 fn print_version() void = trust {
-    u.stdout_ln(u.s_cat3(c"blood ", VERSION, c" (Spectre)"))
+    u.stdout_ln(
+        u.s_cat4(
+            c"blood ",
+            env.get(c"SPECTRE_MOD_VERSION"),
+            " "
+            env.get(c"GIT_HASH")))
 }
 
 fn print_help() void = trust {

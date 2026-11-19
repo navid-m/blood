@@ -1,7 +1,4 @@
 /// Core utilities for Blood: allocation, strings, vectors, maps, files, paths.
-///
-/// The shell deliberately avoids the higher-level allocator abstractions for
-/// hot paths. Everything here is libc-backed and allocation-light.
 
 val allocators = use("std/allocators")
 val rt         = use("std/runtime")
