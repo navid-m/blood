@@ -254,6 +254,23 @@ test "script detects lines that need continuation" {
     }
 }
 
+test "script file exit status stays local to the script" {
+    trust {
+        fresh()
+        val dir: ref u8 = c"/tmp/blood-unit-script/exit"
+        assert u.mkdir_p(dir)
+        val path: ref u8 = u.path_join(dir, c"exits.bx")
+        assert u.write_file(path, c"exit(7)\n")
+        u.script_exit_code = -1
+        assert script.run_file(path) == 7
+        assert u.script_exit_code == -1
+
+        assert script.run_interactive(c"exit(3)\n") == 3
+        assert u.script_exit_code == 3
+        u.script_exit_code = -1
+    }
+}
+
 test "script this builtins return null without a script file" {
     trust {
         fresh()

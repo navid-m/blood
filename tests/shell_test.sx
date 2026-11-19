@@ -279,6 +279,30 @@ test "scan_shell expands globs from the filesystem" {
     }
 }
 
+test "scan_shell expands absolute and wildcard-directory globs" {
+    trust {
+        val root: ref u8 = c"/tmp/blood-unit-shell/glob-abs"
+        assert u.mkdir_p(u.path_join(root, c"one"))
+        assert u.mkdir_p(u.path_join(root, c"two"))
+        assert u.write_file(u.path_join(root, c"one/a.txt"), c"")
+        assert u.write_file(u.path_join(root, c"two/a.txt"), c"")
+        assert u.write_file(u.path_join(root, c"one/b.log"), c"")
+
+        val file_glob: ref u.Vec = sh.scan_shell(u.s_cat(c"echo ", u.s_cat(root, c"/one/*.txt")))
+        assert file_glob.len == 2
+        assert u.s_eq(tok_at(file_glob, 1).text, u.path_join(root, c"one/a.txt"))
+
+        val dir_glob: ref u.Vec = sh.scan_shell(u.s_cat(c"echo ", u.s_cat(root, c"/*/a.txt")))
+        assert dir_glob.len == 3
+        assert u.s_eq(tok_at(dir_glob, 1).text, u.path_join(root, c"one/a.txt"))
+        assert u.s_eq(tok_at(dir_glob, 2).text, u.path_join(root, c"two/a.txt"))
+
+        val nomatch: ref u.Vec = sh.scan_shell(u.s_cat(c"echo ", u.s_cat(root, c"/missing*")))
+        assert nomatch.len == 2
+        assert u.s_eq(tok_at(nomatch, 1).text, u.s_cat(root, c"/missing*"))
+    }
+}
+
 test "run_line dispatches .blood and .bx scripts to the script hook" {
     trust {
         init_shell()

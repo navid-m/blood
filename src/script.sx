@@ -2516,10 +2516,12 @@ pub fn run_file(path: ref u8) i32 = trust {
         script_init()
     }
     val previous: ref u8 = g_script_path
+    val previous_exit: i64 = u.script_exit_code
     g_script_path = resolved
     env_define(g_env, c"__file__", v_str(path))
     val st: i32 = run_text(src, false, path)
     g_script_path = previous
+    u.script_exit_code = previous_exit
     u.scratch_end()
     return st
 }

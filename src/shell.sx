@@ -722,7 +722,7 @@ fn expand_dollar(src: ref u8, at: i64, b: mut ref u.Buf) i64 = trust {
 
 pub fn glob_expand(pattern: ref u8) ref u.Vec = trust {
     val out: mut ref u.Vec = u.vec_new()
-    glob_walk(pattern, 0, out)
+    glob_walk(pattern, 0, c"", out)
     sort_glob(out)
     return out
 }
@@ -750,13 +750,29 @@ fn sort_glob(v: mut ref u.Vec) void = trust {
     }
 }
 
-fn glob_walk(pattern: ref u8, base_end: i64, out: mut ref u.Vec) void = trust {
+fn glob_walk(pattern: ref u8, base_end: i64, dir: ref u8, out: mut ref u.Vec) void = trust {
     val n: i64 = u.s_len(pattern)
-    if base_end > n {
+    val start: mut i64 = base_end
+    val current: mut ref u8 = dir
+    for {
+        if start >= n {
+            break
+        }
+        if @load8(@ptradd(pattern, start)) != 47 {
+            break
+        }
+        if u.s_len(current) == 0 {
+            current = u.s_dup(c"/")
+        } elif @load8(@ptradd(current, u.s_len(current) - 1)) != 47 {
+            current = u.s_cat(current, c"/")
+        }
+        start++
+    }
+    if start >= n {
         return
     }
     val slash: mut i64 = -1
-    val i: mut i64 = base_end
+    val i: mut i64 = start
     for {
         if i >= n {
             break
@@ -768,16 +784,12 @@ fn glob_walk(pattern: ref u8, base_end: i64, out: mut ref u.Vec) void = trust {
         i++
     }
     if slash < 0 {
-        val dirpart: ref u8 = u.s_substr(pattern, 0, base_end)
-        val namepat: ref u8 = u.s_substr(pattern, base_end, n)
-        val dir: mut ref u8 = u.s_dup(c".")
-        if u.s_len(dirpart) > 0 {
-            dir = dirpart
-            if u.s_len(dir) > 1 && @load8(@ptradd(dir, u.s_len(dir) - 1)) == 47 {
-                dir = u.s_substr(dir, 0, u.s_len(dir) - 1)
-            }
+        val namepat: ref u8 = u.s_substr(pattern, start, n)
+        val open_dir: mut ref u8 = current
+        if u.s_len(open_dir) == 0 {
+            open_dir = c"."
         }
-        val d: ref void = u.dir_open(dir)
+        val d: ref void = u.dir_open(open_dir)
         if d == none {
             return
         }
@@ -793,21 +805,19 @@ fn glob_walk(pattern: ref u8, base_end: i64, out: mut ref u.Vec) void = trust {
                 continue
             }
             if wildcard_match(namepat, name) {
-                val full: ref u8 = u.path_join(dirpart, name)
-                u.vec_pushp(out, full)
+                u.vec_pushp(out, u.path_join(current, name))
             }
         }
         u.dir_close(d)
         return
     }
-    val dirpart: ref u8 = u.s_substr(pattern, 0, base_end)
-    val seg: ref u8 = u.s_substr(pattern, base_end, slash)
+    val seg: ref u8 = u.s_substr(pattern, start, slash)
     if has_glob(seg) {
-        val dir: mut ref u8 = u.s_dup(c".")
-        if u.s_len(dirpart) > 0 {
-            dir = dirpart
+        val open_dir: mut ref u8 = current
+        if u.s_len(open_dir) == 0 {
+            open_dir = c"."
         }
-        val d: ref void = u.dir_open(dir)
+        val d: ref void = u.dir_open(open_dir)
         if d == none {
             return
         }
@@ -816,19 +826,20 @@ fn glob_walk(pattern: ref u8, base_end: i64, out: mut ref u.Vec) void = trust {
             if name == none {
                 break
             }
-            if u.s_len(name) == 0 || (u.s_len(name) > 0 && @load8(name) == 46 && !(u.s_len(seg) > 0 && @load8(seg) == 46)) {
+            if u.s_len(name) == 0 {
+                continue
+            }
+            if @load8(name) == 46 && !(u.s_len(seg) > 0 && @load8(seg) == 46) {
                 continue
             }
             if wildcard_match(seg, name) {
-                val nextbase: ref u8 = u.path_join(dirpart, name)
-                glob_walk(pattern, u.s_len(nextbase), out)
+                glob_walk(pattern, slash + 1, u.path_join(current, name), out)
             }
         }
         u.dir_close(d)
         return
     }
-    val nextbase: ref u8 = u.path_join(dirpart, seg)
-    glob_walk(pattern, u.s_len(nextbase), out)
+    glob_walk(pattern, slash + 1, u.path_join(current, seg), out)
 }
 
 pub fn wildcard_match(pat: ref u8, text: ref u8) bool = trust {
