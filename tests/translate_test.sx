@@ -1,0 +1,86 @@
+val tr = use("../src/translate.sx")
+val lang = use("../src/lang.sx")
+val u = use("../src/util.sx")
+
+fn parses(src: ref u8) bool = trust {
+    lang.clear_error()
+    lang.parse(src)
+    return lang.last_error() == none
+}
+
+fn has(hay: ref u8, needle: ref u8) bool = trust {
+    return u.s_contains(hay, needle)
+}
+
+test "translator rewrites variables, tests, loops and functions" {
+    trust {
+        val src: ref u8 = c"#!/bin/bash\nGREETING=\"hello\"\nname=world\necho \"$GREETING $name\"\nif [ -f /etc/passwd ]; then\n  echo yes\nelse\n  echo no\nfi\nfor f in *.txt; do\n  echo \"file: $f\"\ndone\ncount=0\nwhile [ $count -lt 2 ]; do\n  count=$((count + 1))\ndone\ngreet() {\n  local who=$1\n  echo \"hi $who\"\n}\ngreet alice\n"
+        val out: ref u8 = tr.translate_text(src)
+        assert has(out, c"#!/usr/bin/env blood")
+        assert has(out, c"GREETING = \"hello\"")
+        assert has(out, c"say \"{__bx_s(GREETING)} {__bx_s(name)}\"")
+        assert has(out, c"test -f")
+        assert has(out, c"for f in glob(\"*.txt\")")
+        assert has(out, c"while int(count) < int(2)")
+        assert has(out, c"fn greet(")
+        assert has(out, c"greet(\"alice\")")
+        assert parses(out)
+    }
+}
+
+test "translator handles case, until, c-style for, arrays and read" {
+    trust {
+        val src: ref u8 = c"arr=(one two)\ncase \"$1\" in\n  start) echo go ;;\n  stop|halt) echo stop ;;\n  *.txt) echo text ;;\n  *) echo other ;;\nesac\nuntil [ \"$state\" = done ]; do\n  state=done\ndone\nfor ((i = 0; i < 3; i++)); do\n  echo $i\ndone\nread -r answer\necho \"$answer ${arr[0]} ${#arr[@]}\"\n"
+        val out: ref u8 = tr.translate_text(src)
+        assert has(out, c"elif")
+        assert has(out, c"arr = [\"one\", \"two\"]")
+        assert has(out, c"while not (")
+        assert has(out, c"while i < 3")
+        assert has(out, c"i += 1")
+        assert has(out, c"answer = input(\"\")")
+        assert has(out, c"len(arr)")
+        assert parses(out)
+    }
+}
+
+test "translator keeps unsupported constructs as comments or shell statements" {
+    trust {
+        val src: ref u8 = c"set -euo pipefail\ntrap cleanup EXIT\ncat /tmp/example\nexport PATH=\"$PATH:/opt/bin\"\n"
+        val out: ref u8 = tr.translate_text(src)
+        assert has(out, c"bash option not translated")
+        assert has(out, c"bash trap not translated")
+        assert has(out, c"status = shell(\"cat /tmp/example\")")
+        assert has(out, c"shell(\"export \" + \"PATH\"")
+        assert parses(out)
+    }
+}
+
+test "translator writes files and mirrors directories" {
+    trust {
+        val root: ref u8 = c"/tmp/blood-unit-translate"
+        val outdir: ref u8 = c"/tmp/blood-unit-translate-out"
+        assert u.mkdir_p(root)
+        assert u.write_file(u.path_join(root, c"one.sh"), c"echo one\n")
+        assert u.write_file(u.path_join(root, c"keep.txt"), c"ignored\n")
+        val sub: ref u8 = u.path_join(root, c"sub")
+        assert u.mkdir_p(sub)
+        assert u.write_file(u.path_join(sub, c"two.sh"), c"echo two\n")
+
+        assert tr.translate_path(root, outdir) == 0
+        assert u.file_exists(u.path_join(outdir, c"one.bx"))
+        assert u.file_exists(u.path_join(outdir, c"sub/two.bx"))
+        assert !u.file_exists(u.path_join(outdir, c"keep.bx"))
+
+        val text: ref u8 = u.read_file(u.path_join(outdir, c"sub/two.bx"))
+        assert u.s_contains(text, c"say \"two\"")
+        assert parses(text)
+    }
+}
+
+test "output_name replaces bash extensions" {
+    trust {
+        assert u.s_eq(tr.output_name(c"/tmp/x.sh"), c"/tmp/x.bx")
+        assert u.s_eq(tr.output_name(c"/tmp/x.bash"), c"/tmp/x.bx")
+        assert u.s_eq(tr.output_name(c"/tmp/x"), c"/tmp/x.bx")
+    }
+}

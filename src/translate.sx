@@ -1,0 +1,3282 @@
+/// Bash to Blood (.bx) translation.
+///
+/// The translator is intentionally source-to-source and conservative: it
+/// rewrites the constructs that have a direct Blood equivalent and leaves
+/// ordinary outer commands as shell statements. Anything it does not
+/// understand is preserved as a shell statement so the generated script stays
+/// readable and easy to fix up by hand.
+
+val u = use("util.sx")
+
+// ---------------------------------------------------------------------------
+// Small string helpers
+// ---------------------------------------------------------------------------
+
+fn ch_at(s: ref u8, i: i64) u8 = trust {
+    return @load8(@ptradd(s, i))
+}
+
+fn is_space(c: u8) bool = trust {
+    return c == 32 || c == 9 || c == 10 || c == 13
+}
+
+fn is_digit(c: u8) bool = trust {
+    return c >= 48 && c <= 57
+}
+
+fn is_ident_start(c: u8) bool = trust {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn is_ident_char(c: u8) bool = trust {
+    return is_ident_start(c) || is_digit(c)
+}
+
+fn is_ident(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    if n == 0 {
+        return false
+    }
+    if !is_ident_start(ch_at(s, 0)) {
+        return false
+    }
+    val i: mut i64 = 1
+    for {
+        if i >= n {
+            break
+        }
+        if !is_ident_char(ch_at(s, i)) {
+            return false
+        }
+        i++
+    }
+    return true
+}
+
+fn skip_ws(s: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val j: mut i64 = i
+    for {
+        if j >= n {
+            break
+        }
+        if !is_space(ch_at(s, j)) {
+            break
+        }
+        j++
+    }
+    return j
+}
+
+fn strip_suffix(s: ref u8, suffix: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(s)
+    val m: i64 = u.s_len(suffix)
+    if m > n {
+        return s
+    }
+    if u.s_eq(u.s_substr(s, n - m, n), suffix) {
+        return u.s_substr(s, 0, n - m)
+    }
+    return s
+}
+
+fn sp(n: i64) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        u.buf_ch(b, 32)
+        i++
+    }
+    return u.buf_take(b)
+}
+
+fn vec_pop_int(v: mut ref u.Vec) i64 = trust {
+    if v.len == 0 {
+        return 0
+    }
+    v.len = v.len - 1
+    return u.vec_gets(v, v.len)
+}
+
+fn vec_pop_ptr(v: mut ref u.Vec) ref void = trust {
+    if v.len == 0 {
+        return none
+    }
+    v.len = v.len - 1
+    return u.vec_p(v, v.len)
+}
+
+// ---------------------------------------------------------------------------
+// Translator state
+// ---------------------------------------------------------------------------
+
+type CaseCtx = {
+    expr: mut ref u8
+    count: mut i64
+    open: mut i64
+}
+
+type Tr = {
+    out: mut ref u.Buf
+    depth: mut i64
+    kinds: mut ref u.Vec
+    steps: mut ref u.Vec
+    cases: mut ref u.Vec
+    assigned: mut ref u.Map
+    seeds: mut ref u.Vec
+    funcs: mut ref u.Map
+    helpers: mut ref u.Map
+    in_func: mut i64
+    skip_lbrace: mut i64
+}
+
+fn tr_new() ref Tr = trust {
+    val t: mut ref Tr = u.xalloc(@sizeof(Tr) as i64) as ref Tr
+    t.out = u.buf_new()
+    t.depth = 0
+    t.kinds = u.vec_new()
+    t.steps = u.vec_new()
+    t.cases = u.vec_new()
+    t.assigned = u.map_new()
+    t.seeds = u.vec_new()
+    t.funcs = u.map_new()
+    t.helpers = u.map_new()
+    t.in_func = 0
+    t.skip_lbrace = 0
+    return t
+}
+
+fn use_helper(t: mut ref Tr, name: ref u8) void = trust {
+    u.map_put(t.helpers, name, 1)
+    if u.s_eq(name, c"__bx_quote") || u.s_eq(name, c"__bx_num") || u.s_eq(name, c"__bx_glob") {
+        u.map_put(t.helpers, c"__bx_s", 1)
+    }
+    if u.s_eq(name, c"__bx_sync_args") {
+        u.map_put(t.helpers, c"__bx_quote", 1)
+        u.map_put(t.helpers, c"__bx_argc", 1)
+        u.map_put(t.helpers, c"__bx_s", 1)
+    }
+}
+
+fn emit(t: mut ref Tr, text: ref u8) void = trust {
+    u.buf_add(t.out, sp(t.depth * 4))
+    u.buf_add(t.out, text)
+    u.buf_ch(t.out, 10)
+}
+
+fn emit_blank(t: mut ref Tr) void = trust {
+    u.buf_ch(t.out, 10)
+}
+
+fn emit_comment(t: mut ref Tr, text: ref u8) void = trust {
+    emit(t, u.s_cat(c"# ", u.s_trim(text)))
+}
+
+fn push_block(t: mut ref Tr, kind: i64, step: ref u8) void = trust {
+    u.vec_push(t.kinds, kind)
+    if step == none {
+        u.vec_pushp(t.steps, c"" as ref void)
+    } else {
+        u.vec_pushp(t.steps, step as ref void)
+    }
+    t.depth++
+}
+
+fn open_block(t: mut ref Tr, header: ref u8, kind: i64, step: ref u8) void = trust {
+    emit(t, u.s_cat(header, c" {"))
+    push_block(t, kind, step)
+}
+
+fn close_block(t: mut ref Tr) void = trust {
+    val kind: i64 = vec_pop_int(t.kinds)
+    val step: ref u8 = vec_pop_ptr(t.steps) as ref u8
+    if kind == 3 && step != none && u.s_len(step) > 0 {
+        emit(t, step)
+    }
+    if t.depth > 0 {
+        t.depth--
+    }
+    emit(t, c"}")
+    if kind == 5 {
+        t.in_func = 0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Literal and expression helpers
+// ---------------------------------------------------------------------------
+
+fn quote_plain(s: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 34)
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(s, i)
+        if c == 92 {
+            u.buf_add(b, c"\\\\")
+        } elif c == 34 {
+            u.buf_add(b, c"\\\"")
+        } elif c == 10 {
+            u.buf_add(b, c"\\n")
+        } elif c == 9 {
+            u.buf_add(b, c"\\t")
+        } elif c == 13 {
+            u.buf_add(b, c"\\r")
+        } elif c == 123 {
+            u.buf_add(b, c"{{")
+        } elif c == 125 {
+            u.buf_add(b, c"}}")
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+    u.buf_ch(b, 34)
+    return u.buf_take(b)
+}
+
+/// Quote a literal with single quotes. This form is safe to nest inside a
+/// Blood interpolation field, where a nested double quote would terminate the
+/// outer string.
+fn quote_sq(s: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 39)
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 92 {
+            u.buf_add(b, c"\\\\")
+        } elif c == 39 {
+            u.buf_add(b, c"\\'")
+        } elif c == 10 {
+            u.buf_add(b, c"\\n")
+        } elif c == 9 {
+            u.buf_add(b, c"\\t")
+        } elif c == 13 {
+            u.buf_add(b, c"\\r")
+        } elif c == 123 {
+            u.buf_add(b, c"{{")
+        } elif c == 125 {
+            u.buf_add(b, c"}}")
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+    u.buf_ch(b, 39)
+    return u.buf_take(b)
+}
+
+fn is_assigned(t: mut ref Tr, name: ref u8) bool = trust {
+    return u.map_has(t.assigned, name)
+}
+
+fn var_expr(t: mut ref Tr, name: ref u8) ref u8 = trust {
+    if u.s_eq(name, c"?") {
+        return u.s_dup(c"status")
+    }
+    if u.s_eq(name, c"#") {
+        if t.in_func != 0 {
+            use_helper(t, c"__bx_argc")
+            return u.s_dup(c"__bx_argc(__arg1, __arg2, __arg3, __arg4, __arg5, __arg6, __arg7, __arg8, __arg9)")
+        }
+        return u.s_dup(c"len(args)")
+    }
+    if u.s_eq(name, c"@") || u.s_eq(name, c"*") {
+        if t.in_func != 0 {
+            use_helper(t, c"__bx_args")
+            return u.s_dup(c"__bx_args(__arg1, __arg2, __arg3, __arg4, __arg5, __arg6, __arg7, __arg8, __arg9)")
+        }
+        return u.s_dup(c"args")
+    }
+    if u.s_eq(name, c"0") {
+        return u.s_dup(c"__file__")
+    }
+    if u.s_len(name) == 1 && ch_at(name, 0) >= 49 && ch_at(name, 0) <= 57 {
+        val idx: i64 = (ch_at(name, 0) - 48) as i64
+        if t.in_func != 0 {
+            use_helper(t, c"__bx_s")
+            return u.s_cat3(c"__bx_s(__arg", u.s_int(idx), c")")
+        }
+        use_helper(t, c"__bx_s")
+        return u.s_cat3(c"__bx_s(args[", u.s_int(idx - 1), c"])")
+    }
+    if is_assigned(t, name) {
+        return u.s_dup(name)
+    }
+    use_helper(t, c"__bx_s")
+    return u.s_cat3(c"__bx_s(env(", quote_sq(name), c"))")
+}
+
+fn stringify(t: mut ref Tr, e: ref u8) ref u8 = trust {
+    if u.s_starts(e, c"__bx_s(") {
+        return e
+    }
+    use_helper(t, c"__bx_s")
+    return u.s_cat3(c"__bx_s(", e, c")")
+}
+
+fn var_interp(t: mut ref Tr, name: ref u8) ref u8 = trust {
+    return stringify(t, var_expr(t, name))
+}
+
+fn capture_expr(inner: ref u8) ref u8 = trust {
+    return u.s_cat3(c"capture(", quote_sq(inner), c")")
+}
+
+/// Find the end (exclusive) of a `$(` command substitution starting at `i`.
+fn skip_paren_expr(s: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val depth: mut i64 = 1
+    val j: mut i64 = i
+    for {
+        if j >= n {
+            return n
+        }
+        val c: u8 = ch_at(s, j)
+        if c == 39 {
+            j++
+            for {
+                if j >= n {
+                    return n
+                }
+                if ch_at(s, j) == 39 {
+                    j++
+                    break
+                }
+                j++
+            }
+            continue
+        }
+        if c == 34 {
+            j++
+            for {
+                if j >= n {
+                    return n
+                }
+                if ch_at(s, j) == 92 {
+                    j += 2
+                    continue
+                }
+                if ch_at(s, j) == 34 {
+                    j++
+                    break
+                }
+                j++
+            }
+            continue
+        }
+        if c == 92 {
+            j += 2
+            continue
+        }
+        if c == 40 {
+            depth++
+        } elif c == 41 {
+            depth--
+            if depth == 0 {
+                return j
+            }
+        }
+        j++
+    }
+    return n
+}
+
+fn skip_brace_expr(s: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val j: mut i64 = i
+    for {
+        if j >= n {
+            return n
+        }
+        if ch_at(s, j) == 125 {
+            return j
+        }
+        j++
+    }
+    return n
+}
+
+fn read_ident_at(s: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val j: mut i64 = i
+    for {
+        if j >= n {
+            break
+        }
+        if !is_ident_char(ch_at(s, j)) {
+            break
+        }
+        j++
+    }
+    return j
+}
+
+fn conv_default_expr(t: mut ref Tr, raw: ref u8) ref u8 = trust {
+    val s: ref u8 = u.s_trim(raw)
+    if u.s_len(s) == 0 {
+        return quote_sq(c"")
+    }
+    if ch_at(s, 0) == 36 {
+        return conv_expr(t, s)
+    }
+    return quote_sq(strip_quotes(s))
+}
+
+/// Translate `${...}`. Returns the expression text.
+fn brace_expr(t: mut ref Tr, body: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(body)
+    if n == 0 {
+        return u.s_dup(c"\"\"")
+    }
+    if ch_at(body, 0) == 35 {
+        val name: ref u8 = u.s_substr(body, 1, n)
+        if u.s_ends_with(name, c"[@]") || u.s_ends_with(name, c"[*]") {
+            return u.s_cat3(c"len(", var_expr(t, u.s_substr(name, 0, u.s_len(name) - 3)), c")")
+        }
+        use_helper(t, c"__bx_s")
+        return u.s_cat3(c"len(", stringify(t, var_expr(t, name)), c")")
+    }
+    val sep: i64 = u.s_find(body, c":-")
+    if sep >= 0 {
+        val name: ref u8 = u.s_substr(body, 0, sep)
+        val fallback: ref u8 = conv_default_expr(t, u.s_substr(body, sep + 2, n))
+        use_helper(t, c"__bx_default")
+        return u.s_cat3(c"__bx_default(", var_expr(t, name), u.s_cat(c", ", u.s_cat(fallback, c")")))
+    }
+    val sep2: i64 = u.s_find(body, c":=")
+    if sep2 >= 0 {
+        val name: ref u8 = u.s_substr(body, 0, sep2)
+        val fallback: ref u8 = conv_default_expr(t, u.s_substr(body, sep2 + 2, n))
+        use_helper(t, c"__bx_default")
+        return u.s_cat3(c"__bx_default(", var_expr(t, name), u.s_cat(c", ", u.s_cat(fallback, c")")))
+    }
+    if u.s_ends_with(body, c"[@]") || u.s_ends_with(body, c"[*]") {
+        val name: ref u8 = u.s_substr(body, 0, n - 3)
+        if is_assigned(t, name) {
+            return u.s_dup(name)
+        }
+        return var_expr(t, name)
+    }
+    if u.s_ends_with(body, c"[0]") {
+        val name: ref u8 = u.s_substr(body, 0, n - 3)
+        return u.s_cat(name, c"[0]")
+    }
+    // Strip simple modifiers that Blood does not have and fall back to the
+    // variable itself. This keeps the output runnable even for less common
+    // expansions such as `${name%.*}`.
+    val cut: mut i64 = n
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(body, i)
+        if c == 58 || c == 37 || c == 35 || c == 47 || c == 94 || c == 44 {
+            cut = i
+            break
+        }
+        i++
+    }
+    val name: ref u8 = u.s_substr(body, 0, cut)
+    if u.s_len(name) == 0 {
+        return u.s_dup(c"\"\"")
+    }
+    return var_expr(t, name)
+}
+
+fn conv_arith(t: mut ref Tr, src: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(src, i)
+        if c == 36 {
+            if i + 1 < n && ch_at(src, i + 1) == 123 {
+                val close: i64 = skip_brace_expr(src, i + 2)
+                u.buf_add(b, brace_expr(t, u.s_substr(src, i + 2, close)))
+                i = close + 1
+                continue
+            }
+            val e: i64 = read_ident_at(src, i + 1)
+            if e > i + 1 {
+                u.buf_add(b, var_expr(t, u.s_substr(src, i + 1, e)))
+                i = e
+                continue
+            }
+        }
+        if is_ident_start(c) {
+            val e: i64 = read_ident_at(src, i)
+            val name: ref u8 = u.s_substr(src, i, e)
+            if u.s_eq(name, c"true") || u.s_eq(name, c"false") || u.s_eq(name, c"null") {
+                u.buf_add(b, name)
+            } elif is_assigned(t, name) {
+                u.buf_add(b, name)
+            } else {
+                use_helper(t, c"__bx_s")
+                use_helper(t, c"__bx_num")
+                u.buf_add(b, u.s_cat3(c"__bx_num(env(", quote_sq(name), c"))"))
+            }
+            i = e
+            continue
+        }
+        if c == 38 && i + 1 < n && ch_at(src, i + 1) == 38 {
+            u.buf_add(b, c" and ")
+            i += 2
+            continue
+        }
+        if c == 124 && i + 1 < n && ch_at(src, i + 1) == 124 {
+            u.buf_add(b, c" or ")
+            i += 2
+            continue
+        }
+        if c == 33 {
+            u.buf_add(b, c"not ")
+            i++
+            continue
+        }
+        u.buf_ch(b, c)
+        i++
+    }
+    return u.buf_take(b)
+}
+
+/// Translate an interpolating string body (without surrounding quotes).
+fn conv_interp(t: mut ref Tr, src: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(src, i)
+        if c == 92 {
+            if i + 1 < n {
+                val d: u8 = ch_at(src, i + 1)
+                if d == 34 || d == 92 || d == 36 || d == 96 {
+                    u.buf_ch(b, d)
+                } else {
+                    u.buf_ch(b, 92)
+                    u.buf_ch(b, d)
+                }
+                i += 2
+                continue
+            }
+            u.buf_add(b, c"\\\\")
+            i++
+            continue
+        }
+        if c == 34 {
+            u.buf_add(b, c"\\\"")
+            i++
+            continue
+        }
+        if c == 123 {
+            u.buf_add(b, c"{{")
+            i++
+            continue
+        }
+        if c == 125 {
+            u.buf_add(b, c"}}")
+            i++
+            continue
+        }
+        if c == 10 {
+            u.buf_add(b, c"\\n")
+            i++
+            continue
+        }
+        if c == 9 {
+            u.buf_add(b, c"\\t")
+            i++
+            continue
+        }
+        if c == 36 {
+            if i + 1 < n && ch_at(src, i + 1) == 40 {
+                if i + 2 < n && ch_at(src, i + 2) == 40 {
+                    val close: i64 = skip_paren_expr(src, i + 3)
+                    u.buf_add(b, c"{")
+                    u.buf_add(b, conv_arith(t, u.s_substr(src, i + 3, close - 1)))
+                    u.buf_add(b, c"}")
+                    i = close + 1
+                    continue
+                }
+                val close: i64 = skip_paren_expr(src, i + 2)
+                u.buf_add(b, c"{")
+                u.buf_add(b, capture_expr(u.s_substr(src, i + 2, close)))
+                u.buf_add(b, c"}")
+                i = close + 1
+                continue
+            }
+            if i + 1 < n && ch_at(src, i + 1) == 123 {
+                val close: i64 = skip_brace_expr(src, i + 2)
+                u.buf_add(b, c"{")
+                u.buf_add(b, brace_expr(t, u.s_substr(src, i + 2, close)))
+                u.buf_add(b, c"}")
+                i = close + 1
+                continue
+            }
+            if i + 1 < n {
+                val d: u8 = ch_at(src, i + 1)
+                if d == 63 || d == 36 || d == 33 || d == 35 || d == 48 {
+                    u.buf_add(b, c"{")
+                    u.buf_add(b, var_interp(t, u.s_ndup(@ptradd(src, i + 1), 1)))
+                    u.buf_add(b, c"}")
+                    i += 2
+                    continue
+                }
+                if d == 64 || d == 42 {
+                    u.buf_add(b, c"{")
+                    u.buf_add(b, var_interp(t, u.s_ndup(@ptradd(src, i + 1), 1)))
+                    u.buf_add(b, c"}")
+                    i += 2
+                    continue
+                }
+                if is_ident_start(d) {
+                    val e: i64 = read_ident_at(src, i + 1)
+                    val name: ref u8 = u.s_substr(src, i + 1, e)
+                    u.buf_add(b, c"{")
+                    u.buf_add(b, var_interp(t, name))
+                    u.buf_add(b, c"}")
+                    i = e
+                    continue
+                }
+                if d == 40 {
+                    // handled above
+                }
+                if is_digit(d) {
+                    u.buf_add(b, c"{")
+                    u.buf_add(b, var_interp(t, u.s_ndup(@ptradd(src, i + 1), 1)))
+                    u.buf_add(b, c"}")
+                    i += 2
+                    continue
+                }
+            }
+            u.buf_ch(b, c)
+            i++
+            continue
+        }
+        if c == 96 {
+            val close: i64 = skip_backtick(src, i + 1)
+            u.buf_add(b, c"{")
+            u.buf_add(b, capture_expr(u.s_substr(src, i + 1, close)))
+            u.buf_add(b, c"}")
+            i = close + 1
+            continue
+        }
+        u.buf_ch(b, c)
+        i++
+    }
+    return u.s_cat3(c"\"", u.buf_take(b), c"\"")
+}
+
+fn skip_backtick(s: ref u8, i: i64) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val j: mut i64 = i
+    for {
+        if j >= n {
+            return n
+        }
+        if ch_at(s, j) == 92 {
+            j += 2
+            continue
+        }
+        if ch_at(s, j) == 96 {
+            return j
+        }
+        j++
+    }
+    return n
+}
+
+fn unquote_single(raw: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(raw)
+    if n >= 2 && ch_at(raw, 0) == 39 && ch_at(raw, n - 1) == 39 {
+        return quote_plain(u.s_substr(raw, 1, n - 1))
+    }
+    return quote_plain(raw)
+}
+
+fn unquote_double(t: mut ref Tr, raw: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(raw)
+    if n >= 2 && ch_at(raw, 0) == 34 && ch_at(raw, n - 1) == 34 {
+        return conv_interp(t, u.s_substr(raw, 1, n - 1))
+    }
+    return conv_interp(t, raw)
+}
+
+fn single_expansion(t: mut ref Tr, body: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(body)
+    if n < 2 || ch_at(body, 0) != 36 {
+        return none
+    }
+    if ch_at(body, 1) == 123 {
+        val close: i64 = skip_brace_expr(body, 2)
+        if close == n - 1 {
+            return brace_expr(t, u.s_substr(body, 2, close))
+        }
+        return none
+    }
+    if ch_at(body, 1) == 40 {
+        val close: i64 = skip_paren_expr(body, 2)
+        if close == n - 1 {
+            return capture_expr(u.s_substr(body, 2, close))
+        }
+        return none
+    }
+    if n == 2 && is_digit(ch_at(body, 1)) {
+        return var_expr(t, u.s_substr(body, 1, 2))
+    }
+    val e: i64 = read_ident_at(body, 1)
+    if e == n && e > 1 {
+        return var_expr(t, u.s_substr(body, 1, e))
+    }
+    return none
+}
+
+/// Translate a single bash word/expression to a Blood expression.
+fn conv_expr(t: mut ref Tr, raw: ref u8) ref u8 = trust {
+    val s: ref u8 = u.s_trim(raw)
+    val n: i64 = u.s_len(s)
+    if n == 0 {
+        return u.s_dup(c"\"\"")
+    }
+    if ch_at(s, 0) == 39 && ch_at(s, n - 1) == 39 {
+        return unquote_single(s)
+    }
+    if ch_at(s, 0) == 34 && ch_at(s, n - 1) == 34 {
+        val ex: ref u8 = single_expansion(t, u.s_substr(s, 1, n - 1))
+        if ex != none {
+            return ex
+        }
+        return unquote_double(t, s)
+    }
+    if n >= 4 && u.s_starts(s, c"$((") && u.s_ends_with(s, c"))") {
+        return conv_arith(t, u.s_substr(s, 3, n - 2))
+    }
+    if n >= 3 && u.s_starts(s, c"$(") && ch_at(s, n - 1) == 41 {
+        return capture_expr(u.s_substr(s, 2, n - 1))
+    }
+    if ch_at(s, 0) == 96 && ch_at(s, n - 1) == 96 {
+        return capture_expr(u.s_substr(s, 1, n - 1))
+    }
+    if u.s_starts(s, c"$(") {
+        val close: i64 = skip_paren_expr(s, 2)
+        return capture_expr(u.s_substr(s, 2, close))
+    }
+    if ch_at(s, 0) == 36 {
+        if n > 1 && ch_at(s, 1) == 123 {
+            val close: i64 = skip_brace_expr(s, 2)
+            return brace_expr(t, u.s_substr(s, 2, close))
+        }
+        val e: i64 = read_ident_at(s, 1)
+        if e > 1 {
+            return var_expr(t, u.s_substr(s, 1, e))
+        }
+        return var_expr(t, u.s_substr(s, 1, 2))
+    }
+    if n == 4 && u.s_eq(s, c"null") {
+        return u.s_dup(c"null")
+    }
+    if n == 4 && u.s_eq(s, c"true") {
+        return u.s_dup(c"true")
+    }
+    if n == 5 && u.s_eq(s, c"false") {
+        return u.s_dup(c"false")
+    }
+    if is_numeric(s) {
+        return u.s_dup(s)
+    }
+    return conv_interp(t, s)
+}
+
+fn is_numeric(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    if n == 0 {
+        return false
+    }
+    val i: mut i64 = 0
+    if ch_at(s, 0) == 45 || ch_at(s, 0) == 43 {
+        if n == 1 {
+            return false
+        }
+        i = 1
+    }
+    val dots: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(s, i)
+        if c == 46 {
+            dots++
+            if dots > 1 {
+                return false
+            }
+        } elif !is_digit(c) {
+            return false
+        }
+        i++
+    }
+    return true
+}
+
+// ---------------------------------------------------------------------------
+// Word splitting
+// ---------------------------------------------------------------------------
+
+type Word = {
+    raw: mut ref u8
+    kind: mut i64
+}
+
+fn split_words(src: ref u8) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    for {
+        i = skip_ws(src, i)
+        if i >= n {
+            break
+        }
+        val start: i64 = i
+        val c: u8 = ch_at(src, i)
+        if c == 39 {
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                if ch_at(src, i) == 39 {
+                    i++
+                    break
+                }
+                i++
+            }
+        } elif c == 34 {
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                val d: u8 = ch_at(src, i)
+                if d == 92 {
+                    i += 2
+                    continue
+                }
+                if d == 34 {
+                    i++
+                    break
+                }
+                i++
+            }
+        } else {
+            for {
+                if i >= n {
+                    break
+                }
+                val d: u8 = ch_at(src, i)
+                if is_space(d) {
+                    break
+                }
+                if d == 39 || d == 34 {
+                    val q: u8 = d
+                    i++
+                    for {
+                        if i >= n {
+                            break
+                        }
+                        if ch_at(src, i) == q {
+                            i++
+                            break
+                        }
+                        i++
+                    }
+                    continue
+                }
+                if d == 92 {
+                    i += 2
+                    continue
+                }
+                if d == 36 && i + 1 < n && ch_at(src, i + 1) == 40 {
+                    i = skip_paren_expr(src, i + 2)
+                    continue
+                }
+                i++
+            }
+        }
+        val w: mut ref Word = u.xalloc(@sizeof(Word) as i64) as ref Word
+        w.raw = u.s_substr(src, start, i)
+        if ch_at(w.raw, 0) == 39 {
+            w.kind = 1
+        } elif ch_at(w.raw, 0) == 34 {
+            w.kind = 2
+        } else {
+            w.kind = 0
+        }
+        u.vec_pushp(out, w as ref void)
+    }
+    return out
+}
+
+fn has_glob_chars(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(s, i)
+        if c == 42 || c == 63 || c == 91 {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn conv_word_expr(t: mut ref Tr, w: ref Word, for_list: bool) ref u8 = trust {
+    val raw: ref u8 = w.raw
+    if w.kind == 1 {
+        return unquote_single(raw)
+    }
+    if w.kind == 2 {
+        return unquote_double(t, raw)
+    }
+    if u.s_eq(raw, c"$@") || u.s_eq(raw, c"$*") {
+        return var_expr(t, c"@")
+    }
+    if u.s_starts(raw, c"$") || u.s_starts(raw, c"$((") {
+        val ex: ref u8 = conv_expr(t, raw)
+        if for_list && u.s_starts(raw, c"$(") && !u.s_starts(raw, c"$((") {
+            // Command substitution in a for list is traditionally split on
+            // whitespace. Use newline splitting, which covers the common case.
+            return u.s_cat(ex, c".split(\"\\n\")")
+        }
+        return ex
+    }
+    if for_list && has_glob_chars(raw) {
+        return u.s_cat3(c"glob(", quote_plain(raw), c")")
+    }
+    if is_numeric(raw) {
+        return u.s_dup(raw)
+    }
+    return conv_interp(t, raw)
+}
+
+// ---------------------------------------------------------------------------
+// Test expressions
+// ---------------------------------------------------------------------------
+
+type Tok = {
+    text: mut ref u8
+    kind: mut i64
+}
+
+type TP = {
+    toks: mut ref u.Vec
+    pos: mut i64
+    tr: mut ref Tr
+}
+
+fn test_tokens(src: ref u8) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    for {
+        i = skip_ws(src, i)
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(src, i)
+        if c == 40 || c == 41 {
+            val t: mut ref Tok = u.xalloc(@sizeof(Tok) as i64) as ref Tok
+            t.text = u.s_ndup(@ptradd(src, i), 1)
+            t.kind = 0
+            u.vec_pushp(out, t as ref void)
+            i++
+            continue
+        }
+        if c == 39 || c == 34 {
+            val q: u8 = c
+            val start: i64 = i
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                val d: u8 = ch_at(src, i)
+                if q == 34 && d == 92 {
+                    i += 2
+                    continue
+                }
+                if d == q {
+                    i++
+                    break
+                }
+                i++
+            }
+            val t: mut ref Tok = u.xalloc(@sizeof(Tok) as i64) as ref Tok
+            t.text = u.s_substr(src, start, i)
+            t.kind = 1
+            if q == 34 {
+                t.kind = 2
+            }
+            u.vec_pushp(out, t as ref void)
+            continue
+        }
+        if c == 33 && (i + 1 >= n || is_space(ch_at(src, i + 1))) {
+            val t: mut ref Tok = u.xalloc(@sizeof(Tok) as i64) as ref Tok
+            t.text = u.s_dup(c"!")
+            t.kind = 0
+            u.vec_pushp(out, t as ref void)
+            i++
+            continue
+        }
+        if c == 38 && i + 1 < n && ch_at(src, i + 1) == 38 {
+            val t: mut ref Tok = u.xalloc(@sizeof(Tok) as i64) as ref Tok
+            t.text = u.s_dup(c"&&")
+            t.kind = 0
+            u.vec_pushp(out, t as ref void)
+            i += 2
+            continue
+        }
+        if c == 124 && i + 1 < n && ch_at(src, i + 1) == 124 {
+            val t: mut ref Tok = u.xalloc(@sizeof(Tok) as i64) as ref Tok
+            t.text = u.s_dup(c"||")
+            t.kind = 0
+            u.vec_pushp(out, t as ref void)
+            i += 2
+            continue
+        }
+        val start: i64 = i
+        for {
+            if i >= n {
+                break
+            }
+            val d: u8 = ch_at(src, i)
+            if is_space(d) || d == 40 || d == 41 {
+                break
+            }
+            if d == 36 && i + 1 < n && ch_at(src, i + 1) == 40 {
+                i = skip_paren_expr(src, i + 2)
+                continue
+            }
+            if d == 92 {
+                i += 2
+                continue
+            }
+            i++
+        }
+        val t: mut ref Tok = u.xalloc(@sizeof(Tok) as i64) as ref Tok
+        t.text = u.s_substr(src, start, i)
+        t.kind = 0
+        u.vec_pushp(out, t as ref void)
+    }
+    return out
+}
+
+fn tok_at(p: mut ref TP) ref Tok = trust {
+    if p.pos >= p.toks.len {
+        return none
+    }
+    return u.vec_p(p.toks, p.pos) as ref Tok
+}
+
+fn tok_text(p: mut ref TP) ref u8 = trust {
+    val t: ref Tok = tok_at(p)
+    if t == none {
+        return c""
+    }
+    return t.text
+}
+
+fn tk_is(p: mut ref TP, s: ref u8) bool = trust {
+    val t: ref Tok = tok_at(p)
+    if t == none {
+        return false
+    }
+    if t.kind != 0 {
+        return false
+    }
+    return u.s_eq(t.text, s)
+}
+
+fn next_tok(p: mut ref TP) ref u8 = trust {
+    val t: ref Tok = tok_at(p)
+    if t == none {
+        return c""
+    }
+    p.pos++
+    return t.text
+}
+
+fn unary_file_test(t: mut ref Tr, op: ref u8, operand: ref u8) ref u8 = trust {
+    use_helper(t, c"__bx_quote")
+    val flag: mut ref u8 = op
+    if u.s_eq(op, c"-h") {
+        flag = c"-L"
+    }
+    return u.s_cat3(c"shell(\"test ", flag, u.s_cat3(c" \" + __bx_quote(", operand, c")) == 0"))
+}
+
+fn pattern_match_expr(t: mut ref Tr, lhs: ref u8, pat: ref u8, negate: bool) ref u8 = trust {
+    val n: i64 = u.s_len(pat)
+    val starts_star: bool = n > 0 && ch_at(pat, 0) == 42
+    val ends_star: bool = n > 0 && ch_at(pat, n - 1) == 42
+    val subject: ref u8 = stringify(t, lhs)
+    val expr: mut ref u8 = c"false"
+    if u.s_eq(pat, c"*") {
+        expr = u.s_dup(c"true")
+    } elif starts_star && !ends_star {
+        expr = u.s_cat3(subject, c".endswith(", u.s_cat(quote_plain(u.s_substr(pat, 1, n)), c")"))
+    } elif ends_star && !starts_star {
+        expr = u.s_cat3(subject, c".startswith(", u.s_cat(quote_plain(u.s_substr(pat, 0, n - 1)), c")"))
+    } elif starts_star && ends_star && n >= 2 {
+        expr = u.s_cat3(subject, c".contains(", u.s_cat(quote_plain(u.s_substr(pat, 1, n - 1)), c")"))
+    } else {
+        use_helper(t, c"__bx_glob")
+        expr = u.s_cat3(c"__bx_glob(", quote_plain(pat), u.s_cat3(c", ", subject, c")"))
+    }
+    if negate {
+        return u.s_cat3(c"not (", expr, c")")
+    }
+    return expr
+}
+
+fn test_operand(t: mut ref Tr, p: mut ref TP) ref u8 = trust {
+    val txt: ref u8 = next_tok(p)
+    val kind: mut i64 = 0
+    if p.pos > 0 && p.pos <= p.toks.len {
+        val prev: ref Tok = u.vec_p(p.toks, p.pos - 1) as ref Tok
+        kind = prev.kind
+    }
+    val w: mut ref Word = u.xalloc(@sizeof(Word) as i64) as ref Word
+    w.raw = txt
+    w.kind = kind
+    if kind == 2 {
+        val n: i64 = u.s_len(txt)
+        if n >= 3 {
+            val ex: ref u8 = single_expansion(t, u.s_substr(txt, 1, n - 1))
+            if ex != none {
+                return ex
+            }
+        }
+        return unquote_double(t, txt)
+    }
+    if kind == 1 {
+        return unquote_single(txt)
+    }
+    if u.s_eq(txt, c"true") || u.s_eq(txt, c"false") {
+        return u.s_dup(txt)
+    }
+    return conv_word_expr(t, w, false)
+}
+
+fn parse_test_or(p: mut ref TP) ref u8 = trust {
+    val left: mut ref u8 = parse_test_and(p)
+    for {
+        if !tk_is(p, c"||") && !tk_is(p, c"-o") {
+            break
+        }
+        p.pos++
+        val right: ref u8 = parse_test_and(p)
+        left = u.s_cat3(c"(", left, u.s_cat3(c" or ", right, c")"))
+    }
+    return left
+}
+
+fn parse_test_and(p: mut ref TP) ref u8 = trust {
+    val left: mut ref u8 = parse_test_not(p)
+    for {
+        if !tk_is(p, c"&&") && !tk_is(p, c"-a") {
+            break
+        }
+        p.pos++
+        val right: ref u8 = parse_test_not(p)
+        left = u.s_cat3(c"(", left, u.s_cat3(c" and ", right, c")"))
+    }
+    return left
+}
+
+fn parse_test_not(p: mut ref TP) ref u8 = trust {
+    if tk_is(p, c"!") || tk_is(p, c"-not") || tk_is(p, c"not") {
+        p.pos++
+        val inner: ref u8 = parse_test_not(p)
+        return u.s_cat3(c"not (", inner, c")")
+    }
+    return parse_test_atom(p)
+}
+
+fn parse_test_atom(p: mut ref TP) ref u8 = trust {
+    if tk_is(p, c"(") {
+        p.pos++
+        val inner: ref u8 = parse_test_or(p)
+        if tk_is(p, c")") {
+            p.pos++
+        }
+        return u.s_cat3(c"(", inner, c")")
+    }
+    val op: ref u8 = tok_text(p)
+    if is_test_unary(op) {
+        p.pos++
+        val operand: ref u8 = test_operand(p.tr, p)
+        return unary_test_expr(p.tr, op, operand)
+    }
+    val lhs: ref u8 = test_operand(p.tr, p)
+    val bin: ref u8 = tok_text(p)
+    if u.s_len(bin) > 0 && is_test_binary(bin) {
+        p.pos++
+        val rhs: ref u8 = test_operand(p.tr, p)
+        return binary_test_expr(p.tr, lhs, bin, rhs)
+    }
+    return u.s_cat3(c"len(", stringify(p.tr, lhs), c") > 0")
+}
+
+fn is_test_unary(op: ref u8) bool = trust {
+    if u.s_eq(op, c"-z") || u.s_eq(op, c"-n") {
+        return true
+    }
+    if u.s_eq(op, c"-e") || u.s_eq(op, c"-f") || u.s_eq(op, c"-d") {
+        return true
+    }
+    if u.s_eq(op, c"-r") || u.s_eq(op, c"-w") || u.s_eq(op, c"-x") {
+        return true
+    }
+    if u.s_eq(op, c"-s") || u.s_eq(op, c"-L") || u.s_eq(op, c"-h") {
+        return true
+    }
+    if u.s_eq(op, c"-p") || u.s_eq(op, c"-S") || u.s_eq(op, c"-b") {
+        return true
+    }
+    if u.s_eq(op, c"-c") || u.s_eq(op, c"-t") || u.s_eq(op, c"-u") {
+        return true
+    }
+    if u.s_eq(op, c"-g") || u.s_eq(op, c"-k") {
+        return true
+    }
+    return false
+}
+
+fn is_test_binary(op: ref u8) bool = trust {
+    if u.s_eq(op, c"=") || u.s_eq(op, c"==") || u.s_eq(op, c"!=") {
+        return true
+    }
+    if u.s_eq(op, c"-eq") || u.s_eq(op, c"-ne") || u.s_eq(op, c"-lt") {
+        return true
+    }
+    if u.s_eq(op, c"-le") || u.s_eq(op, c"-gt") || u.s_eq(op, c"-ge") {
+        return true
+    }
+    if u.s_eq(op, c"<") || u.s_eq(op, c">") {
+        return true
+    }
+    if u.s_eq(op, c"=~") {
+        return true
+    }
+    return false
+}
+
+fn unary_test_expr(t: mut ref Tr, op: ref u8, operand: ref u8) ref u8 = trust {
+    if u.s_eq(op, c"-z") {
+        return u.s_cat3(c"len(", stringify(t, operand), c") == 0")
+    }
+    if u.s_eq(op, c"-n") {
+        return u.s_cat3(c"len(", stringify(t, operand), c") > 0")
+    }
+    return unary_file_test(t, op, operand)
+}
+
+fn binary_test_expr(t: mut ref Tr, lhs: ref u8, op: ref u8, rhs: ref u8) ref u8 = trust {
+    if u.s_eq(op, c"=") || u.s_eq(op, c"==") {
+        if contains_unquoted_glob(rhs) {
+            return pattern_match_expr(t, lhs, strip_quotes(rhs), false)
+        }
+        return u.s_cat3(lhs, c" == ", rhs)
+    }
+    if u.s_eq(op, c"!=") {
+        if contains_unquoted_glob(rhs) {
+            return pattern_match_expr(t, lhs, strip_quotes(rhs), true)
+        }
+        return u.s_cat3(lhs, c" != ", rhs)
+    }
+    if u.s_eq(op, c"-eq") {
+        return u.s_cat3(c"int(", lhs, u.s_cat3(c") == int(", rhs, c")"))
+    }
+    if u.s_eq(op, c"-ne") {
+        return u.s_cat3(c"int(", lhs, u.s_cat3(c") != int(", rhs, c")"))
+    }
+    if u.s_eq(op, c"-lt") {
+        return u.s_cat3(c"int(", lhs, u.s_cat3(c") < int(", rhs, c")"))
+    }
+    if u.s_eq(op, c"-le") {
+        return u.s_cat3(c"int(", lhs, u.s_cat3(c") <= int(", rhs, c")"))
+    }
+    if u.s_eq(op, c"-gt") {
+        return u.s_cat3(c"int(", lhs, u.s_cat3(c") > int(", rhs, c")"))
+    }
+    if u.s_eq(op, c"-ge") {
+        return u.s_cat3(c"int(", lhs, u.s_cat3(c") >= int(", rhs, c")"))
+    }
+    if u.s_eq(op, c"<") {
+        return u.s_cat3(c"str(", lhs, u.s_cat3(c") < str(", rhs, c")"))
+    }
+    if u.s_eq(op, c">") {
+        return u.s_cat3(c"str(", lhs, u.s_cat3(c") > str(", rhs, c")"))
+    }
+    // =~ is a regex extension with no direct Blood equivalent.
+    return u.s_dup(c"false")
+}
+
+fn strip_quotes(s: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(s)
+    if n >= 2 {
+        val a: u8 = ch_at(s, 0)
+        val b: u8 = ch_at(s, n - 1)
+        if (a == 39 && b == 39) || (a == 34 && b == 34) {
+            return u.s_substr(s, 1, n - 1)
+        }
+    }
+    return s
+}
+
+fn contains_unquoted_glob(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    if n >= 2 && (ch_at(s, 0) == 34 || ch_at(s, 0) == 39) {
+        if ch_at(s, n - 1) == ch_at(s, 0) {
+            return false
+        }
+    }
+    return has_glob_chars(s)
+}
+
+fn test_expr(t: mut ref Tr, src: ref u8) ref u8 = trust {
+    val p: mut ref TP = u.xalloc(@sizeof(TP) as i64) as ref TP
+    p.toks = test_tokens(src)
+    p.pos = 0
+    p.tr = t
+    val e: ref u8 = parse_test_or(p)
+    if p.pos < p.toks.len {
+        // Trailing tokens are not understood; fall back to running the test.
+        use_helper(t, c"__bx_quote")
+        return u.s_cat3(c"shell(\"test ", quote_plain(src), c" \") == 0")
+    }
+    return e
+}
+
+// ---------------------------------------------------------------------------
+// Conditions and blocks
+// ---------------------------------------------------------------------------
+
+fn trim_then(src: ref u8) ref u8 = trust {
+    val s: mut ref u8 = u.s_trim(src)
+    if u.s_ends_with(s, c"; then") {
+        s = u.s_substr(s, 0, u.s_len(s) - 6)
+    } elif u.s_ends_with(s, c";then") {
+        s = u.s_substr(s, 0, u.s_len(s) - 5)
+    } elif u.s_ends_with(s, c" then") {
+        s = u.s_substr(s, 0, u.s_len(s) - 5)
+    } elif u.s_eq(s, c"then") {
+        s = u.s_dup(c"")
+    }
+    s = u.s_trim(s)
+    s = u.s_trim(strip_suffix(s, c";"))
+    return s
+}
+
+fn trim_do(src: ref u8) ref u8 = trust {
+    val s: mut ref u8 = u.s_trim(src)
+    if u.s_ends_with(s, c"; do") {
+        s = u.s_substr(s, 0, u.s_len(s) - 4)
+    } elif u.s_ends_with(s, c";do") {
+        s = u.s_substr(s, 0, u.s_len(s) - 3)
+    } elif u.s_ends_with(s, c" do") {
+        s = u.s_substr(s, 0, u.s_len(s) - 3)
+    } elif u.s_eq(s, c"do") {
+        s = u.s_dup(c"")
+    }
+    s = u.s_trim(s)
+    s = u.s_trim(strip_suffix(s, c";"))
+    return s
+}
+
+fn tr_cond(t: mut ref Tr, src: ref u8) ref u8 = trust {
+    val s: mut ref u8 = u.s_trim(src)
+    if u.s_starts(s, c"[[") && u.s_ends_with(s, c"]]") {
+        val inner: ref u8 = u.s_substr(s, 2, u.s_len(s) - 2)
+        return test_expr(t, inner)
+    }
+    if u.s_starts(s, c"[ ") && u.s_ends_with(s, c" ]") {
+        val inner: ref u8 = u.s_substr(s, 2, u.s_len(s) - 2)
+        return test_expr(t, inner)
+    }
+    if u.s_eq(s, c"[") {
+        return u.s_dup(c"true")
+    }
+    if u.s_starts(s, c"test ") {
+        return test_expr(t, u.s_substr(s, 5, u.s_len(s)))
+    }
+    if u.s_starts(s, c"((") && u.s_ends_with(s, c"))") {
+        return u.s_cat3(c"(", conv_arith(t, u.s_substr(s, 2, u.s_len(s) - 2)), c")")
+    }
+    if u.s_len(s) > 0 && ch_at(s, 0) == 33 && u.s_len(s) > 1 && is_space(ch_at(s, 1)) {
+        return u.s_cat3(c"not (", tr_cond(t, u.s_substr(s, 1, u.s_len(s))), c")")
+    }
+    if u.s_starts(s, c"command -v ") || u.s_starts(s, c"command -V ") {
+        val rest: ref u8 = u.s_trim(u.s_substr(s, 11, u.s_len(s)))
+        val words: ref u.Vec = split_words(rest)
+        if words.len > 0 {
+            val w: ref Word = u.vec_p(words, 0) as ref Word
+            return u.s_cat3(c"shell(\"type ", w.raw, c" >/dev/null 2>&1\") == 0")
+        }
+    }
+    use_helper(t, c"__bx_quote")
+    return u.s_cat3(c"shell(", quote_plain(s), c") == 0")
+}
+
+fn parse_if_header(src: ref u8) ref u8 = trust {
+    val s: mut ref u8 = u.s_trim(src)
+    if u.s_starts(s, c"if ") {
+        s = u.s_substr(s, 3, u.s_len(s))
+    }
+    return trim_then(s)
+}
+
+fn parse_elif_header(src: ref u8) ref u8 = trust {
+    val s: mut ref u8 = u.s_trim(src)
+    if u.s_starts(s, c"elif ") {
+        s = u.s_substr(s, 5, u.s_len(s))
+    }
+    return trim_then(s)
+}
+
+fn parse_while_header(src: ref u8) ref u8 = trust {
+    val s: mut ref u8 = u.s_trim(src)
+    if u.s_starts(s, c"while ") {
+        s = u.s_substr(s, 6, u.s_len(s))
+    }
+    return trim_do(s)
+}
+
+fn parse_until_header(src: ref u8) ref u8 = trust {
+    val s: mut ref u8 = u.s_trim(src)
+    if u.s_starts(s, c"until ") {
+        s = u.s_substr(s, 6, u.s_len(s))
+    }
+    return trim_do(s)
+}
+
+// ---------------------------------------------------------------------------
+// Assignments
+// ---------------------------------------------------------------------------
+
+fn valid_name(s: ref u8) bool = trust {
+    return is_ident(s)
+}
+
+fn value_end(s: ref u8, start: i64) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = start
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(s, i)
+        if is_space(c) {
+            break
+        }
+        if c == 39 {
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                if ch_at(s, i) == 39 {
+                    i++
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if c == 34 {
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                if ch_at(s, i) == 92 {
+                    i += 2
+                    continue
+                }
+                if ch_at(s, i) == 34 {
+                    i++
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if c == 92 {
+            i += 2
+            continue
+        }
+        if c == 36 && i + 1 < n && ch_at(s, i + 1) == 40 {
+            i = skip_paren_expr(s, i + 2)
+            continue
+        }
+        i++
+    }
+    return i
+}
+
+fn array_literal(t: mut ref Tr, src: ref u8) ref u8 = trust {
+    val inner: mut ref u8 = u.s_trim(src)
+    if u.s_starts(inner, c"(") && u.s_ends_with(inner, c")") {
+        inner = u.s_substr(inner, 1, u.s_len(inner) - 1)
+    }
+    val words: ref u.Vec = split_words(inner)
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 91)
+    val i: mut i64 = 0
+    for {
+        if i >= words.len {
+            break
+        }
+        if i > 0 {
+            u.buf_add(b, c", ")
+        }
+        u.buf_add(b, conv_word_expr(t, u.vec_p(words, i) as ref Word, false))
+        i++
+    }
+    u.buf_ch(b, 93)
+    return u.buf_take(b)
+}
+
+fn conv_assignment_value(t: mut ref Tr, src: ref u8) ref u8 = trust {
+    val s: ref u8 = u.s_trim(src)
+    val n: i64 = u.s_len(s)
+    if n == 0 {
+        return u.s_dup(c"\"\"")
+    }
+    if ch_at(s, 0) == 40 && ch_at(s, n - 1) == 41 {
+        return array_literal(t, s)
+    }
+    return conv_expr(t, s)
+}
+
+fn emit_sync(t: mut ref Tr, name: ref u8, exported: bool) void = trust {
+    use_helper(t, c"__bx_quote")
+    val cmd: mut ref u8 = u.s_cat(c"shell(", quote_plain(name))
+    cmd = u.s_cat(cmd, c" + \"=\" + __bx_quote(")
+    cmd = u.s_cat(cmd, name)
+    cmd = u.s_cat(cmd, c"))")
+    if exported {
+        cmd = u.s_cat(c"shell(\"export \" + ", u.s_cat(quote_plain(name), c" + \"=\" + __bx_quote("))
+        cmd = u.s_cat(cmd, name)
+        cmd = u.s_cat(cmd, c"))")
+    }
+    emit(t, cmd)
+}
+
+fn emit_assignment(t: mut ref Tr, name: ref u8, value: ref u8, exported: bool) void = trust {
+    val expr: ref u8 = conv_assignment_value(t, value)
+    emit(t, u.s_cat3(name, c" = ", expr))
+    u.map_put(t.assigned, name, 1)
+    if u.s_len(expr) == 0 || ch_at(expr, 0) != 91 {
+        emit_sync(t, name, exported)
+    }
+}
+
+/// Try to translate `NAME=VALUE` / `NAME+=VALUE`. Returns false when the line
+/// contains a command after the assignment (e.g. `FOO=bar cmd`).
+fn try_assignments(t: mut ref Tr, src: ref u8, exported: bool) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    val n: i64 = u.s_len(s)
+    val names: mut ref u.Vec = u.vec_new()
+    val values: mut ref u.Vec = u.vec_new()
+    val appends: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = 0
+    for {
+        i = skip_ws(s, i)
+        if i >= n {
+            break
+        }
+        val name_start: i64 = i
+        if !is_ident_start(ch_at(s, i)) {
+            return false
+        }
+        i = read_ident_at(s, i)
+        val name: ref u8 = u.s_substr(s, name_start, i)
+        if !valid_name(name) {
+            return false
+        }
+        val append: mut bool = false
+        if i < n && ch_at(s, i) == 43 && i + 1 < n && ch_at(s, i + 1) == 61 {
+            append = true
+            i += 2
+        } elif i < n && ch_at(s, i) == 61 {
+            i++
+        } else {
+            return false
+        }
+        val end: mut i64 = value_end(s, i)
+        if i < n && ch_at(s, i) == 40 {
+            // Array assignment: consume the balanced parentheses.
+            val close: i64 = skip_paren_expr(s, i + 1)
+            end = close + 1
+        }
+        u.vec_pushp(names, name as ref void)
+        u.vec_pushp(values, u.s_substr(s, i, end) as ref void)
+        val ap: mut i64 = 0
+        if append {
+            ap = 1
+        }
+        u.vec_push(appends, ap)
+        i = end
+        if u.s_len(u.s_trim(u.s_substr(s, i, n))) == 0 {
+            break
+        }
+        i = skip_ws(s, i)
+        if i >= n || !is_ident_start(ch_at(s, i)) {
+            return false
+        }
+    }
+    if names.len == 0 {
+        return false
+    }
+    val k: mut i64 = 0
+    for {
+        if k >= names.len {
+            break
+        }
+        val name: ref u8 = u.vec_p(names, k) as ref u8
+        val value: ref u8 = u.vec_p(values, k) as ref u8
+        if u.vec_gets(appends, k) != 0 {
+            emit(t, u.s_cat3(name, c" += ", conv_assignment_value(t, value)))
+            u.map_put(t.assigned, name, 1)
+            if !u.s_starts(value, c"(") {
+                emit_sync(t, name, exported)
+            }
+        } else {
+            emit_assignment(t, name, value, exported)
+        }
+        k++
+    }
+    return true
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+fn is_assignment_start(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    if n == 0 || !is_ident_start(ch_at(s, 0)) {
+        return false
+    }
+    val i: i64 = read_ident_at(s, 0)
+    return i < n && ch_at(s, i) == 61
+}
+
+fn command_has_operator(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(s, i)
+        if c == 39 {
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                if ch_at(s, i) == 39 {
+                    i++
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if c == 34 {
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                if ch_at(s, i) == 92 {
+                    i += 2
+                    continue
+                }
+                if ch_at(s, i) == 34 {
+                    i++
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if c == 92 {
+            i += 2
+            continue
+        }
+        if c == 124 || c == 38 || c == 59 || c == 60 || c == 62 {
+            if c == 62 && i > 0 && ch_at(s, i - 1) == 50 {
+                // 2> redirection still counts as an operator for echo.
+            }
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn tr_echo(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if !u.s_starts(s, c"echo ") && !u.s_eq(s, c"echo") {
+        return false
+    }
+    if command_has_operator(s) {
+        return false
+    }
+    val rest: ref u8 = u.s_trim(u.s_substr(s, 4, u.s_len(s)))
+    val words: ref u.Vec = split_words(rest)
+    if words.len > 0 {
+        val first: ref Word = u.vec_p(words, 0) as ref Word
+        if u.s_eq(first.raw, c"-n") || u.s_eq(first.raw, c"-e") || u.s_eq(first.raw, c"-E") {
+            return false
+        }
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"say")
+    if words.len > 0 {
+        u.buf_ch(b, 32)
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= words.len {
+            break
+        }
+        if i > 0 {
+            u.buf_add(b, c", ")
+        }
+        val w: ref Word = u.vec_p(words, i) as ref Word
+        if w.kind == 0 && has_glob_chars(w.raw) {
+            u.buf_add(b, u.s_cat3(c"glob(", quote_plain(w.raw), c").join(\" \")"))
+        } else {
+            u.buf_add(b, conv_word_expr(t, w, true))
+        }
+        i++
+    }
+    emit(t, u.buf_take(b))
+    return true
+}
+
+fn tr_read(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if !u.s_starts(s, c"read ") && !u.s_eq(s, c"read") {
+        return false
+    }
+    val words: ref u.Vec = split_words(u.s_substr(s, 4, u.s_len(s)))
+    val name: mut ref u8 = none
+    val prompt: mut ref u8 = c"\"\""
+    val i: mut i64 = 0
+    for {
+        if i >= words.len {
+            break
+        }
+        val w: ref Word = u.vec_p(words, i) as ref Word
+        if u.s_eq(w.raw, c"-r") {
+            i++
+            continue
+        }
+        if u.s_eq(w.raw, c"-p") {
+            i++
+            if i < words.len {
+                prompt = conv_word_expr(t, u.vec_p(words, i) as ref Word, false)
+            }
+            i++
+            continue
+        }
+        if u.s_starts(w.raw, c"-") {
+            emit_comment(t, u.s_cat(c"read not translated: ", s))
+            return true
+        }
+        if name == none {
+            name = u.s_trim(strip_quotes(w.raw))
+        } else {
+            emit_comment(t, u.s_cat(c"read with multiple targets not translated: ", s))
+            return true
+        }
+        i++
+    }
+    if name == none || !is_ident(name) {
+        return false
+    }
+    emit(t, u.s_cat3(name, c" = input(", u.s_cat(prompt, c")")))
+    u.map_put(t.assigned, name, 1)
+    emit_sync(t, name, false)
+    return true
+}
+
+fn tr_exit(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if u.s_eq(s, c"exit") {
+        emit(t, c"exit(0)")
+        return true
+    }
+    if u.s_starts(s, c"exit ") {
+        val code: ref u8 = u.s_trim(u.s_substr(s, 5, u.s_len(s)))
+        emit(t, u.s_cat3(c"exit(", conv_expr(t, code), c")"))
+        return true
+    }
+    return false
+}
+
+fn tr_shift(t: mut ref Tr, src: ref u8) bool = trust {
+    if !u.s_eq(u.s_trim(src), c"shift") {
+        return false
+    }
+    if t.in_func != 0 {
+        emit_comment(t, c"shift inside a function is not supported")
+    } else {
+        emit(t, c"args.remove(0)")
+    }
+    return true
+}
+
+fn tr_set(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if !u.s_starts(s, c"set ") {
+        return false
+    }
+    val rest: ref u8 = u.s_trim(u.s_substr(s, 4, u.s_len(s)))
+    if u.s_starts(rest, c"-") || u.s_eq(rest, c"--") {
+        emit_comment(t, u.s_cat(c"bash option not translated: ", s))
+        return true
+    }
+    return false
+}
+
+fn tr_trap(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if u.s_starts(s, c"trap ") {
+        emit_comment(t, u.s_cat(c"bash trap not translated: ", s))
+        return true
+    }
+    return false
+}
+
+fn tr_export(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if !u.s_starts(s, c"export ") {
+        return false
+    }
+    val rest: ref u8 = u.s_trim(u.s_substr(s, 7, u.s_len(s)))
+    if u.s_len(rest) == 0 {
+        return false
+    }
+    if try_assignments(t, rest, true) {
+        return true
+    }
+    val words: ref u.Vec = split_words(rest)
+    val k: mut i64 = 0
+    for {
+        if k >= words.len {
+            break
+        }
+        val w: ref Word = u.vec_p(words, k) as ref Word
+        if w.kind != 0 || !is_ident(w.raw) {
+            return false
+        }
+        k++
+    }
+    k = 0
+    for {
+        if k >= words.len {
+            break
+        }
+        val w: ref Word = u.vec_p(words, k) as ref Word
+        emit(t, u.s_cat3(c"shell(\"export ", w.raw, c"\")"))
+        k++
+    }
+    return true
+}
+
+fn tr_local(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    val kw: mut ref u8 = none
+    if u.s_starts(s, c"local ") {
+        kw = c"local"
+    } elif u.s_starts(s, c"declare ") {
+        kw = c"declare"
+    } elif u.s_starts(s, c"typeset ") {
+        kw = c"typeset"
+    } elif u.s_starts(s, c"readonly ") {
+        kw = c"readonly"
+    } else {
+        return false
+    }
+    val rest: ref u8 = u.s_trim(u.s_substr(s, u.s_len(kw) + 1, u.s_len(s)))
+    if u.s_starts(rest, c"-") {
+        val after: i64 = skip_ws(rest, 1)
+        val body: mut i64 = after
+        val n: i64 = u.s_len(rest)
+        for {
+            if body >= n {
+                break
+            }
+            if is_space(ch_at(rest, body)) {
+                break
+            }
+            body++
+        }
+        val tail: ref u8 = u.s_trim(u.s_substr(rest, body, n))
+        if u.s_len(tail) == 0 {
+            emit_comment(t, u.s_cat(c"declaration not translated: ", s))
+            return true
+        }
+        if try_assignments(t, tail, u.s_eq(kw, c"readonly")) {
+            return true
+        }
+        emit(t, tail)
+        return true
+    }
+    if try_assignments(t, rest, u.s_eq(kw, c"readonly")) {
+        return true
+    }
+    if is_ident(rest) {
+        emit(t, u.s_cat(rest, c" = null"))
+        u.map_put(t.assigned, rest, 1)
+        return true
+    }
+    emit_comment(t, u.s_cat(c"declaration not translated: ", s))
+    return true
+}
+
+fn tr_arithmetic_stmt(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    val n: i64 = u.s_len(s)
+    if n < 4 || !u.s_starts(s, c"((") || !u.s_ends_with(s, c"))") {
+        return false
+    }
+    val inner: ref u8 = u.s_trim(u.s_substr(s, 2, n - 2))
+    if u.s_ends_with(inner, c"++") {
+        emit(t, u.s_cat3(u.s_substr(inner, 0, u.s_len(inner) - 2), c" += ", c"1"))
+        return true
+    }
+    if u.s_ends_with(inner, c"--") {
+        emit(t, u.s_cat3(u.s_substr(inner, 0, u.s_len(inner) - 2), c" -= ", c"1"))
+        return true
+    }
+    val eq: i64 = u.s_index_of_char(inner, 61, 0)
+    if eq > 0 && (eq + 1 >= u.s_len(inner) || ch_at(inner, eq + 1) != 61) {
+        val lhs: ref u8 = u.s_trim(u.s_substr(inner, 0, eq))
+        val rhs: ref u8 = u.s_trim(u.s_substr(inner, eq + 1, u.s_len(inner)))
+        emit(t, u.s_cat3(lhs, c" = ", conv_arith(t, rhs)))
+        return true
+    }
+    emit(t, conv_arith(t, inner))
+    return true
+}
+
+fn tr_let(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if !u.s_starts(s, c"let ") {
+        return false
+    }
+    val body: mut ref u8 = u.s_trim(u.s_substr(s, 4, u.s_len(s)))
+    body = strip_quotes(body)
+    val eq: i64 = u.s_index_of_char(body, 61, 0)
+    if eq <= 0 {
+        return false
+    }
+    val lhs: ref u8 = u.s_trim(u.s_substr(body, 0, eq))
+    val rhs: ref u8 = u.s_trim(u.s_substr(body, eq + 1, u.s_len(body)))
+    emit(t, u.s_cat3(lhs, c" = ", conv_arith(t, rhs)))
+    return true
+}
+
+fn is_defined_func(t: mut ref Tr, name: ref u8) bool = trust {
+    return u.map_has(t.funcs, name)
+}
+
+fn tr_func_call(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if command_has_operator(s) {
+        return false
+    }
+    val words: ref u.Vec = split_words(s)
+    if words.len == 0 {
+        return false
+    }
+    val first: ref Word = u.vec_p(words, 0) as ref Word
+    if first.kind != 0 || !is_defined_func(t, first.raw) {
+        return false
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, first.raw)
+    u.buf_ch(b, 40)
+    val i: mut i64 = 1
+    for {
+        if i >= words.len {
+            break
+        }
+        if i > 1 {
+            u.buf_add(b, c", ")
+        }
+        val w: ref Word = u.vec_p(words, i) as ref Word
+        u.buf_add(b, conv_word_expr(t, w, false))
+        i++
+    }
+    u.buf_ch(b, 41)
+    emit(t, u.buf_take(b))
+    return true
+}
+
+fn tr_return(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if u.s_eq(s, c"return") {
+        emit(t, c"return")
+        return true
+    }
+    if u.s_starts(s, c"return ") {
+        emit(t, u.s_cat(c"return ", conv_expr(t, u.s_substr(s, 7, u.s_len(s)))))
+        return true
+    }
+    return false
+}
+
+fn tr_shell_statement(t: mut ref Tr, src: ref u8) void = trust {
+    val s: mut ref u8 = u.s_trim(src)
+    if u.s_len(s) == 0 {
+        return
+    }
+    if u.s_eq(s, c"break") || u.s_eq(s, c"continue") || u.s_eq(s, c"pass") {
+        emit(t, s)
+        return
+    }
+    // In functions, bash positional parameters are available to commands as
+    // $1 ... $9. Blood functions expose them as __argN, so mirror them into
+    // shell variables on first use and rewrite the command text.
+    if t.in_func != 0 {
+        s = rewrite_func_positionals(s)
+    }
+    // The script parser is not able to classify every command-shaped line as
+    // a shell statement (for example `cat /tmp/x` reads as a division
+    // expression). Running the line through `shell` is unambiguous and keeps
+    // the resulting status in the script `status` variable.
+    emit(t, u.s_cat3(c"status = shell(", quote_plain(s), c")"))
+}
+
+fn rewrite_func_positionals(src: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    val changed: mut bool = false
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(src, i)
+        if c == 39 {
+            // Single quotes preserve literal $N in bash.
+            u.buf_ch(b, c)
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                u.buf_ch(b, ch_at(src, i))
+                if ch_at(src, i) == 39 {
+                    i++
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if c == 36 && i + 1 < n {
+            val d: u8 = ch_at(src, i + 1)
+            if d >= 49 && d <= 57 {
+                u.buf_add(b, c"$__arg")
+                u.buf_ch(b, d)
+                changed = true
+                i += 2
+                continue
+            }
+            if d == 35 {
+                u.buf_add(b, c"$__bx_argc_shell")
+                changed = true
+                i += 2
+                continue
+            }
+            if d == 123 {
+                val close: i64 = skip_brace_expr(src, i + 2)
+                val body: ref u8 = u.s_substr(src, i + 2, close)
+                if u.s_len(body) == 1 && ch_at(body, 0) >= 49 && ch_at(body, 0) <= 57 {
+                    u.buf_add(b, c"$__arg")
+                    u.buf_ch(b, ch_at(body, 0))
+                    changed = true
+                    i = close + 1
+                    continue
+                }
+                if u.s_eq(body, c"#") {
+                    u.buf_add(b, c"$__bx_argc_shell")
+                    changed = true
+                    i = close + 1
+                    continue
+                }
+            }
+        }
+        u.buf_ch(b, c)
+        i++
+    }
+    if !changed {
+        return src
+    }
+    return u.buf_take(b)
+}
+
+// ---------------------------------------------------------------------------
+// Structural constructs
+// ---------------------------------------------------------------------------
+
+fn parse_func_name(src: ref u8) ref u8 = trust {
+    val s: mut ref u8 = u.s_trim(src)
+    if u.s_starts(s, c"function ") {
+        s = u.s_trim(u.s_substr(s, 9, u.s_len(s)))
+    }
+    val open: i64 = u.s_index_of_char(s, 40, 0)
+    if open > 0 {
+        val name: ref u8 = u.s_trim(u.s_substr(s, 0, open))
+        if is_ident(name) {
+            return name
+        }
+        return none
+    }
+    // `function name {`
+    if u.s_len(s) > 0 {
+        val name: ref u8 = u.s_trim(u.s_substr(s, 0, read_ident_at(s, 0)))
+        if is_ident(name) && u.s_starts(u.s_trim(src), c"function ") {
+            return name
+        }
+    }
+    return none
+}
+
+fn scan_functions(lines: ref u.Vec) ref u.Map = trust {
+    val m: mut ref u.Map = u.map_new()
+    val i: mut i64 = 0
+    for {
+        if i >= lines.len {
+            break
+        }
+        val line: ref u8 = u.vec_p(lines, i) as ref u8
+        val name: ref u8 = parse_func_name(line)
+        if name != none {
+            u.map_put(m, name, 1)
+        }
+        i++
+    }
+    return m
+}
+
+fn emit_function(t: mut ref Tr, src: ref u8) bool = trust {
+    val name: ref u8 = parse_func_name(src)
+    if name == none {
+        return false
+    }
+    val header: ref u8 = u.s_cat3(
+        c"fn ",
+        name,
+        c"(__arg1, __arg2, __arg3, __arg4, __arg5, __arg6, __arg7, __arg8, __arg9) {"
+    )
+    emit(t, header)
+    push_block(t, 5, none)
+    t.in_func = 1
+    use_helper(t, c"__bx_sync_args")
+    emit(t, c"__bx_sync_args(__arg1, __arg2, __arg3, __arg4, __arg5, __arg6, __arg7, __arg8, __arg9)")
+    // `name()` may be followed by `{` on the next line.
+    val trimmed: ref u8 = u.s_trim(src)
+    if u.s_len(trimmed) == 0 || ch_at(trimmed, u.s_len(trimmed) - 1) != 123 {
+        t.skip_lbrace = 1
+    }
+    return true
+}
+
+fn conv_range(t: mut ref Tr, tok: ref u8) ref u8 = trust {
+    // {START..END} and {START..END..STEP}
+    if u.s_len(tok) >= 4 && ch_at(tok, 0) == 123 && ch_at(tok, u.s_len(tok) - 1) == 125 {
+        val inner: ref u8 = u.s_substr(tok, 1, u.s_len(tok) - 1)
+        val d1: i64 = u.s_find(inner, c"..")
+        if d1 > 0 {
+            val a: ref u8 = u.s_substr(inner, 0, d1)
+            val rest: ref u8 = u.s_substr(inner, d1 + 2, u.s_len(inner))
+            val d2: i64 = u.s_find(rest, c"..")
+            if d2 < 0 && is_numeric(a) && is_numeric(rest) {
+                use_helper(t, c"__bx_range")
+                return u.s_cat3(c"__bx_range(", a, u.s_cat3(c", ", rest, c")"))
+            }
+        }
+    }
+    return none
+}
+
+fn emit_for(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if !u.s_starts(s, c"for ") {
+        return false
+    }
+    val body: mut ref u8 = u.s_substr(s, 4, u.s_len(s))
+    body = trim_do(body)
+    if u.s_starts(u.s_trim(body), c"((") {
+        return emit_c_for(t, body)
+    }
+    body = u.s_trim(body)
+    val sp: i64 = u.s_index_of_char(body, 32, 0)
+    val tab: i64 = u.s_index_of_char(body, 9, 0)
+    val sep: mut i64 = sp
+    if tab >= 0 && (sep < 0 || tab < sep) {
+        sep = tab
+    }
+    if sep < 0 {
+        // for NAME; do -> iterate script arguments
+        emit(t, u.s_cat3(c"for ", body, c" in args {"))
+        push_block(t, 2, none)
+        u.map_put(t.assigned, body, 1)
+        emit_sync(t, body, false)
+        return true
+    }
+    val var: ref u8 = u.s_trim(u.s_substr(body, 0, sep))
+    val rest: ref u8 = u.s_trim(u.s_substr(body, sep + 1, u.s_len(body)))
+    if !is_ident(var) {
+        return false
+    }
+    val words_part: mut ref u8 = rest
+    if u.s_starts(words_part, c"in ") {
+        words_part = u.s_trim(u.s_substr(words_part, 3, u.s_len(words_part)))
+    } elif u.s_eq(words_part, c"in") {
+        words_part = u.s_dup(c"")
+    } else {
+        // `for NAME; do` was already handled by the separator check above.
+    }
+    val expr: ref u8 = for_list_expr(t, words_part)
+    emit(t, u.s_cat3(c"for ", var, u.s_cat3(c" in ", expr, c" {")))
+    push_block(t, 2, none)
+    u.map_put(t.assigned, var, 1)
+    emit_sync(t, var, false)
+    return true
+}
+
+fn for_list_expr(t: mut ref Tr, src: ref u8) ref u8 = trust {
+    val s: ref u8 = u.s_trim(src)
+    if u.s_len(s) == 0 {
+        return u.s_dup(c"[]")
+    }
+    if u.s_eq(s, c"$@") || u.s_eq(s, c"$*") || u.s_eq(s, c"\"$@\"") || u.s_eq(s, c"\"$*\"") {
+        if t.in_func != 0 {
+            return var_expr(t, c"@")
+        }
+        return u.s_dup(c"args")
+    }
+    val r: ref u8 = conv_range(t, s)
+    if r != none {
+        return r
+    }
+    val words: ref u.Vec = split_words(s)
+    if words.len == 1 {
+        val w: ref Word = u.vec_p(words, 0) as ref Word
+        val ex: ref u8 = conv_word_expr(t, w, true)
+        if w.kind == 0 && (has_glob_chars(w.raw) || u.s_starts(w.raw, c"$(")) {
+            return ex
+        }
+        if u.s_eq(ex, c"args") || u.s_starts(ex, c"__bx_args(") {
+            return ex
+        }
+        return u.s_cat3(c"[", ex, c"]")
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 91)
+    val i: mut i64 = 0
+    for {
+        if i >= words.len {
+            break
+        }
+        if i > 0 {
+            u.buf_add(b, c", ")
+        }
+        u.buf_add(b, conv_word_expr(t, u.vec_p(words, i) as ref Word, true))
+        i++
+    }
+    u.buf_ch(b, 93)
+    return u.buf_take(b)
+}
+
+fn emit_c_for(t: mut ref Tr, src: ref u8) bool = trust {
+    val s: ref u8 = u.s_trim(src)
+    if !u.s_starts(s, c"((") || !u.s_ends_with(s, c"))") {
+        return false
+    }
+    val inner: ref u8 = u.s_substr(s, 2, u.s_len(s) - 2)
+    val p1: i64 = u.s_index_of_char(inner, 59, 0)
+    if p1 < 0 {
+        return false
+    }
+    val p2: i64 = u.s_index_of_char(inner, 59, p1 + 1)
+    val init: mut ref u8 = u.s_trim(u.s_substr(inner, 0, p1))
+    val cond: mut ref u8 = u.s_dup(c"true")
+    val step: mut ref u8 = u.s_dup(c"")
+    if p2 < 0 {
+        cond = u.s_trim(u.s_substr(inner, p1 + 1, u.s_len(inner)))
+    } else {
+        cond = u.s_trim(u.s_substr(inner, p1 + 1, p2))
+        step = u.s_trim(u.s_substr(inner, p2 + 1, u.s_len(inner)))
+    }
+    if u.s_len(init) > 0 {
+        emit_arith_stmt(t, init)
+    }
+    val cexpr: mut ref u8 = u.s_dup(c"true")
+    if u.s_len(cond) > 0 {
+        cexpr = conv_arith(t, cond)
+    }
+    val stmt: mut ref u8 = u.s_dup(c"")
+    if u.s_len(step) > 0 {
+        stmt = arith_stmt_text(t, step)
+    }
+    open_block(t, u.s_cat(c"while ", cexpr), 3, stmt)
+    return true
+}
+
+fn register_arith_target(t: mut ref Tr, lhs: ref u8) void = trust {
+    val s: ref u8 = u.s_trim(lhs)
+    val n: i64 = u.s_len(s)
+    if n == 0 {
+        return
+    }
+    val c: u8 = ch_at(s, n - 1)
+    if c == 43 || c == 45 || c == 42 || c == 47 || c == 37 {
+        u.map_put(t.assigned, u.s_trim(u.s_substr(s, 0, n - 1)), 1)
+        return
+    }
+    if is_ident(s) {
+        u.map_put(t.assigned, s, 1)
+    }
+}
+
+fn emit_arith_stmt(t: mut ref Tr, src: ref u8) void = trust {
+    val s: ref u8 = u.s_trim(src)
+    if u.s_ends_with(s, c"++") {
+        val lhs: ref u8 = u.s_substr(s, 0, u.s_len(s) - 2)
+        register_arith_target(t, lhs)
+        emit(t, u.s_cat(lhs, c" += 1"))
+        return
+    }
+    if u.s_ends_with(s, c"--") {
+        val lhs: ref u8 = u.s_substr(s, 0, u.s_len(s) - 2)
+        register_arith_target(t, lhs)
+        emit(t, u.s_cat(lhs, c" -= 1"))
+        return
+    }
+    val eq: i64 = u.s_index_of_char(s, 61, 0)
+    if eq > 0 && (eq + 1 >= u.s_len(s) || ch_at(s, eq + 1) != 61) {
+        val lhs: ref u8 = u.s_trim(u.s_substr(s, 0, eq))
+        val rhs: ref u8 = u.s_trim(u.s_substr(s, eq + 1, u.s_len(s)))
+        register_arith_target(t, lhs)
+        if u.s_ends_with(lhs, c"+") {
+            emit(t, u.s_cat3(u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)), c" += ", conv_arith(t, rhs)))
+            return
+        }
+        if u.s_ends_with(lhs, c"-") {
+            emit(t, u.s_cat3(u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)), c" -= ", conv_arith(t, rhs)))
+            return
+        }
+        emit(t, u.s_cat3(lhs, c" = ", conv_arith(t, rhs)))
+        return
+    }
+    emit(t, conv_arith(t, s))
+}
+
+fn arith_stmt_text(t: mut ref Tr, src: ref u8) ref u8 = trust {
+    val s: ref u8 = u.s_trim(src)
+    if u.s_ends_with(s, c"++") {
+        register_arith_target(t, u.s_substr(s, 0, u.s_len(s) - 2))
+        return u.s_cat(u.s_substr(s, 0, u.s_len(s) - 2), c" += 1")
+    }
+    if u.s_ends_with(s, c"--") {
+        register_arith_target(t, u.s_substr(s, 0, u.s_len(s) - 2))
+        return u.s_cat(u.s_substr(s, 0, u.s_len(s) - 2), c" -= 1")
+    }
+    val eq: i64 = u.s_index_of_char(s, 61, 0)
+    if eq > 0 && (eq + 1 >= u.s_len(s) || ch_at(s, eq + 1) != 61) {
+        val lhs: ref u8 = u.s_trim(u.s_substr(s, 0, eq))
+        val rhs: ref u8 = u.s_trim(u.s_substr(s, eq + 1, u.s_len(s)))
+        register_arith_target(t, lhs)
+        if u.s_ends_with(lhs, c"+") {
+            return u.s_cat3(u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)), c" += ", conv_arith(t, rhs))
+        }
+        if u.s_ends_with(lhs, c"-") {
+            return u.s_cat3(u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)), c" -= ", conv_arith(t, rhs))
+        }
+        return u.s_cat3(lhs, c" = ", conv_arith(t, rhs))
+    }
+    return conv_arith(t, s)
+}
+
+// ---------------------------------------------------------------------------
+// case
+// ---------------------------------------------------------------------------
+
+fn case_top(t: mut ref Tr) ref CaseCtx = trust {
+    if t.cases.len == 0 {
+        return none
+    }
+    return u.vec_p(t.cases, t.cases.len - 1) as ref CaseCtx
+}
+
+fn case_pattern_cond(t: mut ref Tr, expr: ref u8, pat: ref u8) ref u8 = trust {
+    val parts: ref u.Vec = split_case_patterns(pat)
+    if parts.len == 0 {
+        return u.s_dup(c"false")
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val i: mut i64 = 0
+    for {
+        if i >= parts.len {
+            break
+        }
+        if i > 0 {
+            u.buf_add(b, c" or ")
+        }
+        val p: ref u8 = u.s_trim(u.vec_p(parts, i) as ref u8)
+        if has_glob_chars(p) {
+            u.buf_add(b, pattern_match_expr(t, expr, p, false))
+        } else {
+            u.buf_add(b, u.s_cat3(expr, c" == ", conv_interp(t, p)))
+        }
+        i++
+    }
+    return u.buf_take(b)
+}
+
+fn split_case_patterns(src: ref u8) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    val start: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = ch_at(src, i)
+        if c == 39 || c == 34 {
+            val q: u8 = c
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                if ch_at(src, i) == 92 {
+                    i += 2
+                    continue
+                }
+                if ch_at(src, i) == q {
+                    i++
+                    break
+                }
+                i++
+            }
+            continue
+        }
+        if c == 92 {
+            i += 2
+            continue
+        }
+        if c == 124 {
+            u.vec_pushp(out, u.s_substr(src, start, i) as ref void)
+            i++
+            start = i
+            continue
+        }
+        i++
+    }
+    u.vec_pushp(out, u.s_substr(src, start, n) as ref void)
+    return out
+}
+
+fn emit_case_clause(t: mut ref Tr, src: ref u8) void = trust {
+    val ctx: mut ref CaseCtx = case_top(t)
+    if ctx == none {
+        return
+    }
+    val s: mut ref u8 = u.s_trim(src)
+    val trailing_close: mut bool = false
+    if u.s_ends_with(s, c";;") {
+        s = u.s_trim(u.s_substr(s, 0, u.s_len(s) - 2))
+        trailing_close = true
+    } elif u.s_ends_with(s, c";&") || u.s_ends_with(s, c";;&") {
+        s = u.s_trim(u.s_substr(s, 0, u.s_len(s) - 2))
+        trailing_close = true
+    }
+    val close: i64 = u.s_index_of_char(s, 41, 0)
+    if close < 0 {
+        return
+    }
+    val pat: ref u8 = u.s_substr(s, 0, close)
+    val body: mut ref u8 = u.s_trim(u.s_substr(s, close + 1, u.s_len(s)))
+    if u.s_ends_with(body, c";;") {
+        body = u.s_trim(u.s_substr(body, 0, u.s_len(body) - 2))
+        trailing_close = true
+    } elif u.s_ends_with(body, c";&") || u.s_ends_with(body, c";;&") {
+        body = u.s_trim(u.s_substr(body, 0, u.s_len(body) - 2))
+        trailing_close = true
+    }
+    val cond: ref u8 = case_pattern_cond(t, ctx.expr, pat)
+    if ctx.count == 0 {
+        emit(t, u.s_cat3(c"if ", cond, c" {"))
+    } else {
+        // Close the previous branch without printing a newline; the `elif`
+        // continues the chain on the same line.
+        if t.depth > 0 {
+            t.depth--
+        }
+        vec_pop_int(t.kinds)
+        vec_pop_ptr(t.steps)
+        emit(t, u.s_cat3(c"} elif ", cond, c" {"))
+    }
+    ctx.count++
+    ctx.open = 1
+    t.depth++
+    push_block_no_inc(t, 1, none)
+    if u.s_len(body) > 0 {
+        tr_one(t, body)
+    }
+    if trailing_close {
+        ctx.open = 0
+    }
+}
+
+fn push_block_no_inc(t: mut ref Tr, kind: i64, step: ref u8) void = trust {
+    u.vec_push(t.kinds, kind)
+    if step == none {
+        u.vec_pushp(t.steps, c"" as ref void)
+    } else {
+        u.vec_pushp(t.steps, step as ref void)
+    }
+}
+
+fn close_case_clause(t: mut ref Tr) void = trust {
+    val ctx: mut ref CaseCtx = case_top(t)
+    if ctx == none {
+        return
+    }
+    // `;;` only ends the current body; the `if` chain stays open so the next
+    // pattern can emit `} elif ...`.
+    ctx.open = 0
+}
+
+// ---------------------------------------------------------------------------
+// Line dispatch
+// ---------------------------------------------------------------------------
+
+fn tr_one(t: mut ref Tr, raw: ref u8) void = trust {
+    val tline: ref u8 = u.s_trim(raw)
+    if u.s_len(tline) == 0 {
+        emit_blank(t)
+        return
+    }
+    if !u.s_starts(tline, c"#") && t.skip_lbrace != 0 && u.s_eq(tline, c"{") {
+        t.skip_lbrace = 0
+        return
+    }
+    t.skip_lbrace = 0
+    if u.s_starts(tline, c"#") {
+        emit(t, tline)
+        return
+    }
+    if u.s_eq(tline, c"then") || u.s_eq(tline, c"do") {
+        return
+    }
+    if u.s_eq(tline, c"{") {
+        emit(t, c"{")
+        push_block(t, 6, none)
+        return
+    }
+    if u.s_eq(tline, c"}") {
+        close_block(t)
+        return
+    }
+    if u.s_eq(tline, c"fi") {
+        close_block(t)
+        return
+    }
+    if u.s_eq(tline, c"done") {
+        close_block(t)
+        return
+    }
+    if u.s_eq(tline, c"esac") {
+        val c: ref CaseCtx = case_top(t)
+        if c != none && c.count > 0 {
+            close_block(t)
+        }
+        if t.cases.len > 0 {
+            vec_pop_ptr(t.cases)
+        }
+        return
+    }
+    if u.s_eq(tline, c"else") {
+        if t.depth > 0 {
+            t.depth--
+        }
+        emit(t, c"} else {")
+        t.depth++
+        return
+    }
+    if u.s_starts(tline, c"elif ") || u.s_eq(tline, c"elif") {
+        val cond: ref u8 = parse_elif_header(tline)
+        if t.depth > 0 {
+            t.depth--
+        }
+        emit(t, u.s_cat3(c"} elif ", tr_cond(t, cond), c" {"))
+        t.depth++
+        return
+    }
+    if u.s_starts(tline, c"if ") {
+        val cond: ref u8 = parse_if_header(tline)
+        open_block(t, u.s_cat(c"if ", tr_cond(t, cond)), 1, none)
+        return
+    }
+    if u.s_starts(tline, c"while ") {
+        val cond: ref u8 = parse_while_header(tline)
+        if u.s_starts(cond, c"read ") || u.s_starts(cond, c"IFS=") {
+            emit_while_read(t, cond)
+            return
+        }
+        open_block(t, u.s_cat(c"while ", tr_cond(t, cond)), 2, none)
+        return
+    }
+    if u.s_starts(tline, c"until ") {
+        val cond: ref u8 = parse_until_header(tline)
+        open_block(t, u.s_cat3(c"while not (", tr_cond(t, cond), c")"), 2, none)
+        return
+    }
+    if u.s_starts(tline, c"for ") || u.s_eq(tline, c"for") {
+        if emit_for(t, tline) {
+            return
+        }
+    }
+    val func_name: ref u8 = parse_func_name(tline)
+    if func_name != none {
+        emit_function(t, tline)
+        return
+    }
+    if u.s_starts(tline, c"case ") && u.s_ends_with(u.s_trim(tline), c" in") {
+        val ctx: mut ref CaseCtx = u.xalloc(@sizeof(CaseCtx) as i64) as ref CaseCtx
+        val expr: mut ref u8 = u.s_trim(u.s_substr(tline, 5, u.s_len(tline)))
+        expr = u.s_trim(u.s_substr(expr, 0, u.s_len(expr) - 3))
+        ctx.expr = stringify(t, conv_expr(t, expr))
+        ctx.count = 0
+        ctx.open = 0
+        use_helper(t, c"__bx_s")
+        u.vec_pushp(t.cases, ctx as ref void)
+        return
+    }
+    val ctx: ref CaseCtx = case_top(t)
+    if ctx != none && ctx.open == 0 && u.s_len(tline) > 0 {
+        if u.s_eq(tline, c";;") || u.s_eq(tline, c";;&") || u.s_eq(tline, c";&") {
+            close_case_clause(t)
+            return
+        }
+        if u.s_index_of_char(tline, 41, 0) >= 0 {
+            emit_case_clause(t, tline)
+            return
+        }
+    }
+    if u.s_eq(tline, c";;") || u.s_eq(tline, c";;&") || u.s_eq(tline, c";&") {
+        close_case_clause(t)
+        return
+    }
+    if u.s_starts(tline, c"function ") {
+        emit_comment(t, u.s_cat(c"unsupported function declaration: ", tline))
+        return
+    }
+    if tr_echo(t, tline) {
+        return
+    }
+    if tr_read(t, tline) {
+        return
+    }
+    if tr_exit(t, tline) {
+        return
+    }
+    if tr_shift(t, tline) {
+        return
+    }
+    if tr_set(t, tline) {
+        return
+    }
+    if tr_trap(t, tline) {
+        return
+    }
+    if tr_export(t, tline) {
+        return
+    }
+    if tr_local(t, tline) {
+        return
+    }
+    if tr_arithmetic_stmt(t, tline) {
+        return
+    }
+    if tr_let(t, tline) {
+        return
+    }
+    if is_assignment_start(tline) {
+        if try_assignments(t, tline, false) {
+            return
+        }
+    }
+    if tr_func_call(t, tline) {
+        return
+    }
+    if tr_return(t, tline) {
+        return
+    }
+    tr_shell_statement(t, tline)
+}
+
+fn emit_while_read(t: mut ref Tr, cond: ref u8) void = trust {
+    val s: mut ref u8 = u.s_trim(cond)
+    if u.s_starts(s, c"IFS=") {
+        val eq: i64 = u.s_index_of_char(s, 32, 0)
+        if eq > 0 {
+            s = u.s_trim(u.s_substr(s, eq + 1, u.s_len(s)))
+        }
+    }
+    val prompt: mut ref u8 = c"\"\""
+    if u.s_starts(s, c"read ") || u.s_eq(s, c"read") {
+        val words: ref u.Vec = split_words(u.s_substr(s, 4, u.s_len(s)))
+        val name: mut ref u8 = c"line"
+        val i: mut i64 = 0
+        for {
+            if i >= words.len {
+                break
+            }
+            val w: ref Word = u.vec_p(words, i) as ref Word
+            if u.s_eq(w.raw, c"-r") {
+                i++
+                continue
+            }
+            if u.s_eq(w.raw, c"-p") {
+                i++
+                if i < words.len {
+                    prompt = conv_word_expr(t, u.vec_p(words, i) as ref Word, false)
+                }
+                i++
+                continue
+            }
+            if !u.s_starts(w.raw, c"-") {
+                name = u.s_trim(strip_quotes(w.raw))
+                break
+            }
+            i++
+        }
+        emit(t, c"while true {")
+        push_block(t, 2, none)
+        emit(t, u.s_cat3(name, c" = input(", u.s_cat(prompt, c")")))
+        u.map_put(t.assigned, name, 1)
+        emit_sync(t, name, false)
+        emit(t, u.s_cat3(c"if ", name, c" == null {"))
+        t.depth++
+        emit(t, c"break")
+        t.depth--
+        emit(t, c"}")
+        return
+    }
+    open_block(t, c"while true", 2, none)
+}
+
+// ---------------------------------------------------------------------------
+// Preprocessing and output assembly
+// ---------------------------------------------------------------------------
+
+fn collect_lines(src: ref u8) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val n: i64 = u.s_len(src)
+    val i: mut i64 = 0
+    val start: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        if ch_at(src, i) == 10 {
+            val end: mut i64 = i
+            if end > start && ch_at(src, end - 1) == 13 {
+                end--
+            }
+            u.vec_pushp(out, u.s_substr(src, start, end) as ref void)
+            i++
+            start = i
+            continue
+        }
+        i++
+    }
+    val end: mut i64 = n
+    if end > start && ch_at(src, end - 1) == 13 {
+        end--
+    }
+    u.vec_pushp(out, u.s_substr(src, start, end) as ref void)
+    return out
+}
+
+fn join_continuations(raw: ref u.Vec) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = 0
+    for {
+        if i >= raw.len {
+            break
+        }
+        val line: mut ref u8 = u.vec_p(raw, i) as ref u8
+        for {
+            val t: ref u8 = u.s_trim(line)
+            val n: i64 = u.s_len(t)
+            if n == 0 || ch_at(t, n - 1) != 92 {
+                break
+            }
+            if i + 1 >= raw.len {
+                line = u.s_substr(line, 0, u.s_len(line) - 1)
+                break
+            }
+            line = u.s_cat(u.s_substr(line, 0, u.s_len(line) - 1), u.vec_p(raw, i + 1) as ref u8)
+            i++
+        }
+        u.vec_pushp(out, line as ref void)
+        i++
+    }
+    return out
+}
+
+fn helper_prelude(t: mut ref Tr) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    if u.map_has(t.helpers, c"__bx_s") {
+        u.buf_add(b, c"fn __bx_s(v) {\n    if v == null {\n        return \"\"\n    }\n    return str(v)\n}\n\n")
+    }
+    if u.map_has(t.helpers, c"__bx_default") {
+        u.buf_add(b, c"fn __bx_default(v, fallback) {\n    if v == null or v == \"\" {\n        return fallback\n    }\n    return v\n}\n\n")
+    }
+    if u.map_has(t.helpers, c"__bx_num") {
+        u.buf_add(b, c"fn __bx_num(v) {\n    return int(__bx_s(v))\n}\n\n")
+        u.map_put(t.helpers, c"__bx_s", 1)
+    }
+    if u.map_has(t.helpers, c"__bx_quote") {
+        u.buf_add(b, c"fn __bx_quote(v) {\n    return \"'\" + __bx_s(v).replace(\"'\", \"'\\\"'\\\"'\") + \"'\"\n}\n\n")
+        u.map_put(t.helpers, c"__bx_s", 1)
+    }
+    if u.map_has(t.helpers, c"__bx_argc") {
+        u.buf_add(b, c"fn __bx_argc(a, b, c, d, e, f, g, h, i) {\n    n = 0\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            n += 1\n        }\n    }\n    return n\n}\n\n")
+    }
+    if u.map_has(t.helpers, c"__bx_args") {
+        u.buf_add(b, c"fn __bx_args(a, b, c, d, e, f, g, h, i) {\n    out = []\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            out.append(v)\n        }\n    }\n    return out\n}\n\n")
+    }
+    if u.map_has(t.helpers, c"__bx_range") {
+        u.buf_add(b, c"fn __bx_range(a, b) {\n    lo = int(a)\n    hi = int(b)\n    out = []\n    if lo <= hi {\n        for i in range(lo, hi + 1) {\n            out.append(i)\n        }\n    } else {\n        for i in range(hi, lo + 1) {\n            out.append(i)\n        }\n        out.sort()\n    }\n    return out\n}\n\n")
+    }
+    if u.map_has(t.helpers, c"__bx_glob") {
+        u.buf_add(b, c"fn __bx_glob(p, s) {\n    pi = 0\n    si = 0\n    star = -1\n    mark = 0\n    while si < len(s) {\n        if pi < len(p) and (p[pi] == \"?\" or p[pi] == s[si]) {\n            pi += 1\n            si += 1\n        } elif pi < len(p) and p[pi] == \"*\" {\n            star = pi\n            mark = si\n            pi += 1\n        } elif star != -1 {\n            pi = star + 1\n            mark += 1\n            si = mark\n        } else {\n            return false\n        }\n    }\n    while pi < len(p) and p[pi] == \"*\" {\n        pi += 1\n    }\n    return pi == len(p)\n}\n\n")
+        u.map_put(t.helpers, c"__bx_s", 1)
+    }
+    if u.map_has(t.helpers, c"__bx_sync_args") {
+        u.buf_add(b, c"fn __bx_sync_args(a, b, c, d, e, f, g, h, i) {\n    shell(\"__arg1=\" + __bx_quote(a))\n    shell(\"__arg2=\" + __bx_quote(b))\n    shell(\"__arg3=\" + __bx_quote(c))\n    shell(\"__arg4=\" + __bx_quote(d))\n    shell(\"__arg5=\" + __bx_quote(e))\n    shell(\"__arg6=\" + __bx_quote(f))\n    shell(\"__arg7=\" + __bx_quote(g))\n    shell(\"__arg8=\" + __bx_quote(h))\n    shell(\"__arg9=\" + __bx_quote(i))\n    shell(\"__bx_argc_shell=\" + str(__bx_argc(a, b, c, d, e, f, g, h, i)))\n}\n\n")
+        u.map_put(t.helpers, c"__bx_quote", 1)
+        u.map_put(t.helpers, c"__bx_argc", 1)
+    }
+    return u.buf_take(b)
+}
+
+fn finish(t: mut ref Tr) ref u8 = trust {
+    if t.seeds.len > 0 {
+        use_helper(t, c"__bx_s")
+    }
+    val prelude: ref u8 = helper_prelude(t)
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"#!/usr/bin/env blood\n")
+    if u.s_len(prelude) > 0 {
+        u.buf_add(b, c"\n")
+        u.buf_add(b, prelude)
+    }
+    if t.seeds.len > 0 {
+        val i: mut i64 = 0
+        for {
+            if i >= t.seeds.len {
+                break
+            }
+            val name: ref u8 = u.vec_p(t.seeds, i) as ref u8
+            u.buf_add(b, name)
+            u.buf_add(b, c" = __bx_s(env(")
+            u.buf_add(b, quote_sq(name))
+            u.buf_add(b, c"))\n")
+            i++
+        }
+        u.buf_ch(b, 10)
+    }
+    u.buf_add(b, u.buf_view(t.out))
+    return u.buf_take(b)
+}
+
+fn is_reserved(name: ref u8) bool = trust {
+    if u.s_eq(name, c"status") || u.s_eq(name, c"args") || u.s_eq(name, c"__file__") {
+        return true
+    }
+    if u.s_eq(name, c"true") || u.s_eq(name, c"false") || u.s_eq(name, c"null") || u.s_eq(name, c"none") {
+        return true
+    }
+    if u.s_eq(name, c"if") || u.s_eq(name, c"elif") || u.s_eq(name, c"else") || u.s_eq(name, c"while") {
+        return true
+    }
+    if u.s_eq(name, c"for") || u.s_eq(name, c"in") || u.s_eq(name, c"fn") || u.s_eq(name, c"return") {
+        return true
+    }
+    if u.s_eq(name, c"break") || u.s_eq(name, c"continue") || u.s_eq(name, c"pass") || u.s_eq(name, c"try") {
+        return true
+    }
+    if u.s_eq(name, c"catch") || u.s_eq(name, c"except") || u.s_eq(name, c"raise") || u.s_eq(name, c"throw") {
+        return true
+    }
+    if u.s_eq(name, c"say") || u.s_eq(name, c"para") || u.s_eq(name, c"and") || u.s_eq(name, c"or") || u.s_eq(name, c"not") {
+        return true
+    }
+    return false
+}
+
+fn seed_name(t: mut ref Tr, name: ref u8) void = trust {
+    if u.s_len(name) == 0 || !is_ident(name) || is_reserved(name) {
+        return
+    }
+    if u.map_has(t.assigned, name) {
+        return
+    }
+    u.map_put(t.assigned, name, 1)
+    u.vec_pushp(t.seeds, u.s_dup(name) as ref void)
+}
+
+fn seed_read_names(t: mut ref Tr, s: ref u8, start: i64) void = trust {
+    val words: ref u.Vec = split_words(u.s_substr(s, start, u.s_len(s)))
+    val i: mut i64 = 0
+    for {
+        if i >= words.len {
+            break
+        }
+        val w: ref Word = u.vec_p(words, i) as ref Word
+        if w.kind != 0 {
+            seed_name(t, u.s_trim(strip_quotes(w.raw)))
+        } elif !u.s_starts(w.raw, c"-") {
+            seed_name(t, w.raw)
+        }
+        i++
+    }
+}
+
+/// Collect names that are assigned anywhere in the script. Bash variables
+/// inherit the environment, so the generated script seeds each name from the
+/// environment before the translated body runs. Knowing the names up front
+/// also lets references that appear before the first assignment resolve to
+/// the script variable instead of a literal environment lookup.
+fn scan_assigned(t: mut ref Tr, lines: ref u.Vec) void = trust {
+    val li: mut i64 = 0
+    for {
+        if li >= lines.len {
+            break
+        }
+        val line: ref u8 = u.s_trim(u.vec_p(lines, li) as ref u8)
+        val n: i64 = u.s_len(line)
+        val i: mut i64 = 0
+        val allow: mut bool = true
+        for {
+            if i >= n {
+                break
+            }
+            val c: u8 = ch_at(line, i)
+            if c == 35 {
+                break
+            }
+            if c == 39 || c == 34 {
+                val q: u8 = c
+                i++
+                for {
+                    if i >= n {
+                        break
+                    }
+                    if q == 34 && ch_at(line, i) == 92 {
+                        i += 2
+                        continue
+                    }
+                    if ch_at(line, i) == q {
+                        i++
+                        break
+                    }
+                    i++
+                }
+                continue
+            }
+            if c == 59 || c == 38 || c == 124 || c == 123 || c == 125 || c == 40 || c == 41 {
+                allow = true
+                i++
+                continue
+            }
+            if is_space(c) {
+                i++
+                continue
+            }
+            if !is_ident_start(c) {
+                allow = false
+                i++
+                continue
+            }
+            val e: i64 = read_ident_at(line, i)
+            val name: ref u8 = u.s_substr(line, i, e)
+            val next: i64 = skip_ws(line, e)
+            i = e
+            if next < n && ch_at(line, next) == 61 {
+                if allow {
+                    seed_name(t, name)
+                }
+                allow = false
+                i = next + 1
+                continue
+            }
+            if next < n && ch_at(line, next) == 43 && next + 1 < n && ch_at(line, next + 1) == 61 {
+                if allow {
+                    seed_name(t, name)
+                }
+                allow = false
+                i = next + 2
+                continue
+            }
+            if u.s_eq(name, c"export") || u.s_eq(name, c"local") || u.s_eq(name, c"declare") || u.s_eq(name, c"typeset") || u.s_eq(name, c"readonly") {
+                allow = true
+                i = next
+                continue
+            }
+            if u.s_eq(name, c"for") {
+                val v: i64 = skip_ws(line, next)
+                if v < n && is_ident_start(ch_at(line, v)) {
+                    seed_name(t, u.s_substr(line, v, read_ident_at(line, v)))
+                    i = read_ident_at(line, v)
+                }
+                allow = false
+                continue
+            }
+            if u.s_eq(name, c"read") {
+                seed_read_names(t, line, next)
+                allow = false
+                continue
+            }
+            allow = false
+            i = next
+        }
+        li++
+    }
+}
+
+pub fn translate_text(src: ref u8) ref u8 = trust {
+    val t: mut ref Tr = tr_new()
+    val raw: ref u.Vec = collect_lines(src)
+    val lines: ref u.Vec = join_continuations(raw)
+    t.funcs = scan_functions(lines)
+    scan_assigned(t, lines)
+    val i: mut i64 = 0
+    for {
+        if i >= lines.len {
+            break
+        }
+        val line: ref u8 = u.vec_p(lines, i) as ref u8
+        val trimmed: ref u8 = u.s_trim(line)
+        if i == 0 && u.s_starts(trimmed, c"#!") {
+            i++
+            continue
+        }
+        tr_one(t, line)
+        i++
+    }
+    return finish(t)
+}
+
+// ---------------------------------------------------------------------------
+// Files and directories
+// ---------------------------------------------------------------------------
+
+pub fn output_name(path: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(path)
+    if u.s_ends_with(path, c".sh") {
+        return u.s_cat(u.s_substr(path, 0, n - 3), c".bx")
+    }
+    if u.s_ends_with(path, c".bash") {
+        return u.s_cat(u.s_substr(path, 0, n - 5), c".bx")
+    }
+    return u.s_cat(path, c".bx")
+}
+
+fn is_bash_file(name: ref u8) bool = trust {
+    return u.s_ends_with(name, c".sh") || u.s_ends_with(name, c".bash")
+}
+
+fn translate_one_file(src_path: ref u8, dst_path: ref u8) i32 = trust {
+    val text: ref u8 = u.read_file(src_path)
+    if text == none {
+        u.write_fd(2, u.s_cat3(c"blood: ", src_path, c": cannot read\n"))
+        return 1
+    }
+    val out: ref u8 = translate_text(text)
+    u.mkdir_p(u.path_dir(dst_path))
+    if !u.write_file(dst_path, out) {
+        u.write_fd(2, u.s_cat3(c"blood: ", dst_path, c": cannot write\n"))
+        return 1
+    }
+    u.stdout_ln(u.s_cat4(src_path, c" -> ", dst_path, c""))
+    return 0
+}
+
+fn trim_trailing_slash(s: ref u8) ref u8 = trust {
+    val n: mut i64 = u.s_len(s)
+    for {
+        if n <= 1 {
+            break
+        }
+        if ch_at(s, n - 1) != 47 {
+            break
+        }
+        n--
+    }
+    return u.s_substr(s, 0, n)
+}
+
+fn rel_under(root: ref u8, full: ref u8) ref u8 = trust {
+    val r: ref u8 = trim_trailing_slash(root)
+    if u.s_starts(full, r) {
+        val rest: ref u8 = u.s_substr(full, u.s_len(r), u.s_len(full))
+        if u.s_starts(rest, c"/") {
+            return u.s_substr(rest, 1, u.s_len(rest))
+        }
+        return rest
+    }
+    return u.s_dup(full)
+}
+
+fn walk_dir(
+    c: mut ref Tr,
+    dir: ref u8,
+    root: ref u8,
+    out_dir: ref u8,
+    recursive: bool,
+    counts: mut ref u.Vec
+) void = trust {
+    val d: ref void = u.dir_open(dir)
+    if d == none {
+        u.write_fd(2, u.s_cat3(c"blood: ", dir, c": cannot open directory\n"))
+        return
+    }
+    for {
+        val typ: mut u8 = 0
+        val name: ref u8 = u.dir_next_type(d, @addr(typ))
+        if name == none {
+            break
+        }
+        if u.s_len(name) == 0 || u.s_eq(name, c".") || u.s_eq(name, c"..") {
+            continue
+        }
+        val full: ref u8 = u.path_join(dir, name)
+        val directory: mut bool = typ == 4
+        if typ == 0 {
+            directory = u.is_dir(full)
+        }
+        if directory {
+            if recursive {
+                walk_dir(c, full, root, out_dir, recursive, counts)
+            }
+            continue
+        }
+        if !is_bash_file(name) {
+            continue
+        }
+        val dst: mut ref u8 = output_name(full)
+        if out_dir != none && u.s_len(out_dir) > 0 {
+            val rel: ref u8 = rel_under(root, full)
+            dst = u.path_join(out_dir, output_name(rel))
+        }
+        val rc: i32 = translate_one_file(full, dst)
+        u.vec_sets(counts, 0, u.vec_gets(counts, 0) + 1)
+        if rc == 0 {
+            u.vec_sets(counts, 1, u.vec_gets(counts, 1) + 1)
+        }
+    }
+    u.dir_close(d)
+}
+
+pub fn translate_path(path: ref u8, out_dir: ref u8) i32 = trust {
+    val target: ref u8 = u.expand_tilde(u.s_trim(path))
+    val counts: mut ref u.Vec = u.vec_new()
+    u.vec_push(counts, 0)
+    u.vec_push(counts, 0)
+    if u.is_dir(target) {
+        walk_dir(tr_new(), target, target, out_dir, true, counts)
+    } elif u.file_exists(target) {
+        val dst: mut ref u8 = output_name(target)
+        if out_dir != none && u.s_len(out_dir) > 0 {
+            dst = u.path_join(out_dir, output_name(u.path_base(target)))
+        }
+        val rc: i32 = translate_one_file(target, dst)
+        u.vec_sets(counts, 0, u.vec_gets(counts, 0) + 1)
+        if rc == 0 {
+            u.vec_sets(counts, 1, u.vec_gets(counts, 1) + 1)
+        }
+    } else {
+        u.write_fd(2, u.s_cat3(c"blood: ", target, c": no such file or directory\n"))
+        return 1
+    }
+    val total: i64 = u.vec_gets(counts, 0)
+    val good: i64 = u.vec_gets(counts, 1)
+    if total == 0 {
+        u.write_fd(2, u.s_cat3(c"blood: ", target, c": no .sh or .bash files found\n"))
+        return 1
+    }
+    u.stdout_ln(u.s_cat(c"translated ", u.s_cat(u.s_int(good), u.s_cat(c" of ", u.s_cat(u.s_int(total), c" file(s)")))))
+    if good != total {
+        return 1
+    }
+    return 0
+}
+
+pub fn translate_paths(paths: ref u.Vec, out_dir: ref u8) i32 = trust {
+    val status: mut i32 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= paths.len {
+            break
+        }
+        val p: ref u8 = u.vec_p(paths, i) as ref u8
+        val rc: i32 = translate_path(p, out_dir)
+        if rc != 0 {
+            status = rc
+        }
+        i++
+    }
+    return status
+}
