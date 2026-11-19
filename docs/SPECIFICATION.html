@@ -2953,7 +2953,9 @@ PLACE %= expression</code></pre>
 <p>Variables must be introduced with <code>var</code> before they can be assigned. A <code>var</code>
 declaration creates a binding in the current scope and reports an error if the
 name is already declared there. The bulk form declares several variables at
-once. Declarations in a bulk block are separated by newlines or commas.</p>
+once. Declarations in a bulk block are separated by newlines or commas.
+Declarations made inside a <code>for</code> or <code>while</code> body are local to that body and are
+reset on each iteration.</p>
 </div>
 <div class="paragraph">
 <p>Plain assignments do not create bindings. If the target variable does not exist
@@ -4504,7 +4506,7 @@ shell("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-19 22:50:53 UTC
+Last updated 2026-11-19 23:07:33 UTC
 </div>
 </div>
 </body>

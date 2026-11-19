@@ -63,14 +63,12 @@ say("==> running samples")
 
 var failures    = 0
 var count       = 0
-var name        = ""
-var expected    = ""
 var sample_args = []
 var want        = ""
 
 for sample in glob("samples/*.bx") {
-    name     = stem(sample)
-    expected = "samples/expected/{name}.out"
+    var name     = stem(sample)
+    var expected = "samples/expected/{name}.out"
 
     if not is_file(expected) {
         say("FAIL {name}: missing expected output ({expected})")

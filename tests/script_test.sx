@@ -417,3 +417,11 @@ test "script supports bulk var declarations" {
         assert run(src) == 0
     }
 }
+
+test "script var declarations are fresh on each loop iteration" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var total = 0\nfor x in [1, 2, 3] {\n    var doubled = x * 2\n    total += doubled\n}\nif total != 12 {\n    raise \"for var\"\n}\nvar n = 0\nwhile n < 3 {\n    var label = \"iteration\"\n    if label != \"iteration\" {\n        raise \"while var\"\n    }\n    n += 1\n}\nif n != 3 {\n    raise \"while count\"\n}\n"
+        assert run(src) == 0
+    }
+}

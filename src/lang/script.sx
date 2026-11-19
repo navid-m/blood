@@ -2665,6 +2665,10 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         return
     }
     if n.kind == lang.NodeKind.While {
+        val body: ref lang.Node = u.vec_p(n.kids, 1) as ref lang.Node
+        val decls: mut ref u.Vec = u.vec_new()
+        collect_var_decls(body, decls)
+        val loop_env: mut ref Env = env_new(env)
         for {
             if u.interrupt_flag != 0 {
                 u.interrupt_flag = 0
@@ -2684,7 +2688,8 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
             if !truthy(cond) {
                 break
             }
-            exec_block(u.vec_p(n.kids, 1) as ref lang.Node, env, false)
+            clear_var_decls(loop_env, decls)
+            exec_block(body, loop_env, false)
             if g_flow == 1 {
                 g_flow = 0
                 break
@@ -2708,6 +2713,10 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         if g_flow != 0 || iterable == none {
             return
         }
+        val body: ref lang.Node = u.vec_p(n.kids, 1) as ref lang.Node
+        val decls: mut ref u.Vec = u.vec_new()
+        collect_var_decls(body, decls)
+        val loop_env: mut ref Env = env_new(env)
         if iterable.tag == 5 {
             val vec: ref u.Vec = iterable.p as ref u.Vec
             val i: mut i64 = 0
@@ -2721,7 +2730,8 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                     break
                 }
                 env_assign(env, n.s, u.vec_p(vec, i) as ref Value)
-                exec_block(u.vec_p(n.kids, 1) as ref lang.Node, env, false)
+                clear_var_decls(loop_env, decls)
+                exec_block(body, loop_env, false)
                 if g_flow == 1 {
                     g_flow = 0
                     break
@@ -2751,7 +2761,8 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                 }
                 val j: i64 = u.utf8_next(s, i, len)
                 env_assign(env, n.s, v_str(u.s_substr(s, i, j)))
-                exec_block(u.vec_p(n.kids, 1) as ref lang.Node, env, false)
+                clear_var_decls(loop_env, decls)
+                exec_block(body, loop_env, false)
                 if g_flow == 1 {
                     g_flow = 0
                     break
@@ -2780,7 +2791,8 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                 }
                 if u.map_used_at(m, i) {
                     env_assign(env, n.s, v_str(u.s_dup(u.map_key_at(m, i))))
-                    exec_block(u.vec_p(n.kids, 1) as ref lang.Node, env, false)
+                    clear_var_decls(loop_env, decls)
+                    exec_block(body, loop_env, false)
                     if g_flow == 1 {
                         g_flow = 0
                         break
@@ -2904,6 +2916,34 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
     val v: ref Value = eval(n, env)
     if toplevel && g_interactive != 0 && g_flow == 0 && !is_nil(v) {
         u.stdout_s(u.s_cat(v_to_str(v), c"\n"))
+    }
+}
+
+fn collect_var_decls(n: ref lang.Node, out: mut ref u.Vec) void = trust {
+    if n == none {
+        return
+    }
+    if n.kind == lang.NodeKind.VarDecl && n.s != none {
+        u.vec_pushp(out, n.s as ref void)
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= n.kids.len {
+            break
+        }
+        collect_var_decls(u.vec_p(n.kids, i) as ref lang.Node, out)
+        i++
+    }
+}
+
+fn clear_var_decls(env: mut ref Env, names: ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= names.len {
+            break
+        }
+        u.map_del(env.vars, u.vec_p(names, i) as ref u8)
+        i++
     }
 }
 
