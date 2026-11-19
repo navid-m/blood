@@ -1,0 +1,65 @@
+val u      = use("../src/util.sx")
+val cfg    = use("../src/config.sx")
+val prompt = use("../src/prompt.sx")
+
+test "privacy mode hides identity and restores it" {
+    trust {
+        if prompt.privacy_enabled() {
+            prompt.toggle_privacy()
+        }
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.theme = u.s_dup(c"plain")
+        c.show_git = 0
+        c.show_time = 0
+        c.show_jobs = 0
+        c.show_exit_status = 0
+        c.show_duration = 0
+        c.directory_style = u.s_dup(c"basename")
+
+        val shown: ref u8 = prompt.render(c, 0, 0, 0)
+        assert u.s_contains(shown, u.username())
+        assert u.s_contains(shown, u.path_base(u.cwd()))
+
+        prompt.toggle_privacy()
+        val hidden: ref u8 = prompt.render(c, 0, 0, 0)
+        prompt.toggle_privacy()
+        val restored: ref u8 = prompt.render(c, 0, 0, 0)
+
+        assert !u.s_contains(hidden, u.username())
+        assert !u.s_contains(hidden, u.path_base(u.cwd()))
+        if u.s_len(u.hostname()) > 0 {
+            assert !u.s_contains(hidden, u.hostname())
+        }
+        assert u.s_contains(hidden, c">")
+        assert u.s_contains(restored, u.username())
+        assert u.s_contains(restored, u.path_base(u.cwd()))
+        assert !prompt.privacy_enabled()
+    }
+}
+
+test "privacy mode also hides the directory in right themes" {
+    trust {
+        if prompt.privacy_enabled() {
+            prompt.toggle_privacy()
+        }
+        val c: mut ref cfg.Config = cfg.default_config()
+        c.theme = u.s_dup(c"right")
+        c.show_git = 0
+        c.show_time = 0
+        c.show_jobs = 0
+        c.show_exit_status = 0
+        c.show_duration = 0
+
+        prompt.toggle_privacy()
+        val hidden: ref u8 = prompt.render(c, 0, 0, 0)
+        prompt.toggle_privacy()
+
+        assert !u.s_contains(hidden, u.username())
+        assert !u.s_contains(hidden, u.path_base(u.cwd()))
+        if u.s_len(u.hostname()) > 0 {
+            assert !u.s_contains(hidden, u.hostname())
+        }
+        assert u.s_contains(hidden, c">")
+        assert !prompt.privacy_enabled()
+    }
+}

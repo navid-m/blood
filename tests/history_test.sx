@@ -1,5 +1,5 @@
-val u = use("../src/util.sx")
-val cfg = use("../src/config.sx")
+val u    = use("../src/util.sx")
+val cfg  = use("../src/config.sx")
 val hist = use("../src/history.sx")
 
 fn new_history(path: ref u8) ref hist.History = trust {
@@ -85,6 +85,37 @@ test "history searches backwards and case-insensitively" {
         assert hist.ci_contains(c"Hello World", c"lo wo")
         assert hist.ci_contains(c"Hello", c"")
         assert !hist.ci_contains(c"hi", c"hello")
+    }
+}
+
+test "history suggests the newest matching prefix" {
+    trust {
+        val h: mut ref hist.History = new_history(c"/tmp/blood-unit-history-suggest")
+        hist.history_add(h, c"git status")
+        hist.history_add(h, c"git stash")
+        hist.history_add(h, c"echo hi")
+        assert u.s_eq(hist.history_suggest(h, c"git s", true), c"git stash")
+        assert u.s_eq(hist.history_suggest(h, c"GIT S", false), c"git stash")
+        assert u.s_eq(hist.history_suggest(h, c"git", true), c"git stash")
+        assert hist.history_suggest(h, c"git stash", true) == none
+        assert hist.history_suggest(h, c"nope", true) == none
+        assert hist.history_suggest(h, c"", true) == none
+    }
+}
+
+test "history suggestions skip multi-line entries" {
+    trust {
+        val h: mut ref hist.History = new_history(c"/tmp/blood-unit-history-suggest-multiline")
+        hist.history_add(h, c"line\nbreak")
+        assert hist.history_suggest(h, c"line", true) == none
+    }
+}
+
+test "history ensure creates the missing file" {
+    trust {
+        val h: mut ref hist.History = new_history(c"/tmp/blood-unit-history-ensure")
+        hist.history_ensure_file(h)
+        assert u.file_exists(c"/tmp/blood-unit-history-ensure")
     }
 }
 

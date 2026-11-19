@@ -5,8 +5,9 @@ val cfgmod  = use("config.sx")
 val histmod = use("history.sx")
 val shell   = use("shell.sx")
 val script  = use("script.sx")
+val prompt  = use("prompt.sx")
 
-val brand     = @embed("brand.txt")
+val brand = @embed("brand.txt")
 val brand_len = @embedlen("brand.txt")
 
 type LsEntry = {
@@ -151,6 +152,7 @@ fn print_help() void = trust {
         \\  :cfg.SECTION.KEY = VALUE   update and save configuration
         \\  :ft SEARCH                 find files by name under the current directory
         \\  :ls [PATH]                 list a directory as a Unicode table
+        \\  :privacy                   toggle hiding user, host and directory in the prompt
         \\  :rla                       reload configuration and .bloodrc
         \\  :where                     show configuration file paths
         \\
@@ -171,7 +173,16 @@ fn show_brand() void = trust {
     u.write_fd_n(1, brand, brand_len)
 }
 
-fn ls_triplet(b: mut ref u.Buf, m: u32, rbit: u32, wbit: u32, xbit: u32, sbit: u32, sc: ref u8, cc: ref u8) void = trust {
+fn ls_triplet(
+    b: mut ref u.Buf,
+    m: u32,
+    rbit: u32,
+    wbit: u32,
+    xbit: u32,
+    sbit: u32,
+    sc: ref u8,
+    cc: ref u8
+) void = trust {
     if m & rbit != 0 {
         u.buf_add(b, c"r")
     } else {
@@ -540,6 +551,14 @@ pub fn handle(line: ref u8, c: mut ref cfgmod.Config, h: mut ref histmod.History
     }
     if u.s_eq(rest, c"blood") {
         show_brand()
+        return 0
+    }
+    if u.s_eq(rest, c"privacy") {
+        if prompt.toggle_privacy() {
+            u.stdout_ln(c"privacy: on")
+        } else {
+            u.stdout_ln(c"privacy: off")
+        }
         return 0
     }
     if u.s_eq(rest, c"rla") {

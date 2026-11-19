@@ -94,6 +94,7 @@ pub type Editor = {
     search_query: mut ref u8
     search_index: mut i64
     search_orig: mut ref u8
+    suggestion: mut ref u8
 }
 
 fn const_icanon() u32 = trust {
@@ -462,6 +463,7 @@ pub fn editor_new(
     e.search_query = u.s_dup(c"")
     e.search_index = h.items.len - 1
     e.search_orig = u.s_dup(c"")
+    e.suggestion = none
     return e
 }
 
@@ -923,6 +925,43 @@ fn display_prompt(e: ref Editor, prompt: ref u8) ref u8 = trust {
     return u.buf_take(b)
 }
 
+/// Copy at most `maxw` visible cells of `s` without splitting a UTF-8 rune.
+fn fit_width(s: ref u8, maxw: i64) ref u8 = trust {
+    if maxw <= 0 {
+        return u.s_dup(c"")
+    }
+    if u.visible_width(s) <= maxw {
+        return u.s_dup(s)
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    val w: mut i64 = 0
+    for {
+        if i >= n || w >= maxw {
+            break
+        }
+        val next: i64 = u.utf8_next(s, i, n)
+        u.buf_addn(b, @ptradd(s, i), next - i)
+        w++
+        i = next
+    }
+    return u.buf_take(b)
+}
+
+fn accept_suggestion(e: mut ref Editor) bool = trust {
+    if e.suggestion == none || e.pos != e.len {
+        return false
+    }
+    if u.s_len(e.suggestion) <= e.len {
+        return false
+    }
+    ed_set(e, e.suggestion)
+    e.menu_active = 0
+    e.suggestion = none
+    return true
+}
+
 fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
     val pr: ref u8 = display_prompt(e, prompt)
     val prompt_row_count: i64 = prompt_rows(pr)
@@ -975,9 +1014,27 @@ fn draw(e: mut ref Editor, prompt: ref u8) void = trust {
         w = w + nw
         end = u.utf8_next(e.line, end, e.len)
     }
+    val suggestion: mut ref u8 = none
+    if e.cfg.completion_history_suggestions != 0 && e.hist != none && e.hist.enabled != 0 && e.menu_active == 0 && e.search_active == 0 && e.pos == e.len && e.len > 0 {
+        suggestion = histmod.history_suggest(
+            e.hist,
+            e.line,
+            e.cfg.completion_case_sensitive != 0
+        )
+    }
+    e.suggestion = suggestion
     val b: mut ref u.Buf = u.buf_new()
     u.buf_add(b, pr)
     emit_display_segment(b, e.line, e.view_start, end)
+    if suggestion != none && end == e.len && avail - w > 0 {
+        val suffix: ref u8 = u.s_substr(suggestion, e.len, u.s_len(suggestion))
+        val shown: ref u8 = fit_width(suffix, avail - w)
+        if u.s_len(shown) > 0 {
+            u.buf_add(b, e.cfg.color_muted)
+            u.buf_add(b, shown)
+            u.buf_add(b, c"\x1b[0m")
+        }
+    }
     u.buf_add(b, c"\x1b[J")
     if rightw > 0 {
         u.buf_add(b, u.s_cat3(c"\x1b[", u.s_int(termw - rightw + 1), c"G"))
@@ -1132,6 +1189,8 @@ fn read_escape(e: mut ref Editor) i64 = trust {
         if final == 67 {
             if e.pos < e.len {
                 e.pos = u.utf8_next(e.line, e.pos, e.len)
+            } else {
+                accept_suggestion(e)
             }
             return 1
         }
@@ -1146,7 +1205,9 @@ fn read_escape(e: mut ref Editor) i64 = trust {
             return 1
         }
         if final == 70 || u.s_eq(params, c"4") || u.s_eq(params, c"8") {
-            e.pos = e.len
+            if !accept_suggestion(e) {
+                e.pos = e.len
+            }
             return 1
         }
         if final == 90 {
@@ -1291,6 +1352,8 @@ pub fn readline(e: mut ref Editor, prompt: ref u8, right: ref u8) ref u8 = trust
         if k == 6 {
             if e.pos < e.len {
                 e.pos = u.utf8_next(e.line, e.pos, e.len)
+            } else {
+                accept_suggestion(e)
             }
             e.menu_active = 0
             draw(e, prompt)

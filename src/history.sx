@@ -115,6 +115,15 @@ pub fn history_apply_config(h: mut ref History, c: ref cfgmod.Config) void = tru
     }
 }
 
+/// Create an empty history file when history is enabled and none exists.
+pub fn history_ensure_file(h: ref History) void = trust {
+    if h.enabled == 0 || u.file_exists(h.file) {
+        return
+    }
+    u.mkdir_p(u.path_dir(h.file))
+    u.write_file(h.file, c"")
+}
+
 pub fn history_load(h: mut ref History) void = trust {
     if h.enabled == 0 {
         return
@@ -245,6 +254,61 @@ fn lower(c: u8) u8 = trust {
         return c + 32
     }
     return c
+}
+
+fn prefix_match(word: ref u8, cand: ref u8, case_sensitive: bool) bool = trust {
+    val wn: i64 = u.s_len(word)
+    if u.s_len(cand) < wn {
+        return false
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= wn {
+            break
+        }
+        val a: u8 = @load8(@ptradd(word, i))
+        val b: u8 = @load8(@ptradd(cand, i))
+        if case_sensitive {
+            if a != b {
+                return false
+            }
+        } else {
+            if lower(a) != lower(b) {
+                return false
+            }
+        }
+        i++
+    }
+    return true
+}
+
+/// Return the newest history entry that extends `line` (fish-style inline
+/// suggestion). Entries containing newlines are ignored.
+pub fn history_suggest(
+    h: ref History,
+    line: ref u8,
+    case_sensitive: bool
+) ref u8 = trust {
+    if h == none || u.s_len(line) == 0 {
+        return none
+    }
+    val n: i64 = u.s_len(line)
+    val i: mut i64 = h.items.len - 1
+    for {
+        if i < 0 {
+            break
+        }
+        val cand: ref u8 = u.vec_p(h.items, i) as ref u8
+        if u.s_len(cand) > n && prefix_match(
+            line,
+            cand,
+            case_sensitive
+        ) && u.s_index_of_char(cand, 10, 0) < 0 && u.s_index_of_char(cand, 13, 0) < 0 {
+            return cand
+        }
+        i--
+    }
+    return none
 }
 
 pub fn history_search(h: ref History, query: ref u8, from: i64) i64 = trust {

@@ -21,6 +21,21 @@ pub type PromptParts = {
 
 val git_cache: mut GitInfo = @zeroed
 val host_cache: mut ref u8 = none
+val privacy_mode: mut i64 = 0
+
+pub fn privacy_enabled() bool = trust {
+    return privacy_mode != 0
+}
+
+/// Toggle identity hiding in the prompt. Returns the new state.
+pub fn toggle_privacy() bool = trust {
+    if privacy_mode != 0 {
+        privacy_mode = 0
+    } else {
+        privacy_mode = 1
+    }
+    return privacy_mode != 0
+}
 
 fn host_name() ref u8 = trust {
     if host_cache == none {
@@ -603,8 +618,8 @@ fn render_powerline(
     }
     if count > 0 {
         pl_tail(lb, u.vec_p(colors, count - 1) as ref u8)
+        u.buf_add(lb, c"\n")
     }
-    u.buf_add(lb, c"\n")
     u.buf_add(lb, style(c.color_primary, c"❯"))
     u.buf_ch(lb, 32)
     return make_parts(lb, rb)
@@ -620,7 +635,9 @@ fn render_right(
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
     val dir: ref u8 = u.cwd()
-    u.buf_add(lb, style(c.color_directory, full_text(dir)))
+    if c.show_directory != 0 {
+        u.buf_add(lb, style(c.color_directory, full_text(dir)))
+    }
     u.buf_add(lb, style(c.color_primary, c">"))
     u.buf_ch(lb, 32)
     val wrote: mut bool = false
@@ -651,8 +668,10 @@ fn render_right_time(
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
     val dir: ref u8 = u.cwd()
-    u.buf_add(lb, style(c.color_directory, full_text(dir)))
-    u.buf_ch(lb, 32)
+    if c.show_directory != 0 {
+        u.buf_add(lb, style(c.color_directory, full_text(dir)))
+        u.buf_ch(lb, 32)
+    }
     u.buf_add(lb, style(c.color_primary, c"❯"))
     u.buf_ch(lb, 32)
     val wrote: mut bool = false
@@ -786,7 +805,9 @@ fn render_compact(
     val rb: mut ref u.Buf = u.buf_new()
     u.buf_add(lb, c"\x1b[0m")
     val dir: ref u8 = u.cwd()
-    u.buf_add(lb, style(c.color_directory, compact_text(dir)))
+    if c.show_directory != 0 {
+        u.buf_add(lb, style(c.color_directory, compact_text(dir)))
+    }
     if c.show_git != 0 {
         val gi: GitInfo = git_info(dir, true)
         if gi.valid == 1 {
@@ -965,7 +986,7 @@ fn render_doubleline(
     return make_parts(lb, rb)
 }
 
-pub fn render_parts(
+fn dispatch_parts(
     c: ref cfgmod.Config,
     status: i32,
     duration_ms: i64,
@@ -1005,6 +1026,22 @@ pub fn render_parts(
         return render_doubleline(c, status, duration_ms, jobs)
     }
     return render_default(c, status, duration_ms, jobs)
+}
+
+pub fn render_parts(
+    c: ref cfgmod.Config,
+    status: i32,
+    duration_ms: i64,
+    jobs: i64
+) PromptParts = trust {
+    if privacy_mode != 0 {
+        val pc: mut cfgmod.Config = @deref(c)
+        pc.show_username = 0
+        pc.show_hostname = 0
+        pc.show_directory = 0
+        return dispatch_parts(@addr(pc), status, duration_ms, jobs)
+    }
+    return dispatch_parts(c, status, duration_ms, jobs)
 }
 
 pub fn render(c: ref cfgmod.Config, status: i32, duration_ms: i64, jobs: i64) ref u8 = trust {

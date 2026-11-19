@@ -1,0 +1,35 @@
+val u     = use("../src/util.sx")
+val cfg   = use("../src/config.sx")
+val login = use("../src/login.sx")
+
+test "login and history suggestion configuration keys" {
+    trust {
+        val c: mut ref cfg.Config = cfg.default_config()
+        assert c.login == 0
+        assert c.completion_history_suggestions == 0
+        assert cfg.set_value(c, c"shell", c"login", c"true")
+        assert c.login == 1
+        assert cfg.set_value(c, c"completion", c"history_suggestions", c"on")
+        assert c.completion_history_suggestions == 1
+        assert cfg.set_value(c, c"completion", c"autosuggestions", c"off")
+        assert c.completion_history_suggestions == 0
+    }
+}
+
+test "merge_paths keeps order and drops duplicates" {
+    trust {
+        assert u.s_eq(login.merge_paths(c"a:b:c", c"b:d"), c"a:b:c:d")
+        assert u.s_eq(login.merge_paths(c"x:y", c""), c"x:y")
+        assert u.s_eq(login.merge_paths(c"", c"x:y"), c"x:y")
+        assert u.s_eq(login.merge_paths(c"a::b", c"a"), c"a:b")
+    }
+}
+
+test "path_from_helper extracts the PATH assignment" {
+    trust {
+        val out: ref u8 = c"PATH=\"/etc/bin:/usr/bin\"; export PATH;\n"
+        assert u.s_eq(login.path_from_helper(out), c"/etc/bin:/usr/bin")
+        assert login.path_from_helper(c"no path here") == none
+        assert login.path_from_helper(none) == none
+    }
+}

@@ -1,16 +1,17 @@
 /// Blood — an interactive shell and small brace-delimited scripting language.
 
-val u       = use("util.sx")
-val cfgmod  = use("config.sx")
-val histmod = use("history.sx")
-val prompt  = use("prompt.sx")
-val term    = use("terminal.sx")
-val ex      = use("exec.sx")
-val shell   = use("shell.sx")
-val script  = use("script.sx")
-val escape  = use("escape.sx")
-val flags   = use("std/flags")
-val env     = use("std/env")
+val u        = use("util.sx")
+val cfgmod   = use("config.sx")
+val histmod  = use("history.sx")
+val prompt   = use("prompt.sx")
+val term     = use("terminal.sx")
+val ex       = use("exec.sx")
+val shell    = use("shell.sx")
+val script   = use("script.sx")
+val escape   = use("escape.sx")
+val loginmod = use("login.sx")
+val flags    = use("std/flags")
+val env      = use("std/env")
 
 val VERSION: ref u8 = c"0.1.0"
 
@@ -36,6 +37,19 @@ fn on_interrupt(sig: i32) void = trust {
     u.interrupt_flag = 1
 }
 
+/// A login shell is traditionally invoked with argv[0] prefixed by '-'.
+fn login_argv(av: list[ref u8]) bool = trust {
+    val prog: ref u8 = arg_at(av, 0)
+    if prog == none || u.s_len(prog) == 0 {
+        return false
+    }
+    val base: ref u8 = u.path_base(prog)
+    if u.s_len(base) == 0 {
+        return false
+    }
+    return @load8(base) == 45
+}
+
 fn install_hooks() void = trust {
     u.run_shell_hook = shell.run_line
     u.run_capture_hook = shell.capture_text
@@ -48,7 +62,7 @@ fn print_version() void = trust {
 }
 
 fn print_help() void = trust {
-    val text: ref u8 = c"usage: blood [options] [script.blood|script.bx [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  -init            write a default configuration file\n  -version, -v     print the version\n  -help, -h        show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n"
+    val text: ref u8 = c"usage: blood [options] [script.blood|script.bx [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  -init            write a default configuration file\n  -login           initialize a login-shell environment\n  -version, -v     print the version\n  -help, -h        show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n"
     u.write_fd(1, text)
 }
 
@@ -361,24 +375,6 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
 
 pub fn main() i32 = trust {
     val av: list[ref u8] = @args()
-    u.scratch_begin()
-    val c: mut ref cfgmod.Config = cfgmod.load_config()
-    u.scratch_end()
-    u.scratch_begin()
-    ensure_config_dirs(c)
-    u.scratch_end()
-    ex.signal_ignore(3)
-    ex.signal_handler(2, on_interrupt)
-    ex.signal_ignore(15)
-    ex.signal_ignore(ex.sig_tstp())
-    val h: mut ref histmod.History = histmod.history_new(c)
-    u.scratch_begin()
-    histmod.history_load(h)
-    u.scratch_end()
-    shell.shell_init(c, h, false)
-    script.script_init()
-    install_hooks()
-    term.init_terminal()
     val fs_result = flags.new(c"blood", c"Blood shell and scripting language")
     val fs: mut flags.FlagSet = @zeroed
     match fs_result {
@@ -392,9 +388,11 @@ pub fn main() i32 = trust {
     }
     val show_version: mut bool = false
     val do_init: mut bool = false
+    val do_login: mut bool = false
     val command: mut ref u8 = none
     flags.bool_var(fs, c"version", c"v", @addr(show_version), c"print the version")
     flags.bool_var(fs, c"init", none, @addr(do_init), c"write a default configuration file")
+    flags.bool_var(fs, c"login", none, @addr(do_login), c"initialize a login-shell environment")
     flags.string_var(fs, c"c", none, @addr(command), c"execute a command or script and exit")
     flags.stop_at_positional(fs, true)
     match flags.parse(fs, av) {
@@ -419,6 +417,15 @@ pub fn main() i32 = trust {
         print_version()
         return 0
     }
+    val early_login: bool = do_login || login_argv(av)
+    if early_login {
+        u.scratch_begin()
+        loginmod.init(true)
+        u.scratch_end()
+    }
+    u.scratch_begin()
+    val c: mut ref cfgmod.Config = cfgmod.load_config()
+    u.scratch_end()
     if do_init {
         if cfgmod.init_config_file(c.path) {
             u.stdout_ln(u.s_cat(c"wrote ", c.path))
@@ -427,6 +434,26 @@ pub fn main() i32 = trust {
         u.write_fd(2, u.s_cat3(c"blood: cannot write ", c.path, c"\n"))
         return 1
     }
+    if !early_login {
+        u.scratch_begin()
+        loginmod.init(c.login != 0)
+        u.scratch_end()
+    }
+    u.scratch_begin()
+    ensure_config_dirs(c)
+    u.scratch_end()
+    ex.signal_ignore(3)
+    ex.signal_handler(2, on_interrupt)
+    ex.signal_ignore(15)
+    ex.signal_ignore(ex.sig_tstp())
+    val h: mut ref histmod.History = histmod.history_new(c)
+    u.scratch_begin()
+    histmod.history_load(h)
+    u.scratch_end()
+    shell.shell_init(c, h, false)
+    script.script_init()
+    install_hooks()
+    term.init_terminal()
     if command != none {
         val rest: ref u.Vec = vec_slice(all_args, 0)
         script.set_args(rest)
@@ -482,6 +509,7 @@ pub fn main() i32 = trust {
         u.scratch_end()
         return st
     }
+    histmod.history_ensure_file(h)
     shell.shell_init(c, h, true)
     run_bloodrc(c)
     run_startup(c)

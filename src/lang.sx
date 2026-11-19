@@ -986,9 +986,9 @@ fn is_compound(t: ref Token) bool = trust {
         t,
         c"if"
     ) || keyword(t, c"while") || keyword(t, c"for") || keyword(t, c"para") || keyword(
-            t,
-            c"fn"
-        ) || keyword(t, c"try")
+        t,
+        c"fn"
+    ) || keyword(t, c"try")
 }
 
 fn parse_shell_cmd(p: mut ref Parser, t: ref Token) ref Node = trust {
@@ -1242,7 +1242,10 @@ fn starts_shell(p: ref Parser) bool = trust {
         ) || u.s_eq(
             b.text,
             c"+="
-        ) || u.s_eq(b.text, c"-=") || u.s_eq(b.text, c"*=") || u.s_eq(b.text, c"/=") || u.s_eq(b.text, c"%=") {
+        ) || u.s_eq(
+            b.text,
+            c"-="
+        ) || u.s_eq(b.text, c"*=") || u.s_eq(b.text, c"/=") || u.s_eq(b.text, c"%=") {
             return false
         }
         if u.s_eq(

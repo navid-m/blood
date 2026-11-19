@@ -1,0 +1,218 @@
+/// Login-shell environment initialization.
+///
+/// Regular shells inherit the environment they are started with. This module
+/// adds the platform's login defaults on request, and provides a fallback
+/// `PATH` when none was inherited.
+
+val u  = use("util.sx")
+val ex = use("exec.sx")
+
+val DEFAULT_PATH: ref u8 = c"/usr/bin:/bin:/usr/sbin:/sbin"
+
+/// Apply login environment initialization when `login` is set, then make sure
+/// `PATH` is never left unset or empty.
+pub fn init(login: bool) void = trust {
+    if login {
+        when darwin {
+            apply_path_helper()
+        }
+        otherwise {
+            apply_etc_environment()
+        }
+    }
+    ensure_path()
+}
+
+/// Fill in a default `PATH` only when the inherited one is unset or empty.
+pub fn ensure_path() void = trust {
+    val current: ref u8 = u.env_get(c"PATH")
+    if current != none && u.s_len(current) > 0 {
+        return
+    }
+    u.env_set(c"PATH", default_path())
+}
+
+fn default_path() ref u8 = trust {
+    val argv: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(argv, c"/usr/bin/getconf" as ref void)
+    u.vec_pushp(argv, c"PATH" as ref void)
+    val out: ref u8 = ex.capture_argv(argv, true)
+    if out != none {
+        val value: ref u8 = u.s_trim(out)
+        if u.s_len(value) > 0 {
+            return value
+        }
+    }
+    return u.s_dup(DEFAULT_PATH)
+}
+
+// ---------------------------------------------------------------------------
+// macOS: /etc/paths and /etc/paths.d via path_helper
+// ---------------------------------------------------------------------------
+
+fn apply_path_helper() void = trust {
+    val extra: ref u8 = path_from_helper(path_helper_output())
+    if extra == none {
+        return
+    }
+    val current: ref u8 = u.env_get(c"PATH")
+    u.env_set(c"PATH", merge_paths(extra, current))
+}
+
+fn path_helper_output() ref u8 = trust {
+    val argv: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(argv, c"/usr/libexec/path_helper" as ref void)
+    u.vec_pushp(argv, c"-s" as ref void)
+    return ex.capture_argv(argv, true)
+}
+
+/// Extract the value of `PATH="..."` from `path_helper -s` output.
+pub fn path_from_helper(out: ref u8) ref u8 = trust {
+    if out == none {
+        return none
+    }
+    val key: ref u8 = c"PATH=\""
+    val at: i64 = u.s_find(out, key)
+    if at < 0 {
+        return none
+    }
+    val start: i64 = at + u.s_len(key)
+    val end: i64 = u.s_index_of_char(out, 34, start)
+    if end < 0 {
+        return none
+    }
+    return u.s_substr(out, start, end)
+}
+
+// ---------------------------------------------------------------------------
+// Linux: /etc/environment
+// ---------------------------------------------------------------------------
+
+fn apply_etc_environment() void = trust {
+    val data: ref u8 = u.read_file(c"/etc/environment")
+    if data == none {
+        return
+    }
+    val n: i64 = u.s_len(data)
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(data, i)) == 10 {
+            apply_env_line(u.s_substr(data, start, i))
+            start = i + 1
+        }
+        i++
+    }
+}
+
+fn apply_env_line(raw: ref u8) void = trust {
+    val t: ref u8 = u.s_trim(raw)
+    if u.s_len(t) == 0 || @load8(t) == 35 {
+        return
+    }
+    val body: mut ref u8 = t
+    if u.s_starts(body, c"export ") {
+        body = u.s_trim(u.s_substr(body, 7, u.s_len(body)))
+    }
+    val eq: i64 = u.s_index_of_char(body, 61, 0)
+    if eq <= 0 {
+        return
+    }
+    val name: ref u8 = u.s_trim(u.s_substr(body, 0, eq))
+    val value: ref u8 = strip_quotes(u.s_trim(u.s_substr(body, eq + 1, u.s_len(body))))
+    if u.s_len(name) == 0 {
+        return
+    }
+    if u.s_eq(name, c"PATH") {
+        val current: ref u8 = u.env_get(c"PATH")
+        u.env_set(c"PATH", merge_paths(value, current))
+        return
+    }
+    val existing: ref u8 = u.env_get(name)
+    if existing == none || u.s_len(existing) == 0 {
+        u.env_set(name, value)
+    }
+}
+
+fn strip_quotes(v: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(v)
+    if n >= 2 {
+        val a: u8 = @load8(v)
+        val b: u8 = @load8(@ptradd(v, n - 1))
+        if (a == 34 && b == 34) || (a == 39 && b == 39) {
+            return u.s_substr(v, 1, n - 1)
+        }
+    }
+    return v
+}
+
+// ---------------------------------------------------------------------------
+// PATH merging
+// ---------------------------------------------------------------------------
+
+fn vec_has(v: ref u.Vec, s: ref u8) bool = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= v.len {
+            break
+        }
+        if u.s_eq(u.vec_p(v, i) as ref u8, s) {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn add_path_part(parts: mut ref u.Vec, s: ref u8, start: i64, end: i64) void = trust {
+    if end <= start {
+        return
+    }
+    val raw: ref u8 = u.s_substr(s, start, end)
+    val part: ref u8 = u.expand_tilde(raw)
+    if u.s_len(part) > 0 && !vec_has(parts, part) {
+        u.vec_pushp(parts, part)
+    }
+}
+
+fn collect_path(parts: mut ref u.Vec, path: ref u8) void = trust {
+    if path == none {
+        return
+    }
+    val n: i64 = u.s_len(path)
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(path, i)) == 58 {
+            add_path_part(parts, path, start, i)
+            start = i + 1
+        }
+        i++
+    }
+}
+
+/// Merge two `PATH` values, dropping duplicates and keeping `primary` first.
+pub fn merge_paths(primary: ref u8, secondary: ref u8) ref u8 = trust {
+    val parts: mut ref u.Vec = u.vec_new()
+    collect_path(parts, primary)
+    collect_path(parts, secondary)
+    val b: mut ref u.Buf = u.buf_new()
+    val i: mut i64 = 0
+    for {
+        if i >= parts.len {
+            break
+        }
+        if i > 0 {
+            u.buf_ch(b, 58)
+        }
+        u.buf_add(b, u.vec_p(parts, i) as ref u8)
+        i++
+    }
+    return u.buf_take(b)
+}
