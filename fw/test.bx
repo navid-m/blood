@@ -14,14 +14,19 @@ fn fail(message) {
     exit(1)
 }
 
-root = capture("cd \"$(dirname \"{file}\")/..\" && pwd")
+root = capture("cd \"{this_dir()}/..\" && pwd").strip()
 if status != 0 {
     fail("error: could not determine project root")
 }
 
-cd "{root}"
+shell("cd \"{root}\"")
 
-tmp = capture("mktemp -d \"${TMPDIR:-/tmp}/blood-fw.XXXXXX\"")
+tmp_dir = env("TMPDIR")
+if tmp_dir == null or tmp_dir == "" {
+    tmp_dir = "/tmp"
+}
+
+tmp = capture("mktemp -d \"{tmp_dir}/blood-fw.XXXXXX\"").strip()
 if status != 0 {
     fail("error: could not create temporary directory")
 }
@@ -29,7 +34,7 @@ if status != 0 {
 blood_bin = env("BLOOD")
 
 if blood_bin == null or blood_bin == "" {
-    spectre = capture("command -v spectre")
+    spectre = capture("command -v spectre").strip()
 
     if status != 0 or spectre == "" {
         cleanup(tmp)
@@ -55,7 +60,7 @@ if status != 0 {
     fail("error: blood binary is not executable: {blood_bin}")
 }
 
-spectre = capture("command -v spectre")
+spectre = capture("command -v spectre").strip()
 
 if status == 0 and spectre != "" {
     say("==> running unit tests")
@@ -78,7 +83,7 @@ if status == 0 and spectre != "" {
         fail("unit tests failed")
     }
 
-    passes = capture("grep -c '^\\[pass\\]' \"{unit_log}\"")
+    passes = capture("grep -c '^\\[pass\\]' \"{unit_log}\"").strip()
 
     say("    {passes} unit tests passed")
 } else {
