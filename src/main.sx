@@ -266,7 +266,7 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
         if escape.is_command(trimmed) {
             histmod.history_add(h, trimmed)
             u.interrupt_flag = 0
-            term.command_start()
+            term.command_start(trimmed)
             val st: i32 = escape.handle(trimmed, c, h)
             status = st as i64
             script.set_external_status(status)
@@ -337,7 +337,7 @@ fn interactive_loop(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = 
         }
         histmod.history_add(h, full)
         u.interrupt_flag = 0
-        term.command_start()
+        term.command_start(full)
         val started: i64 = u.now_ms()
         if script.looks_like_script(full) {
             val st: i32 = script.run_interactive(full)

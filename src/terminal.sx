@@ -59,6 +59,8 @@ pub type TermState = {
 }
 
 val term: mut TermState = @zeroed
+val vscode_integration: mut i64 = 0
+val vscode_announced: mut i64 = 0
 
 /// Bytes read while probing the terminal for its cursor position. They are
 /// genuine keystrokes (typed ahead while a command was running) and are fed
@@ -173,6 +175,11 @@ pub fn init_terminal() void = trust {
         term.have_tty = 0
     }
     term.raw_active = 0
+    vscode_integration = 0
+    val program: ref u8 = u.env_get(c"TERM_PROGRAM")
+    if program != none && u.s_eq(program, c"vscode") {
+        vscode_integration = 1
+    }
 }
 
 pub fn have_tty() bool = trust {
@@ -278,6 +285,43 @@ fn append_osc_133(b: mut ref u.Buf, body: ref u8) void = trust {
     u.buf_ch(b, 7)
 }
 
+fn append_osc_633(b: mut ref u.Buf, body: ref u8) void = trust {
+    u.buf_add(b, c"\x1b]633;")
+    u.buf_add(b, body)
+    u.buf_ch(b, 7)
+}
+
+fn append_escaped_value(b: mut ref u.Buf, value: ref u8) void = trust {
+    val n: i64 = u.s_len(value)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(value, i))
+        if c == 92 {
+            u.buf_add(b, c"\\\\")
+        } elif c == 59 {
+            u.buf_add(b, c"\\x3b")
+        } elif c < 32 {
+            u.buf_add(b, c"\\x")
+            u.buf_ch(b, hex_digit(c / 16))
+            u.buf_ch(b, hex_digit(c % 16))
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+}
+
+fn append_osc_633_property(b: mut ref u.Buf, name: ref u8, value: ref u8) void = trust {
+    u.buf_add(b, c"\x1b]633;P;")
+    u.buf_add(b, name)
+    u.buf_ch(b, 61)
+    append_escaped_value(b, value)
+    u.buf_ch(b, 7)
+}
+
 fn append_osc_7(b: mut ref u.Buf) void = trust {
     u.buf_add(b, c"\x1b]7;file://")
     append_host(b, u.hostname())
@@ -286,16 +330,31 @@ fn append_osc_7(b: mut ref u.Buf) void = trust {
 }
 
 /// Tell the terminal that command output is about to start.
-pub fn command_start() void = trust {
-    write_s(c"\x1b]133;C\x07")
+pub fn command_start(command_line: ref u8) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    if vscode_integration != 0 {
+        u.buf_add(b, c"\x1b]633;E;")
+        append_escaped_value(b, command_line)
+        u.buf_ch(b, 7)
+        append_osc_633(b, c"C")
+    } else {
+        append_osc_133(b, c"C")
+    }
+    write_s(u.buf_take(b))
 }
 
 /// Tell the terminal that the previous command finished with `status`.
 pub fn command_finished(status: i32) void = trust {
     val b: mut ref u.Buf = u.buf_new()
-    u.buf_add(b, c"\x1b]133;D;")
-    u.buf_add(b, u.s_int(status as i64))
-    u.buf_ch(b, 7)
+    if vscode_integration != 0 {
+        u.buf_add(b, c"\x1b]633;D;")
+        u.buf_add(b, u.s_int(status as i64))
+        u.buf_ch(b, 7)
+    } else {
+        u.buf_add(b, c"\x1b]133;D;")
+        u.buf_add(b, u.s_int(status as i64))
+        u.buf_ch(b, 7)
+    }
     write_s(u.buf_take(b))
 }
 
@@ -1270,15 +1329,36 @@ fn draw(e: mut ref Editor, prompt: ref u8, kind: i64) void = trust {
     val b: mut ref u.Buf = u.buf_new()
     if fresh {
         append_osc_7(b)
-        if kind == 1 {
-            append_osc_133(b, c"A;k=s")
+        if vscode_integration != 0 {
+            if kind == 1 {
+                append_osc_633(b, c"F")
+            } else {
+                if vscode_announced == 0 {
+                    append_osc_633_property(b, c"HasRichCommandDetection", c"True")
+                    vscode_announced = 1
+                }
+                append_osc_633_property(b, c"Cwd", u.cwd())
+                append_osc_633(b, c"A")
+            }
         } else {
-            append_osc_133(b, c"A")
+            if kind == 1 {
+                append_osc_133(b, c"A;k=s")
+            } else {
+                append_osc_133(b, c"A")
+            }
         }
     }
     u.buf_add(b, pr)
     if fresh {
-        append_osc_133(b, c"B")
+        if vscode_integration != 0 {
+            if kind == 1 {
+                append_osc_633(b, c"G")
+            } else {
+                append_osc_633(b, c"B")
+            }
+        } else {
+            append_osc_133(b, c"B")
+        }
     }
     emit_display_segment(b, e.line, e.view_start, end)
     if suggestion != none && end == e.len && avail - w > 0 {
