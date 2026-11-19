@@ -943,6 +943,9 @@ fn native_id(name: ref u8) i64 = trust {
     if u.s_eq(name, c"glob") {
         return 29
     }
+    if u.s_eq(name, c"rename") {
+        return 30
+    }
     return 0
 }
 
@@ -1243,6 +1246,11 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
             }
         }
         return v_list(out)
+    }
+    if id == 30 {
+        val from: ref u8 = u.expand_tilde(v_to_str(arg(args, 0)))
+        val to: ref u8 = u.expand_tilde(v_to_str(arg(args, 1)))
+        return v_bool(rt.rename(from, to) == 0)
     }
     if id == 99 {
         return v_nil()
@@ -2102,6 +2110,7 @@ pub fn script_init() void = trust {
     define_native(g_env, c"ord")
     define_native(g_env, c"source")
     define_native(g_env, c"glob")
+    define_native(g_env, c"rename")
     env_define(g_env, c"status", v_int(0))
     env_define(g_env, c"null", v_nil())
     env_define(g_env, c"true", v_bool(true))

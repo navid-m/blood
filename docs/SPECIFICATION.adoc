@@ -1557,6 +1557,7 @@ list, returns the smallest element.
 |`glob(pattern)` |1 |Expand a pathname pattern and return a sorted list of
 matching paths. An unmatched pattern yields an empty list. A leading `~` is
 expanded.
+|`rename(from, to)` |2 |Rename or move a path. Returns a boolean. A leading `~` is expanded in both paths.
 |`read_file(path)` |1 |Read a file. Returns a string or null.
 |`write_file(path, data)` |2 |Write a file. Returns a boolean.
 |`append_file(path, data)` |2 |Append to a file. Returns a boolean.

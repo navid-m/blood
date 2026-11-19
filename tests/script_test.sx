@@ -92,6 +92,21 @@ test "script glob returns sorted matching paths" {
     }
 }
 
+test "script rename moves and renames paths" {
+    trust {
+        fresh()
+        val root: ref u8 = c"/tmp/blood-unit-script/rename"
+        assert u.mkdir_p(root)
+        assert u.write_file(u.path_join(root, c"a.blood"), c"a")
+        val old: ref u8 = u.cwd()
+        assert u.chdir(root) == 0
+        val src: ref u8 = c"if rename(\"a.blood\", \"a.bx\") == false {\n    raise \"rename\"\n}\nif len(glob(\"a.blood\")) != 0 {\n    raise \"source remains\"\n}\nif len(glob(\"a.bx\")) != 1 {\n    raise \"target missing\"\n}\nif rename(\"missing\", \"x\") {\n    raise \"missing should fail\"\n}\n"
+        val st: i32 = run(src)
+        assert u.chdir(old) == 0
+        assert st == 0
+    }
+}
+
 test "script supports loops, break and continue" {
     trust {
         fresh()

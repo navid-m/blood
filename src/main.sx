@@ -44,12 +44,7 @@ fn install_hooks() void = trust {
 }
 
 fn print_version() void = trust {
-    u.stdout_ln(
-        u.s_cat4(
-            c"blood ",
-            env.get(c"SPECTRE_MOD_VERSION"),
-            " "
-            env.get(c"GIT_HASH")))
+    u.stdout_ln(u.s_cat4(c"blood ", env.get(c"SPECTRE_MOD_VERSION"), c" ", env.get(c"GIT_HASH")))
 }
 
 fn print_help() void = trust {
