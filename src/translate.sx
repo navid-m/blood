@@ -454,14 +454,22 @@ fn brace_expr(t: mut ref Tr, body: ref u8) ref u8 = trust {
         val name: ref u8 = u.s_substr(body, 0, sep)
         val fallback: ref u8 = conv_default_expr(t, u.s_substr(body, sep + 2, n))
         use_helper(t, c"__bx_default")
-        return u.s_cat3(c"__bx_default(", var_expr(t, name), u.s_cat(c", ", u.s_cat(fallback, c")")))
+        return u.s_cat3(
+            c"__bx_default(",
+            var_expr(t, name),
+            u.s_cat(c", ", u.s_cat(fallback, c")"))
+        )
     }
     val sep2: i64 = u.s_find(body, c":=")
     if sep2 >= 0 {
         val name: ref u8 = u.s_substr(body, 0, sep2)
         val fallback: ref u8 = conv_default_expr(t, u.s_substr(body, sep2 + 2, n))
         use_helper(t, c"__bx_default")
-        return u.s_cat3(c"__bx_default(", var_expr(t, name), u.s_cat(c", ", u.s_cat(fallback, c")")))
+        return u.s_cat3(
+            c"__bx_default(",
+            var_expr(t, name),
+            u.s_cat(c", ", u.s_cat(fallback, c")"))
+        )
     }
     if u.s_ends_with(body, c"[@]") || u.s_ends_with(body, c"[*]") {
         val name: ref u8 = u.s_substr(body, 0, n - 3)
@@ -1147,9 +1155,17 @@ fn pattern_match_expr(t: mut ref Tr, lhs: ref u8, pat: ref u8, negate: bool) ref
     } elif starts_star && !ends_star {
         expr = u.s_cat3(subject, c".endswith(", u.s_cat(quote_plain(u.s_substr(pat, 1, n)), c")"))
     } elif ends_star && !starts_star {
-        expr = u.s_cat3(subject, c".startswith(", u.s_cat(quote_plain(u.s_substr(pat, 0, n - 1)), c")"))
+        expr = u.s_cat3(
+            subject,
+            c".startswith(",
+            u.s_cat(quote_plain(u.s_substr(pat, 0, n - 1)), c")")
+        )
     } elif starts_star && ends_star && n >= 2 {
-        expr = u.s_cat3(subject, c".contains(", u.s_cat(quote_plain(u.s_substr(pat, 1, n - 1)), c")"))
+        expr = u.s_cat3(
+            subject,
+            c".contains(",
+            u.s_cat(quote_plain(u.s_substr(pat, 1, n - 1)), c")")
+        )
     } else {
         use_helper(t, c"__bx_glob")
         expr = u.s_cat3(c"__bx_glob(", quote_plain(pat), u.s_cat3(c", ", subject, c")"))
@@ -1588,7 +1604,10 @@ fn emit_sync(t: mut ref Tr, name: ref u8, exported: bool) void = trust {
     cmd = u.s_cat(cmd, name)
     cmd = u.s_cat(cmd, c"))")
     if exported {
-        cmd = u.s_cat(c"shell(\"export \" + ", u.s_cat(quote_plain(name), c" + \"=\" + __bx_quote("))
+        cmd = u.s_cat(
+            c"shell(\"export \" + ",
+            u.s_cat(quote_plain(name), c" + \"=\" + __bx_quote(")
+        )
         cmd = u.s_cat(cmd, name)
         cmd = u.s_cat(cmd, c"))")
     }
@@ -2215,7 +2234,10 @@ fn emit_function(t: mut ref Tr, src: ref u8) bool = trust {
     push_block(t, 5, none)
     t.in_func = 1
     use_helper(t, c"__bx_sync_args")
-    emit(t, c"__bx_sync_args(__arg1, __arg2, __arg3, __arg4, __arg5, __arg6, __arg7, __arg8, __arg9)")
+    emit(
+        t,
+        c"__bx_sync_args(__arg1, __arg2, __arg3, __arg4, __arg5, __arg6, __arg7, __arg8, __arg9)"
+    )
     // `name()` may be followed by `{` on the next line.
     val trimmed: ref u8 = u.s_trim(src)
     if u.s_len(trimmed) == 0 || ch_at(trimmed, u.s_len(trimmed) - 1) != 123 {
@@ -2403,11 +2425,25 @@ fn emit_arith_stmt(t: mut ref Tr, src: ref u8) void = trust {
         val rhs: ref u8 = u.s_trim(u.s_substr(s, eq + 1, u.s_len(s)))
         register_arith_target(t, lhs)
         if u.s_ends_with(lhs, c"+") {
-            emit(t, u.s_cat3(u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)), c" += ", conv_arith(t, rhs)))
+            emit(
+                t,
+                u.s_cat3(
+                    u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)),
+                    c" += ",
+                    conv_arith(t, rhs)
+                )
+            )
             return
         }
         if u.s_ends_with(lhs, c"-") {
-            emit(t, u.s_cat3(u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)), c" -= ", conv_arith(t, rhs)))
+            emit(
+                t,
+                u.s_cat3(
+                    u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)),
+                    c" -= ",
+                    conv_arith(t, rhs)
+                )
+            )
             return
         }
         emit(t, u.s_cat3(lhs, c" = ", conv_arith(t, rhs)))
@@ -2432,10 +2468,18 @@ fn arith_stmt_text(t: mut ref Tr, src: ref u8) ref u8 = trust {
         val rhs: ref u8 = u.s_trim(u.s_substr(s, eq + 1, u.s_len(s)))
         register_arith_target(t, lhs)
         if u.s_ends_with(lhs, c"+") {
-            return u.s_cat3(u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)), c" += ", conv_arith(t, rhs))
+            return u.s_cat3(
+                u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)),
+                c" += ",
+                conv_arith(t, rhs)
+            )
         }
         if u.s_ends_with(lhs, c"-") {
-            return u.s_cat3(u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)), c" -= ", conv_arith(t, rhs))
+            return u.s_cat3(
+                u.s_trim(u.s_substr(lhs, 0, u.s_len(lhs) - 1)),
+                c" -= ",
+                conv_arith(t, rhs)
+            )
         }
         return u.s_cat3(lhs, c" = ", conv_arith(t, rhs))
     }
@@ -2877,34 +2921,58 @@ fn join_continuations(raw: ref u.Vec) ref u.Vec = trust {
 fn helper_prelude(t: mut ref Tr) ref u8 = trust {
     val b: mut ref u.Buf = u.buf_new()
     if u.map_has(t.helpers, c"__bx_s") {
-        u.buf_add(b, c"fn __bx_s(v) {\n    if v == null {\n        return \"\"\n    }\n    return str(v)\n}\n\n")
+        u.buf_add(
+            b,
+            c"fn __bx_s(v) {\n    if v == null {\n        return \"\"\n    }\n    return str(v)\n}\n\n"
+        )
     }
     if u.map_has(t.helpers, c"__bx_default") {
-        u.buf_add(b, c"fn __bx_default(v, fallback) {\n    if v == null or v == \"\" {\n        return fallback\n    }\n    return v\n}\n\n")
+        u.buf_add(
+            b,
+            c"fn __bx_default(v, fallback) {\n    if v == null or v == \"\" {\n        return fallback\n    }\n    return v\n}\n\n"
+        )
     }
     if u.map_has(t.helpers, c"__bx_num") {
         u.buf_add(b, c"fn __bx_num(v) {\n    return int(__bx_s(v))\n}\n\n")
         u.map_put(t.helpers, c"__bx_s", 1)
     }
     if u.map_has(t.helpers, c"__bx_quote") {
-        u.buf_add(b, c"fn __bx_quote(v) {\n    return \"'\" + __bx_s(v).replace(\"'\", \"'\\\"'\\\"'\") + \"'\"\n}\n\n")
+        u.buf_add(
+            b,
+            c"fn __bx_quote(v) {\n    return \"'\" + __bx_s(v).replace(\"'\", \"'\\\"'\\\"'\") + \"'\"\n}\n\n"
+        )
         u.map_put(t.helpers, c"__bx_s", 1)
     }
     if u.map_has(t.helpers, c"__bx_argc") {
-        u.buf_add(b, c"fn __bx_argc(a, b, c, d, e, f, g, h, i) {\n    n = 0\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            n += 1\n        }\n    }\n    return n\n}\n\n")
+        u.buf_add(
+            b,
+            c"fn __bx_argc(a, b, c, d, e, f, g, h, i) {\n    n = 0\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            n += 1\n        }\n    }\n    return n\n}\n\n"
+        )
     }
     if u.map_has(t.helpers, c"__bx_args") {
-        u.buf_add(b, c"fn __bx_args(a, b, c, d, e, f, g, h, i) {\n    out = []\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            out.append(v)\n        }\n    }\n    return out\n}\n\n")
+        u.buf_add(
+            b,
+            c"fn __bx_args(a, b, c, d, e, f, g, h, i) {\n    out = []\n    for v in [a, b, c, d, e, f, g, h, i] {\n        if v != null {\n            out.append(v)\n        }\n    }\n    return out\n}\n\n"
+        )
     }
     if u.map_has(t.helpers, c"__bx_range") {
-        u.buf_add(b, c"fn __bx_range(a, b) {\n    lo = int(a)\n    hi = int(b)\n    out = []\n    if lo <= hi {\n        for i in range(lo, hi + 1) {\n            out.append(i)\n        }\n    } else {\n        for i in range(hi, lo + 1) {\n            out.append(i)\n        }\n        out.sort()\n    }\n    return out\n}\n\n")
+        u.buf_add(
+            b,
+            c"fn __bx_range(a, b) {\n    lo = int(a)\n    hi = int(b)\n    out = []\n    if lo <= hi {\n        for i in range(lo, hi + 1) {\n            out.append(i)\n        }\n    } else {\n        for i in range(hi, lo + 1) {\n            out.append(i)\n        }\n        out.sort()\n    }\n    return out\n}\n\n"
+        )
     }
     if u.map_has(t.helpers, c"__bx_glob") {
-        u.buf_add(b, c"fn __bx_glob(p, s) {\n    pi = 0\n    si = 0\n    star = -1\n    mark = 0\n    while si < len(s) {\n        if pi < len(p) and (p[pi] == \"?\" or p[pi] == s[si]) {\n            pi += 1\n            si += 1\n        } elif pi < len(p) and p[pi] == \"*\" {\n            star = pi\n            mark = si\n            pi += 1\n        } elif star != -1 {\n            pi = star + 1\n            mark += 1\n            si = mark\n        } else {\n            return false\n        }\n    }\n    while pi < len(p) and p[pi] == \"*\" {\n        pi += 1\n    }\n    return pi == len(p)\n}\n\n")
+        u.buf_add(
+            b,
+            c"fn __bx_glob(p, s) {\n    pi = 0\n    si = 0\n    star = -1\n    mark = 0\n    while si < len(s) {\n        if pi < len(p) and (p[pi] == \"?\" or p[pi] == s[si]) {\n            pi += 1\n            si += 1\n        } elif pi < len(p) and p[pi] == \"*\" {\n            star = pi\n            mark = si\n            pi += 1\n        } elif star != -1 {\n            pi = star + 1\n            mark += 1\n            si = mark\n        } else {\n            return false\n        }\n    }\n    while pi < len(p) and p[pi] == \"*\" {\n        pi += 1\n    }\n    return pi == len(p)\n}\n\n"
+        )
         u.map_put(t.helpers, c"__bx_s", 1)
     }
     if u.map_has(t.helpers, c"__bx_sync_args") {
-        u.buf_add(b, c"fn __bx_sync_args(a, b, c, d, e, f, g, h, i) {\n    shell(\"__arg1=\" + __bx_quote(a))\n    shell(\"__arg2=\" + __bx_quote(b))\n    shell(\"__arg3=\" + __bx_quote(c))\n    shell(\"__arg4=\" + __bx_quote(d))\n    shell(\"__arg5=\" + __bx_quote(e))\n    shell(\"__arg6=\" + __bx_quote(f))\n    shell(\"__arg7=\" + __bx_quote(g))\n    shell(\"__arg8=\" + __bx_quote(h))\n    shell(\"__arg9=\" + __bx_quote(i))\n    shell(\"__bx_argc_shell=\" + str(__bx_argc(a, b, c, d, e, f, g, h, i)))\n}\n\n")
+        u.buf_add(
+            b,
+            c"fn __bx_sync_args(a, b, c, d, e, f, g, h, i) {\n    shell(\"__arg1=\" + __bx_quote(a))\n    shell(\"__arg2=\" + __bx_quote(b))\n    shell(\"__arg3=\" + __bx_quote(c))\n    shell(\"__arg4=\" + __bx_quote(d))\n    shell(\"__arg5=\" + __bx_quote(e))\n    shell(\"__arg6=\" + __bx_quote(f))\n    shell(\"__arg7=\" + __bx_quote(g))\n    shell(\"__arg8=\" + __bx_quote(h))\n    shell(\"__arg9=\" + __bx_quote(i))\n    shell(\"__bx_argc_shell=\" + str(__bx_argc(a, b, c, d, e, f, g, h, i)))\n}\n\n"
+        )
         u.map_put(t.helpers, c"__bx_quote", 1)
         u.map_put(t.helpers, c"__bx_argc", 1)
     }
@@ -2945,22 +3013,43 @@ fn is_reserved(name: ref u8) bool = trust {
     if u.s_eq(name, c"status") || u.s_eq(name, c"args") || u.s_eq(name, c"__file__") {
         return true
     }
-    if u.s_eq(name, c"true") || u.s_eq(name, c"false") || u.s_eq(name, c"null") || u.s_eq(name, c"none") {
+    if u.s_eq(
+        name,
+        c"true"
+    ) || u.s_eq(name, c"false") || u.s_eq(name, c"null") || u.s_eq(name, c"none") {
         return true
     }
-    if u.s_eq(name, c"if") || u.s_eq(name, c"elif") || u.s_eq(name, c"else") || u.s_eq(name, c"while") {
+    if u.s_eq(
+        name,
+        c"if"
+    ) || u.s_eq(name, c"elif") || u.s_eq(name, c"else") || u.s_eq(name, c"while") {
         return true
     }
-    if u.s_eq(name, c"for") || u.s_eq(name, c"in") || u.s_eq(name, c"fn") || u.s_eq(name, c"return") {
+    if u.s_eq(
+        name,
+        c"for"
+    ) || u.s_eq(name, c"in") || u.s_eq(name, c"fn") || u.s_eq(name, c"return") {
         return true
     }
-    if u.s_eq(name, c"break") || u.s_eq(name, c"continue") || u.s_eq(name, c"pass") || u.s_eq(name, c"try") {
+    if u.s_eq(
+        name,
+        c"break"
+    ) || u.s_eq(name, c"continue") || u.s_eq(name, c"pass") || u.s_eq(name, c"try") {
         return true
     }
-    if u.s_eq(name, c"catch") || u.s_eq(name, c"except") || u.s_eq(name, c"raise") || u.s_eq(name, c"throw") {
+    if u.s_eq(
+        name,
+        c"catch"
+    ) || u.s_eq(name, c"except") || u.s_eq(name, c"raise") || u.s_eq(name, c"throw") {
         return true
     }
-    if u.s_eq(name, c"say") || u.s_eq(name, c"para") || u.s_eq(name, c"and") || u.s_eq(name, c"or") || u.s_eq(name, c"not") {
+    if u.s_eq(
+        name,
+        c"say"
+    ) || u.s_eq(
+        name,
+        c"para"
+    ) || u.s_eq(name, c"and") || u.s_eq(name, c"or") || u.s_eq(name, c"not") {
         return true
     }
     return false
@@ -3070,7 +3159,13 @@ fn scan_assigned(t: mut ref Tr, lines: ref u.Vec) void = trust {
                 i = next + 2
                 continue
             }
-            if u.s_eq(name, c"export") || u.s_eq(name, c"local") || u.s_eq(name, c"declare") || u.s_eq(name, c"typeset") || u.s_eq(name, c"readonly") {
+            if u.s_eq(
+                name,
+                c"export"
+            ) || u.s_eq(
+                name,
+                c"local"
+            ) || u.s_eq(name, c"declare") || u.s_eq(name, c"typeset") || u.s_eq(name, c"readonly") {
                 allow = true
                 i = next
                 continue
@@ -3257,7 +3352,10 @@ pub fn translate_path(path: ref u8, out_dir: ref u8) i32 = trust {
         u.write_fd(2, u.s_cat3(c"blood: ", target, c": no .sh or .bash files found\n"))
         return 1
     }
-    u.stdout_ln(u.s_cat(c"translated ", u.s_cat(u.s_int(good), u.s_cat(c" of ", u.s_cat(u.s_int(total), c" file(s)")))))
+    u.stdout_ln(u.s_cat(
+            c"translated ",
+            u.s_cat(u.s_int(good), u.s_cat(c" of ", u.s_cat(u.s_int(total), c" file(s)")))
+        ))
     if good != total {
         return 1
     }

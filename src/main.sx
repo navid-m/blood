@@ -1,18 +1,18 @@
 /// Blood — an interactive shell and small brace-delimited scripting language.
 
-val u        = use("util.sx")
-val cfgmod   = use("config.sx")
-val histmod  = use("history.sx")
-val prompt   = use("prompt.sx")
-val term     = use("terminal.sx")
-val ex       = use("exec.sx")
-val shell    = use("shell.sx")
-val script   = use("script.sx")
-val escape   = use("escape.sx")
+val u         = use("util.sx")
+val cfgmod    = use("config.sx")
+val histmod   = use("history.sx")
+val prompt    = use("prompt.sx")
+val term      = use("terminal.sx")
+val ex        = use("exec.sx")
+val shell     = use("shell.sx")
+val script    = use("script.sx")
+val escape    = use("escape.sx")
 val translate = use("translate.sx")
-val loginmod = use("login.sx")
-val flags    = use("std/flags")
-val env      = use("std/env")
+val loginmod  = use("login.sx")
+val flags     = use("std/flags")
+val env       = use("std/env")
 
 val VERSION: ref u8 = c"0.1.0"
 
@@ -396,7 +396,13 @@ pub fn main() i32 = trust {
     flags.bool_var(fs, c"version", c"v", @addr(show_version), c"print the version")
     flags.bool_var(fs, c"init", none, @addr(do_init), c"write a default configuration file")
     flags.bool_var(fs, c"login", none, @addr(do_login), c"initialize a login-shell environment")
-    flags.bool_var(fs, c"translate-sh", none, @addr(do_translate), c"translate bash scripts to Blood")
+    flags.bool_var(
+        fs,
+        c"translate-sh",
+        none,
+        @addr(do_translate),
+        c"translate bash scripts to Blood"
+    )
     flags.string_var(fs, c"out", c"o", @addr(out_dir), c"output directory for -translate-sh")
     flags.string_var(fs, c"c", none, @addr(command), c"execute a command or script and exit")
     flags.stop_at_positional(fs, true)
