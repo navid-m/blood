@@ -5,6 +5,42 @@ fn fail(message) {
     exit(1)
 }
 
+fn check_sample(sample) {
+    var name     = stem(sample)
+    var expected = "samples/expected/{name}.out"
+
+    if not is_file(expected) {
+        say("FAIL {name}: missing expected output ({expected})")
+        return null
+    }
+
+    var sample_args = read_file("samples/args/{name}.args", default: "").split_words()
+    var r           = run([blood_bin, sample, ...sample_args])
+
+    if not r.ok {
+        say("FAIL {name}: exited with status {r.status}")
+        print(indent(r.stderr, 4))
+        return false
+    }
+
+    if r.stderr != "" {
+        say("FAIL {name}: wrote to stderr")
+        print(indent(r.stderr, 4))
+        return false
+    }
+
+    var want = read_file(expected)
+
+    if r.stdout != want {
+        say("FAIL {name}: output did not match {expected}")
+        print(indent(unified_diff(want, r.stdout), 4))
+        return false
+    }
+
+    say("PASS {name}")
+    return true
+}
+
 var root = parent(this_dir())
 cd(root)
 
@@ -17,7 +53,6 @@ defer {
 }
 
 var blood_bin = env("BLOOD", default: "")
-var r         = null
 
 if blood_bin == "" {
     if not which("spectre") {
@@ -40,19 +75,14 @@ if not is_executable(blood_bin) {
 if which("spectre") {
     say("==> running unit tests")
 
-    r = run(["spectre", "test", "tests"], merge_stderr: true)
+    var unit = run(["spectre", "test", "tests"], merge_stderr: true)
 
-    if not r.ok or r.stdout.matches(r"assertion failed|\[fail\]|modules? failed") {
-        print(r.stdout)
+    if not unit.ok or unit.stdout.matches(r"assertion failed|\[fail\]|modules? failed") {
+        print(unit.stdout)
         fail("unit tests failed")
     }
 
-    var passes = 0
-    for line in r.stdout.lines() {
-        if line.starts_with("[pass]") {
-            passes += 1
-        }
-    }
+    var passes = unit.stdout.lines().count(|line| line.starts_with("[pass]"))
 
     say("    {passes} unit tests passed")
 } else {
@@ -61,51 +91,10 @@ if which("spectre") {
 
 say("==> running samples")
 
-var failures    = 0
-var count       = 0
-var sample_args = []
-var want        = ""
-
-for sample in glob("samples/*.bx") {
-    var name     = stem(sample)
-    var expected = "samples/expected/{name}.out"
-
-    if not is_file(expected) {
-        say("FAIL {name}: missing expected output ({expected})")
-        failures += 1
-        continue
-    }
-
-    sample_args = read_file("samples/args/{name}.args", default: "").split_words()
-
-    r = run([blood_bin, sample, ...sample_args])
-    count += 1
-
-    if not r.ok {
-        say("FAIL {name}: exited with status {r.status}")
-        print(indent(r.stderr, 4))
-        failures += 1
-        continue
-    }
-
-    if r.stderr != "" {
-        say("FAIL {name}: wrote to stderr")
-        print(indent(r.stderr, 4))
-        failures += 1
-        continue
-    }
-
-    want = read_file(expected)
-
-    if r.stdout != want {
-        say("FAIL {name}: output did not match {expected}")
-        print(indent(unified_diff(want, r.stdout), 4))
-        failures += 1
-        continue
-    }
-
-    say("PASS {name}")
-}
+var samples  = glob("samples/*.bx")
+var results  = samples.map(|sample| check_sample(sample))
+var count    = results.count(|result| result != null)
+var failures = results.filter(|result| result != true).count()
 
 if count == 0 {
     fail("error: no samples found")
