@@ -1542,6 +1542,35 @@ fn apply_menu_item(e: mut ref Editor) void = trust {
     e.pos = e.menu_start + u.s_len(item)
 }
 
+/// Recompute completions for the current line while a menu is open.
+///
+/// Called after the user edits the completion word, so the menu narrows (or
+/// widens again after a deletion) instead of closing. An empty result closes
+/// the menu; otherwise the current line becomes the new menu base so that
+/// selecting a candidate still replaces only the word being completed.
+fn refresh_menu(e: mut ref Editor) void = trust {
+    if e.menu_active == 0 {
+        return
+    }
+    val res: comp.CompResult = comp.complete(e.cfg, e.line, e.pos, e.vars, e.aliases)
+    if res.items.len == 0 {
+        e.menu_active = 0
+        return
+    }
+    if res.items.len == 1 {
+        replace_range(e, res.start, res.end, u.vec_p(res.items, 0) as ref u8)
+        e.menu_active = 0
+        return
+    }
+    e.menu_items = res.items
+    e.menu_descriptions = res.descriptions
+    e.menu_index = -1
+    e.menu_start = res.start
+    e.menu_end = res.end
+    e.menu_base = u.s_dup(e.line)
+    e.menu_kind = res.kind
+}
+
 fn menu_next(e: mut ref Editor, delta: i64) void = trust {
     if e.menu_active == 0 || e.menu_items == none || e.menu_items.len == 0 {
         return
@@ -1581,15 +1610,25 @@ fn read_escape(e: mut ref Editor) i64 = trust {
             break
         }
         if final == 65 {
-            history_recall(e, true)
+            if e.menu_active == 1 {
+                menu_next(e, -1)
+            } else {
+                history_recall(e, true)
+            }
             return 1
         }
         if final == 66 {
-            history_recall(e, false)
+            if e.menu_active == 1 {
+                menu_next(e, 1)
+            } else {
+                history_recall(e, false)
+            }
             return 1
         }
         if final == 67 {
-            if e.pos < e.len {
+            if e.menu_active == 1 {
+                menu_next(e, 1)
+            } elif e.pos < e.len {
                 e.pos = u.utf8_next(e.line, e.pos, e.len)
             } else {
                 accept_suggestion(e)
@@ -1597,16 +1636,20 @@ fn read_escape(e: mut ref Editor) i64 = trust {
             return 1
         }
         if final == 68 {
-            if e.pos > 0 {
+            if e.menu_active == 1 {
+                menu_next(e, -1)
+            } elif e.pos > 0 {
                 e.pos = u.utf8_prev(e.line, e.pos)
             }
             return 1
         }
         if final == 72 || u.s_eq(params, c"1") || u.s_eq(params, c"7") {
+            e.menu_active = 0
             e.pos = 0
             return 1
         }
         if final == 70 || u.s_eq(params, c"4") || u.s_eq(params, c"8") {
+            e.menu_active = 0
             if !accept_suggestion(e) {
                 e.pos = e.len
             }
@@ -1620,7 +1663,11 @@ fn read_escape(e: mut ref Editor) i64 = trust {
         }
         if final == 126 {
             if u.s_eq(params, c"3") {
+                val had_menu: bool = e.menu_active == 1
                 ed_delete(e)
+                if had_menu {
+                    refresh_menu(e)
+                }
             }
             return 1
         }
@@ -1731,8 +1778,13 @@ fn readline_impl(e: mut ref Editor, prompt: ref u8, right: ref u8, kind: i64) re
                 end_input_line(e)
                 return none
             }
+            val had_menu: bool = e.menu_active == 1
             ed_delete(e)
-            e.menu_active = 0
+            if had_menu {
+                refresh_menu(e)
+            } else {
+                e.menu_active = 0
+            }
             draw(e, prompt, kind)
             continue
         }
@@ -1822,27 +1874,35 @@ fn readline_impl(e: mut ref Editor, prompt: ref u8, right: ref u8, kind: i64) re
             continue
         }
         if k == 27 {
-            if e.menu_active == 1 {
+            val esc: i64 = read_escape(e)
+            if esc == -1 && e.menu_active == 1 {
                 e.menu_active = 0
                 ed_set(e, e.menu_base)
                 e.pos = e.menu_end
-                draw(e, prompt, kind)
-                continue
             }
-            read_escape(e)
             draw(e, prompt, kind)
             continue
         }
         if k == 127 || k == 8 {
-            e.menu_active = 0
+            val had_menu: bool = e.menu_active == 1
             ed_backspace(e)
+            if had_menu {
+                refresh_menu(e)
+            } else {
+                e.menu_active = 0
+            }
             draw(e, prompt, kind)
             continue
         }
         if k >= 32 && k < 127 {
-            e.menu_active = 0
             e.hist_index = e.hist.items.len
+            val had_menu: bool = e.menu_active == 1 && k != 32
             ed_insert_byte(e, k as u8)
+            if had_menu {
+                refresh_menu(e)
+            } else {
+                e.menu_active = 0
+            }
             draw(e, prompt, kind)
             continue
         }
