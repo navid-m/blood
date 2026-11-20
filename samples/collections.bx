@@ -4,20 +4,21 @@ var numbers = [5, 3, 8, 1]
 numbers.sort()
 say("sorted: " + numbers.join(", "))
 numbers.append(13)
-say("count: " + std.str(std.len(numbers)))
-say("largest: " + std.str(numbers[-1]))
+say("count: {len(numbers)}")
+say("largest: {numbers[-1]}")
 
 var scores = {"apple": 3, "pear": 1, "kiwi": 2}
-var keys   = scores.keys()
-keys.sort()
+var keys   = scores.sorted()
 var total = 0
 for key in keys {
     total += scores[key]
-    say(key + " -> " + std.str(scores[key]))
+    say("{key} -> {scores[key]}")
 }
-say("total: " + std.str(total))
+say("total: {total}")
 
 var labels = ["[pass] parser", "[fail] shell", "[pass] lists"]
-say("passes: " + std.str(labels.count(|l| l.starts_with("[pass]"))))
+say("passes: {labels.count(|l| l.starts_with('[pass]'))}")
 say("upper: " + labels.map(|l| l.upper()).join(" | "))
 say("passing: " + labels.filter(|l| l.starts_with("[pass]")).join(" | "))
+say("range: " + (1..=5).join(","))
+say("missing: {scores.get(\"plum\") ?? 0}")

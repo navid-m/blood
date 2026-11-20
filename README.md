@@ -8,13 +8,14 @@ Outperforms ksh and dash on several benchmarks, outperforming Elvish and Fish by
 
 ```
 for x in ["hello", "world"] {
-    std.shell("cowsay " + x)
+    sh("cowsay " + x)
 }
 ```
 
-Builtins live under the `std` namespace, such as `std.len`, `std.read_file`,
-and `std.glob`. Only `say`, `print`, `eprint`, `exit`, `cd`, and `run` are
-available as short bare-name prelude calls; their `std.` forms always work too.
+Builtins live under the `std` namespace, such as `std.read_file` and
+`std.glob`. Only `say`, `print`, `eprint`, `exit`, `cd`, `run`, `len`, `str`,
+`range`, and `sh` are available as short bare-name prelude calls; their `std.`
+forms always work too.
 
 ## Resources
 
@@ -46,10 +47,10 @@ say "source total: {total} lines"
 Note that captured commands are ordinary strings, so you can do:
 
 ```
-branch = std.capture("git branch --show-current").strip()
+branch = sh("git branch --show-current").strip()
 say "working on {branch}"
 
-changes = std.capture("git status --porcelain").strip()
+changes = sh("git status --porcelain").strip()
 if changes != "" {
     for change in changes.split("\n") {
         say "  {change}"
@@ -61,7 +62,7 @@ Parallelism is a keyword, therefore every iteration is a child process. No threa
 
 ```
 para for file in std.glob("src/*.sx") {
-    say std.capture("sha256sum {file}").strip()
+    say sh("sha256sum {file}").strip()
 }
 ```
 

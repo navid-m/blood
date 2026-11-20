@@ -25,6 +25,7 @@ pub type Func = {
     body: mut ref lang.Node
     native: mut i64
     closure: mut ref Env
+    defaults: mut ref u.Vec
 }
 
 type Defer = {
@@ -379,7 +380,10 @@ fn is_prelude(name: ref u8) bool = trust {
     return u.s_eq(name, c"say") || u.s_eq(name, c"print") || u.s_eq(name, c"eprint") || u.s_eq(
         name,
         c"exit"
-    ) || u.s_eq(name, c"cd") || u.s_eq(name, c"run")
+    ) || u.s_eq(name, c"cd") || u.s_eq(name, c"run") || u.s_eq(
+        name,
+        c"len"
+    ) || u.s_eq(name, c"str") || u.s_eq(name, c"range") || u.s_eq(name, c"sh")
 }
 
 fn warn_shadow(name: ref u8, line: i64, col: i64) void = trust {
@@ -486,6 +490,27 @@ fn defer_run_frame() void = trust {
 
 fn list_new() ref u.Vec = trust {
     return u.vec_new()
+}
+
+fn make_range(a: ref Value, b: ref Value, inclusive: bool) ref Value = trust {
+    val start: i64 = num_i(a)
+    val end: i64 = num_i(b)
+    val vec: mut ref u.Vec = list_new()
+    val i: mut i64 = start
+    for {
+        if inclusive {
+            if i > end {
+                break
+            }
+        } else {
+            if i >= end {
+                break
+            }
+        }
+        u.vec_pushp(vec, v_int(i) as ref void)
+        i++
+    }
+    return v_list(vec)
 }
 
 fn dict_new() ref u.Map = trust {
@@ -836,6 +861,16 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         return v_int(0 - num_i(v))
     }
     if n.kind == lang.NodeKind.Binary {
+        if n.a == lang.BinOp.NullCoalesce as i64 {
+            val l: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+            if g_flow != 0 {
+                return v_nil()
+            }
+            if !is_nil(l) {
+                return l
+            }
+            return eval(u.vec_p(n.kids, 1) as ref lang.Node, env)
+        }
         if n.a == 100 {
             val l: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
             if truthy(l) {
@@ -860,6 +895,12 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         }
         if n.a == lang.BinOp.NotIn as i64 {
             return in_op(l, r, true)
+        }
+        if n.a == lang.BinOp.Range as i64 {
+            return make_range(l, r, false)
+        }
+        if n.a == lang.BinOp.RangeInclusive as i64 {
+            return make_range(l, r, true)
         }
         return bin_op(n.a, l, r)
     }
@@ -893,6 +934,7 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         f.body = u.vec_p(n.kids, 0) as ref lang.Node
         f.native = 0
         f.closure = env
+        f.defaults = n.defaults
         return v_func(f)
     }
     if n.kind == lang.NodeKind.CmdSubst {
@@ -1013,12 +1055,14 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         parent = f.closure
     }
     val callenv: mut ref Env = env_new(parent)
+    val supplied: mut ref u.Vec = u.vec_new()
     val i: mut i64 = 0
     for {
         if i >= f.params.len {
             break
         }
         env_define(callenv, u.vec_p(f.params, i) as ref u8, v_nil())
+        u.vec_push(supplied, 0)
         i++
     }
     val pos: mut i64 = 0
@@ -1032,6 +1076,7 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         if u.s_len(name) == 0 {
             if pos < f.params.len {
                 env_define(callenv, u.vec_p(f.params, pos) as ref u8, arg)
+                u.vec_sets(supplied, pos, 1)
                 pos++
             }
         } else {
@@ -1043,6 +1088,7 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
                 }
                 if u.s_eq(u.vec_p(f.params, j) as ref u8, name) {
                     env_define(callenv, name, arg)
+                    u.vec_sets(supplied, j, 1)
                     found = true
                     break
                 }
@@ -1055,6 +1101,26 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
             }
         }
         ai++
+    }
+    if f.defaults != none {
+        val di: mut i64 = 0
+        for {
+            if di >= f.params.len || di >= f.defaults.len {
+                break
+            }
+            if u.vec_gets(supplied, di) == 0 {
+                val defnode: ref lang.Node = u.vec_p(f.defaults, di) as ref lang.Node
+                if defnode != none {
+                    val defval: ref Value = eval(defnode, callenv)
+                    if g_flow != 0 {
+                        g_depth--
+                        return v_nil()
+                    }
+                    env_define(callenv, u.vec_p(f.params, di) as ref u8, defval)
+                }
+            }
+            di++
+        }
     }
     defer_push_frame()
     val saved_flow: i64 = g_flow
@@ -1116,11 +1182,8 @@ fn native_id(name: ref u8) i64 = trust {
     if u.s_eq(name, c"exit") {
         return 10
     }
-    if u.s_eq(name, c"shell") {
+    if u.s_eq(name, c"sh") {
         return 11
-    }
-    if u.s_eq(name, c"capture") {
-        return 12
     }
     if u.s_eq(name, c"abs") {
         return 13
@@ -1684,18 +1747,32 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         g_flow = 5
         return v_nil()
     }
-    if id == 11 || id == 12 {
+    if id == 11 {
         if u.hooks_ready == 0 {
-            return v_result(127, c"", c"")
+            val empty: ref Value = v_result(127, c"", c"")
+            if truthy(arg_named(n, args, c"check")) {
+                set_error(c"sh: command execution is unavailable", n.line, n.col)
+            }
+            return empty
         }
+        val cmd: ref u8 = v_to_str(arg(args, 0))
         val res: ref Value = spawn_result(
             u.vec_new(),
-            v_to_str(arg(args, 0)),
+            cmd,
             true,
             false,
             none
         )
-        set_status(result_status(res))
+        val st: i64 = result_status(res)
+        set_status(st)
+        if st != 0 && truthy(arg_named(n, args, c"check")) {
+            val b: mut ref u.Buf = u.buf_new()
+            u.buf_add(b, c"sh: command failed with status ")
+            u.buf_add(b, u.s_int(st))
+            u.buf_add(b, c": ")
+            u.buf_add(b, cmd)
+            set_error(u.buf_take(b), n.line, n.col)
+        }
         return res
     }
     if id == 13 {
@@ -2261,6 +2338,10 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
             if raw != 0 {
                 return @bitcast(raw, ref Value)
             }
+            val di: i64 = named_index(n, c"default", args.len)
+            if di >= 0 {
+                return arg(args, di)
+            }
             return arg(args, 1)
         }
         if u.s_eq(name, c"set") {
@@ -2272,6 +2353,13 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
         }
         if u.s_eq(name, c"keys") {
             return call_native(18, args_for(obj), n)
+        }
+        if u.s_eq(name, c"sorted") || u.s_eq(name, c"sorted_keys") {
+            val out: mut ref Value = call_native(18, args_for(obj), n)
+            if out != none && out.tag == 5 {
+                sort_values(out.p as ref u.Vec)
+            }
+            return out
         }
         if u.s_eq(name, c"values") {
             return call_native(19, args_for(obj), n)
@@ -2363,6 +2451,27 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
         }
         if u.s_eq(name, c"len") {
             return v_int(u.s_len(s))
+        }
+        if u.s_eq(name, c"parent") {
+            return call_native(44, args_for(obj), n)
+        }
+        if u.s_eq(name, c"basename") {
+            return call_native(45, args_for(obj), n)
+        }
+        if u.s_eq(name, c"stem") {
+            return call_native(46, args_for(obj), n)
+        }
+        if u.s_eq(name, c"exists") {
+            return call_native(36, args_for(obj), n)
+        }
+        if u.s_eq(name, c"is_file") {
+            return call_native(37, args_for(obj), n)
+        }
+        if u.s_eq(name, c"is_dir") {
+            return call_native(38, args_for(obj), n)
+        }
+        if u.s_eq(name, c"is_executable") {
+            return call_native(39, args_for(obj), n)
         }
         if u.s_eq(name, c"chars") {
             val vec: mut ref u.Vec = list_new()
@@ -2955,6 +3064,13 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                 }
                 if u.map_used_at(m, i) {
                     env_assign(env, n.s, v_str(u.s_dup(u.map_key_at(m, i))))
+                    if n.params.len > 0 {
+                        env_assign(
+                            env,
+                            u.vec_p(n.params, 0) as ref u8,
+                            @bitcast(u.map_val_at(m, i), ref Value)
+                        )
+                    }
                     clear_var_decls(loop_env, decls)
                     exec_block(body, loop_env, false)
                     if g_flow == 1 {
@@ -2979,6 +3095,7 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         f.body = u.vec_p(n.kids, 0) as ref lang.Node
         f.native = 0
         f.closure = none
+        f.defaults = n.defaults
         if is_prelude(n.s) {
             warn_shadow(n.s, n.line, n.col)
         }
@@ -3143,6 +3260,7 @@ fn native_value(name: ref u8) ref Value = trust {
     f.body = none
     f.native = native_id(name)
     f.closure = none
+    f.defaults = u.vec_new()
     return v_func(f)
 }
 
@@ -3176,8 +3294,7 @@ pub fn script_init() void = trust {
     define_std_native(stdm, c"input")
     define_std_native(stdm, c"sleep")
     define_std_native(stdm, c"exit")
-    define_std_native(stdm, c"shell")
-    define_std_native(stdm, c"capture")
+    define_std_native(stdm, c"sh")
     define_std_native(stdm, c"abs")
     define_std_native(stdm, c"min")
     define_std_native(stdm, c"max")
@@ -3221,6 +3338,10 @@ pub fn script_init() void = trust {
     define_prelude(c"exit")
     define_prelude(c"cd")
     define_prelude(c"run")
+    define_prelude(c"len")
+    define_prelude(c"str")
+    define_prelude(c"range")
+    define_prelude(c"sh")
     env_define(builtins, c"std", v_namespace(stdm))
     g_env = env_new_mode(builtins, true)
     g_defers = u.vec_new_perm()
@@ -3331,12 +3452,14 @@ fn queue_func_children(f: mut ref Func, jobs: mut ref u.Vec) void = trust {
     enqueue(jobs, f.params as ref void, 7, @ptradd(f as ref void, 8))
     enqueue(jobs, f.body as ref void, 5, @ptradd(f as ref void, 16))
     enqueue(jobs, f.closure as ref void, 8, @ptradd(f as ref void, 32))
+    enqueue(jobs, f.defaults as ref void, 6, @ptradd(f as ref void, 40))
 }
 
 fn queue_node_children(n: mut ref lang.Node, jobs: mut ref u.Vec) void = trust {
     enqueue(jobs, n.s as ref void, 0, @ptradd(n as ref void, 24))
     enqueue(jobs, n.kids as ref void, 6, @ptradd(n as ref void, 32))
     enqueue(jobs, n.params as ref void, 7, @ptradd(n as ref void, 40))
+    enqueue(jobs, n.defaults as ref void, 6, @ptradd(n as ref void, 48))
 }
 
 fn queue_env_children(e: mut ref Env, jobs: mut ref u.Vec) void = trust {
@@ -3428,6 +3551,7 @@ fn promote_all(jobs: mut ref u.Vec, memo: mut ref u.Vec) void = trust {
             nf.body = of.body
             nf.native = of.native
             nf.closure = of.closure
+            nf.defaults = of.defaults
             memo_put(memo, old, nf as ref void)
             store_slot(slot, nf as ref void)
             queue_func_children(nf, jobs)
@@ -3442,6 +3566,7 @@ fn promote_all(jobs: mut ref u.Vec, memo: mut ref u.Vec) void = trust {
             nn.s = on.s
             nn.kids = on.kids
             nn.params = on.params
+            nn.defaults = on.defaults
             nn.line = on.line
             nn.col = on.col
             memo_put(memo, old, nn as ref void)

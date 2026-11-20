@@ -332,7 +332,7 @@ fn var_interp(t: mut ref Tr, name: ref u8) ref u8 = trust {
 }
 
 fn capture_expr(inner: ref u8) ref u8 = trust {
-    return u.s_cat3(c"std.capture(", quote_sq(inner), c")")
+    return u.s_cat3(c"sh(", quote_sq(inner), c")")
 }
 
 /// Find the end (exclusive) of a `$(` command substitution starting at `i`.
@@ -1142,7 +1142,7 @@ fn unary_file_test(t: mut ref Tr, op: ref u8, operand: ref u8) ref u8 = trust {
         flag = c"-L"
     }
     return u.s_cat3(
-        c"std.shell(\"test ",
+        c"sh(\"test ",
         flag,
         u.s_cat3(c" \" + __bx_quote(", operand, c")).status == 0")
     )
@@ -1395,7 +1395,7 @@ fn test_expr(t: mut ref Tr, src: ref u8) ref u8 = trust {
     if p.pos < p.toks.len {
         // Trailing tokens are not understood; fall back to running the test.
         use_helper(t, c"__bx_quote")
-        return u.s_cat3(c"std.shell(\"test ", quote_plain(src), c" \").status == 0")
+        return u.s_cat3(c"sh(\"test ", quote_plain(src), c" \").status == 0")
     }
     return e
 }
@@ -1463,11 +1463,11 @@ fn tr_cond(t: mut ref Tr, src: ref u8) ref u8 = trust {
         val words: ref u.Vec = split_words(rest)
         if words.len > 0 {
             val w: ref Word = u.vec_p(words, 0) as ref Word
-            return u.s_cat3(c"std.shell(\"type ", w.raw, c" >/dev/null 2>&1\").status == 0")
+            return u.s_cat3(c"sh(\"type ", w.raw, c" >/dev/null 2>&1\").status == 0")
         }
     }
     use_helper(t, c"__bx_quote")
-    return u.s_cat3(c"std.shell(", quote_plain(s), c").status == 0")
+    return u.s_cat3(c"sh(", quote_plain(s), c").status == 0")
 }
 
 fn parse_if_header(src: ref u8) ref u8 = trust {
@@ -1603,13 +1603,13 @@ fn conv_assignment_value(t: mut ref Tr, src: ref u8) ref u8 = trust {
 
 fn emit_sync(t: mut ref Tr, name: ref u8, exported: bool) void = trust {
     use_helper(t, c"__bx_quote")
-    val cmd: mut ref u8 = u.s_cat(c"std.shell(", quote_plain(name))
+    val cmd: mut ref u8 = u.s_cat(c"sh(", quote_plain(name))
     cmd = u.s_cat(cmd, c" + \"=\" + __bx_quote(")
     cmd = u.s_cat(cmd, name)
     cmd = u.s_cat(cmd, c"))")
     if exported {
         cmd = u.s_cat(
-            c"std.shell(\"export \" + ",
+            c"sh(\"export \" + ",
             u.s_cat(quote_plain(name), c" + \"=\" + __bx_quote(")
         )
         cmd = u.s_cat(cmd, name)
@@ -1942,7 +1942,7 @@ fn tr_export(t: mut ref Tr, src: ref u8) bool = trust {
             break
         }
         val w: ref Word = u.vec_p(words, k) as ref Word
-        emit(t, u.s_cat3(c"std.shell(\"export ", w.raw, c"\")"))
+        emit(t, u.s_cat3(c"sh(\"export ", w.raw, c"\")"))
         k++
     }
     return true
@@ -2113,9 +2113,9 @@ fn tr_shell_statement(t: mut ref Tr, src: ref u8) void = trust {
     }
     // The script parser is not able to classify every command-shaped line as
     // a shell statement (for example `cat /tmp/x` reads as a division
-    // expression). Running the line through `shell` is unambiguous and keeps
+    // expression). Running the line through `sh` is unambiguous and keeps
     // the resulting status in the script `status` variable.
-    emit(t, u.s_cat3(c"status = std.shell(", quote_plain(s), c").status"))
+    emit(t, u.s_cat3(c"status = sh(", quote_plain(s), c").status"))
 }
 
 fn rewrite_func_positionals(src: ref u8) ref u8 = trust {
@@ -2982,7 +2982,7 @@ fn helper_prelude(t: mut ref Tr) ref u8 = trust {
     if u.map_has(t.helpers, c"__bx_sync_args") {
         u.buf_add(
             b,
-            c"fn __bx_sync_args(a, b, c, d, e, f, g, h, i) {\n    std.shell(\"__arg1=\" + __bx_quote(a))\n    std.shell(\"__arg2=\" + __bx_quote(b))\n    std.shell(\"__arg3=\" + __bx_quote(c))\n    std.shell(\"__arg4=\" + __bx_quote(d))\n    std.shell(\"__arg5=\" + __bx_quote(e))\n    std.shell(\"__arg6=\" + __bx_quote(f))\n    std.shell(\"__arg7=\" + __bx_quote(g))\n    std.shell(\"__arg8=\" + __bx_quote(h))\n    std.shell(\"__arg9=\" + __bx_quote(i))\n    std.shell(\"__bx_argc_shell=\" + std.str(__bx_argc(a, b, c, d, e, f, g, h, i)))\n}\n\n"
+            c"fn __bx_sync_args(a, b, c, d, e, f, g, h, i) {\n    sh(\"__arg1=\" + __bx_quote(a))\n    sh(\"__arg2=\" + __bx_quote(b))\n    sh(\"__arg3=\" + __bx_quote(c))\n    sh(\"__arg4=\" + __bx_quote(d))\n    sh(\"__arg5=\" + __bx_quote(e))\n    sh(\"__arg6=\" + __bx_quote(f))\n    sh(\"__arg7=\" + __bx_quote(g))\n    sh(\"__arg8=\" + __bx_quote(h))\n    sh(\"__arg9=\" + __bx_quote(i))\n    sh(\"__bx_argc_shell=\" + std.str(__bx_argc(a, b, c, d, e, f, g, h, i)))\n}\n\n"
         )
         u.map_put(t.helpers, c"__bx_quote", 1)
         u.map_put(t.helpers, c"__bx_argc", 1)

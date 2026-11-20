@@ -1,6 +1,6 @@
 # Blood sample: shell command substitution and pipelines.
 
-var lines = std.capture("printf 'one\ntwo\nthree\n' | wc -l").stdout
+var lines = sh("printf 'one\ntwo\nthree\n' | wc -l").stdout
 say("pipeline lines: " + lines.strip())
 
 var listing = `printf 'alpha\nbeta\n'`

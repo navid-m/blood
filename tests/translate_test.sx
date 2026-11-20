@@ -50,8 +50,8 @@ test "translator keeps unsupported constructs as comments or shell statements" {
         val out: ref u8 = tr.translate_text(src)
         assert has(out, c"bash option not translated")
         assert has(out, c"bash trap not translated")
-        assert has(out, c"status = std.shell(\"cat /tmp/example\").status")
-        assert has(out, c"std.shell(\"export \" + \"PATH\"")
+        assert has(out, c"status = sh(\"cat /tmp/example\").status")
+        assert has(out, c"sh(\"export \" + \"PATH\"")
         assert parses(out)
     }
 }

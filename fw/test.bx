@@ -6,15 +6,15 @@ fn fail(message) {
 }
 
 fn check_sample(sample) {
-    var name     = std.stem(sample)
+    var name     = sample.stem()
     var expected = "samples/expected/{name}.out"
 
-    if not std.is_file(expected) {
+    if not expected.is_file() {
         say("FAIL {name}: missing expected output ({expected})")
         return null
     }
 
-    var sample_args = std.read_file("samples/args/{name}.args", default: "").split_words()
+    var sample_args = (std.read_file("samples/args/{name}.args") ?? "").split_words()
     var r           = run([blood_bin, sample, ...sample_args])
 
     if not r.ok {
@@ -29,7 +29,7 @@ fn check_sample(sample) {
         return false
     }
 
-    var want = std.read_file(expected)
+    var want = std.read_file(expected) ?? ""
 
     if r.stdout != want {
         say("FAIL {name}: output did not match {expected}")
@@ -41,7 +41,7 @@ fn check_sample(sample) {
     return true
 }
 
-var root = std.parent(std.this_dir())
+var root = std.this_dir().parent()
 cd(root)
 
 var tmp = std.mktemp_dir("blood-fw")
@@ -52,7 +52,7 @@ defer {
     std.remove_file("/tmp/blood_sample_file_io.txt")
 }
 
-var blood_bin = std.env("BLOOD", default: "")
+var blood_bin = std.env("BLOOD") ?? ""
 
 if blood_bin == "" {
     if not std.which("spectre") {
@@ -61,14 +61,14 @@ if blood_bin == "" {
 
     say("==> building blood (dev)")
 
-    if not run(["spectre", "build", "dev"]).ok {
+    if not sh("spectre build dev").ok {
         fail("error: Blood build failed")
     }
 
     blood_bin = "{root}/blood-dev"
 }
 
-if not std.is_executable(blood_bin) {
+if not blood_bin.is_executable() {
     fail("error: blood binary is not executable: {blood_bin}")
 }
 

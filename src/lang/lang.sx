@@ -78,6 +78,9 @@ pub enum BinOp = {
     Ge
     In
     NotIn
+    Range
+    RangeInclusive
+    NullCoalesce
 }
 
 pub enum UnOp = {
@@ -92,6 +95,7 @@ pub type Node = {
     s: mut ref u8
     kids: mut ref u.Vec
     params: mut ref u.Vec
+    defaults: mut ref u.Vec
     line: mut i64
     col: mut i64
     start: mut i64
@@ -739,9 +743,27 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
         val scol: i64 = lx.col
         val start: i64 = lx.pos
         val two: mut ref u8 = c""
+        if lx.pos + 2 < lx.len {
+            val d: u8 = @load8(@ptradd(lx.src, lx.pos + 1))
+            val e: u8 = @load8(@ptradd(lx.src, lx.pos + 2))
+            if c == 46 && d == 46 && e == 61 {
+                val three: ref u8 = u.s_ndup(@ptradd(lx.src, lx.pos), 3)
+                lx.pos += 3
+                lx.col += 3
+                emit(lx, TokenKind.Op, three, start, lx.pos, sline, scol)
+                continue
+            }
+            if c == 46 && d == 46 && e == 46 {
+                val three: ref u8 = u.s_ndup(@ptradd(lx.src, lx.pos), 3)
+                lx.pos += 3
+                lx.col += 3
+                emit(lx, TokenKind.Op, three, start, lx.pos, sline, scol)
+                continue
+            }
+        }
         if lx.pos + 1 < lx.len {
             val d: u8 = @load8(@ptradd(lx.src, lx.pos + 1))
-            if (c == 61 && d == 61) || (c == 33 && d == 61) || (c == 60 && d == 61) || (c == 62 && d == 61) || (c == 43 && d == 61) || (c == 45 && d == 61) || (c == 42 && d == 61) || (c == 47 && d == 61) || (c == 37 && d == 61) || (c == 42 && d == 42) {
+            if (c == 61 && d == 61) || (c == 33 && d == 61) || (c == 60 && d == 61) || (c == 62 && d == 61) || (c == 43 && d == 61) || (c == 45 && d == 61) || (c == 42 && d == 61) || (c == 47 && d == 61) || (c == 37 && d == 61) || (c == 42 && d == 42) || (c == 46 && d == 46) || (c == 63 && d == 63) {
                 two = u.s_ndup(@ptradd(lx.src, lx.pos), 2)
                 lx.pos += 2
                 lx.col += 2
@@ -881,6 +903,7 @@ fn node_new(kind: NodeKind, line: i64, col: i64) ref Node = trust {
     n.s = none
     n.kids = u.vec_new()
     n.params = u.vec_new()
+    n.defaults = u.vec_new()
     n.line = line
     n.col = col
     n.start = 0
@@ -1299,6 +1322,16 @@ fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = tr
     }
     n.s = u.s_dup(var.text)
     advance(p)
+    if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+        advance(p)
+        val value_var: ref Token = cur(p)
+        if value_var.kind != TokenKind.Ident {
+            set_error(value_var.line, value_var.col, c"expected a loop variable")
+            return n
+        }
+        u.vec_pushp(n.params, u.s_dup(value_var.text) as ref void)
+        advance(p)
+    }
     if keyword(cur(p), c"in") {
         advance(p)
     } else {
@@ -1308,6 +1341,31 @@ fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = tr
     u.vec_pushp(n.kids, iter)
     u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
     return n
+}
+
+fn is_type_word(t: ref Token) bool = trust {
+    if t.kind != TokenKind.Ident {
+        return false
+    }
+    return u.s_eq(t.text, c"ref") || u.s_eq(t.text, c"mut") || u.s_eq(t.text, c"fn") || u.s_eq(
+        t.text,
+        c"i8"
+    ) || u.s_eq(t.text, c"i16") || u.s_eq(t.text, c"i32") || u.s_eq(
+        t.text,
+        c"i64"
+    ) || u.s_eq(t.text, c"u8") || u.s_eq(t.text, c"u16") || u.s_eq(
+        t.text,
+        c"u32"
+    ) || u.s_eq(t.text, c"u64") || u.s_eq(t.text, c"f32") || u.s_eq(
+        t.text,
+        c"f64"
+    ) || u.s_eq(t.text, c"bool") || u.s_eq(t.text, c"string") || u.s_eq(
+        t.text,
+        c"str"
+    ) || u.s_eq(t.text, c"void") || u.s_eq(t.text, c"list") || u.s_eq(
+        t.text,
+        c"dict"
+    ) || u.s_eq(t.text, c"any")
 }
 
 fn parse_fn(p: mut ref Parser) ref Node = trust {
@@ -1334,18 +1392,45 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
             }
             u.vec_pushp(n.params, u.s_dup(pt.text) as ref void)
             advance(p)
+            val def: mut ref Node = none
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c":") {
                 advance(p)
-                for {
-                    if cur(p).kind == TokenKind.Op && (text_is(
+                if is_type_word(cur(p)) {
+                    for {
+                        if cur(p).kind == TokenKind.Op && (text_is(
+                                cur(p),
+                                c","
+                            ) || text_is(cur(p), c")")) {
+                            break
+                        }
+                        advance(p)
+                    }
+                } else {
+                    val save: i64 = p.i
+                    val saved_err: ref u8 = g_error
+                    g_error = none
+                    val candidate: ref Node = parse_expr(p)
+                    if g_error == none && cur(p).kind == TokenKind.Op && (text_is(
                             cur(p),
                             c","
                         ) || text_is(cur(p), c")")) {
-                        break
+                        def = candidate
+                    } else {
+                        p.i = save
+                        g_error = saved_err
+                        for {
+                            if cur(p).kind == TokenKind.Op && (text_is(
+                                    cur(p),
+                                    c","
+                                ) || text_is(cur(p), c")")) {
+                                break
+                            }
+                            advance(p)
+                        }
                     }
-                    advance(p)
                 }
             }
+            u.vec_pushp(n.defaults, def as ref void)
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
                 advance(p)
                 continue
@@ -1513,7 +1598,13 @@ fn is_named_arg(p: ref Parser) bool = trust {
 }
 
 fn is_spread(p: ref Parser) bool = trust {
-    if cur(p).kind != TokenKind.Op || !u.s_eq(cur(p).text, c".") {
+    if cur(p).kind != TokenKind.Op {
+        return false
+    }
+    if u.s_eq(cur(p).text, c"...") {
+        return true
+    }
+    if !u.s_eq(cur(p).text, c".") {
         return false
     }
     val a: ref Token = peek(p, 1)
@@ -1740,7 +1831,20 @@ fn parse_simple(p: mut ref Parser) ref Node = trust {
 }
 
 fn parse_expr(p: mut ref Parser) ref Node = trust {
-    return parse_or(p)
+    return parse_coalesce(p)
+}
+
+fn parse_coalesce(p: mut ref Parser) ref Node = trust {
+    val left: ref Node = parse_or(p)
+    if cur(p).kind == TokenKind.Op && text_is(cur(p), c"??") {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
+        n.a = BinOp.NullCoalesce as i64
+        u.vec_pushp(n.kids, left)
+        u.vec_pushp(n.kids, parse_coalesce(p) as ref void)
+        return n
+    }
+    return left
 }
 
 fn parse_or(p: mut ref Parser) ref Node = trust {
@@ -1782,13 +1886,13 @@ fn parse_not(p: mut ref Parser) ref Node = trust {
 }
 
 fn parse_compare(p: mut ref Parser) ref Node = trust {
-    val left: mut ref Node = parse_add(p)
+    val left: mut ref Node = parse_range(p)
     if cur(p).kind == TokenKind.Ident && u.s_eq(cur(p).text, c"in") {
         advance(p)
         val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
         n.a = BinOp.In as i64
         u.vec_pushp(n.kids, left)
-        u.vec_pushp(n.kids, parse_add(p) as ref void)
+        u.vec_pushp(n.kids, parse_range(p) as ref void)
         return n
     }
     if cur(p).kind == TokenKind.Ident && u.s_eq(cur(p).text, c"not") && keyword(peek(p, 1), c"in") {
@@ -1797,7 +1901,7 @@ fn parse_compare(p: mut ref Parser) ref Node = trust {
         val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
         n.a = BinOp.NotIn as i64
         u.vec_pushp(n.kids, left)
-        u.vec_pushp(n.kids, parse_add(p) as ref void)
+        u.vec_pushp(n.kids, parse_range(p) as ref void)
         return n
     }
     if cur(p).kind == TokenKind.Op {
@@ -1807,9 +1911,27 @@ fn parse_compare(p: mut ref Parser) ref Node = trust {
             val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
             n.a = op
             u.vec_pushp(n.kids, left)
-            u.vec_pushp(n.kids, parse_add(p) as ref void)
+            u.vec_pushp(n.kids, parse_range(p) as ref void)
             return n
         }
+    }
+    return left
+}
+
+fn parse_range(p: mut ref Parser) ref Node = trust {
+    val left: ref Node = parse_add(p)
+    if cur(p).kind == TokenKind.Op && (text_is(cur(p), c"..") || text_is(cur(p), c"..=")) {
+        val t: ref Token = cur(p)
+        val op: mut i64 = BinOp.Range as i64
+        if text_is(t, c"..=") {
+            op = BinOp.RangeInclusive as i64
+        }
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.Binary, left.line, left.col)
+        n.a = op
+        u.vec_pushp(n.kids, left)
+        u.vec_pushp(n.kids, parse_add(p) as ref void)
+        return n
     }
     return left
 }
@@ -2073,9 +2195,13 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
             }
             if is_spread(p) {
                 val spread: mut ref Node = node_new(NodeKind.Spread, cur(p).line, cur(p).col)
-                advance(p)
-                advance(p)
-                advance(p)
+                if text_is(cur(p), c"...") {
+                    advance(p)
+                } else {
+                    advance(p)
+                    advance(p)
+                    advance(p)
+                }
                 u.vec_pushp(spread.kids, parse_expr(p) as ref void)
                 u.vec_pushp(n.kids, spread as ref void)
             } else {

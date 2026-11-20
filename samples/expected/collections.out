@@ -8,3 +8,5 @@ total: 6
 passes: 2
 upper: [PASS] PARSER | [FAIL] SHELL | [PASS] LISTS
 passing: [pass] parser | [pass] lists
+range: 1,2,3,4,5
+missing: 0

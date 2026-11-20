@@ -710,7 +710,7 @@ String tests, numeric tests, boolean operators, and common file tests are
 supported. File tests use the platform <code>test</code> utility through <code>shell</code>.</p>
 </li>
 <li>
-<p><code>$(&#8230;&#8203;)</code> and backtick command substitution become <code>std.capture(&#8230;&#8203;)</code>.
+<p><code>$(&#8230;&#8203;)</code> and backtick command substitution become <code>sh(&#8230;&#8203;)</code>.
 <code>$&#8230;&#8203;</code> arithmetic becomes a Blood arithmetic expression.</p>
 </li>
 <li>
@@ -720,7 +720,7 @@ supported. File tests use the platform <code>test</code> utility through <code>s
 </li>
 <li>
 <p><code>read -r NAME</code> becomes <code>NAME = std.input()</code>. Later commands are wrapped in
-<code>std.shell(&#8230;&#8203;)</code> so arbitrary command lines, pipelines, and redirections keep
+<code>sh(&#8230;&#8203;)</code> so arbitrary command lines, pipelines, and redirections keep
 working even when the script parser would otherwise read them as
 expressions.</p>
 </li>
@@ -2742,34 +2742,42 @@ to another variable aliases the same object; there is no implicit copy.</p>
 <tbody>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>or</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>??</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>and</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>or</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">3</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>not</code> (prefix)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>and</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">4</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>==</code> <code>!=</code> <code>&lt;</code> <code>&gt;</code> <code>&#8656;</code> <code>&gt;=</code> <code>in</code> <code>not in</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>not</code> (prefix)</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">5</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>+</code> <code>-</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>==</code> <code>!=</code> <code>&lt;</code> <code>&gt;</code> <code>&#8656;</code> <code>&gt;=</code> <code>in</code> <code>not in</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">6</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock"><code>*</code> <code>/</code> <code>%</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>..</code> <code>..=</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">7</p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">unary <code>-</code> and unary <code>+</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>+</code> <code>-</code></p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">8</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>*</code> <code>/</code> <code>%</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">9</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">unary <code>-</code> and unary <code>+</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">10</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">call <code>(&#8230;&#8203;)</code>, index <code>[&#8230;&#8203;]</code>, attribute <code>.NAME</code></p></td>
 </tr>
 </tbody>
@@ -2778,6 +2786,15 @@ to another variable aliases the same object; there is no implicit copy.</p>
 <p>Only one comparison operator is accepted at a given level; chained
 comparisons such as <code>a &lt; b &lt; c</code> are not supported. Parentheses override
 precedence.</p>
+</div>
+<div class="paragraph">
+<p><code>??</code> returns its left operand unless that operand is null, in which case it
+evaluates and returns the right operand. It does not treat false or empty
+values as missing.</p>
+</div>
+<div class="paragraph">
+<p><code>a..b</code> produces the list of integers from <code>a</code> up to but not including <code>b</code>.
+<code>a..=b</code> includes <code>b</code>. A range whose start is greater than its end is empty.</p>
 </div>
 </div>
 <div class="sect3">
@@ -2814,13 +2831,14 @@ literal: <code>[first, &#8230;&#8203;rest]</code>.</p>
 <div class="paragraph">
 <p>Calls have the form <code>callee(arg1, arg2, &#8230;&#8203;)</code>. A trailing comma is permitted.
 Arguments may be named as <code>name: value</code>; named arguments bind to the parameter
-with that name, and native functions use them for optional settings such as
-<code>merge_stderr:</code> and <code>default:</code>. Missing arguments are bound as null; extra
-arguments are ignored by user-defined functions.</p>
+with that name. User-defined functions, lambdas, and native functions all
+accept named arguments. Missing arguments use the parameter default when one is
+declared, and are otherwise bound as null. Extra arguments are ignored by
+user-defined functions.</p>
 </div>
 <div class="paragraph">
 <p>Parentheses may be omitted when the call is unambiguous, as in
-<code>which "spectre"</code>, <code>say "hello"</code>, or <code>x = str len args</code>. A command-shaped
+<code>sh "echo hi"</code>, <code>say "hello"</code>, or <code>x = len args</code>. A command-shaped
 statement whose first word names a function is called as a function with the
 remaining text as its arguments; if no such function exists, the line is run
 as a shell command. Parentheses are still required for method calls,
@@ -2926,8 +2944,19 @@ list, and empty dictionary are false. All other values are true.</p>
 <h4 id="_interpolation">Interpolation</h4>
 <div class="paragraph">
 <p>String interpolation is equivalent to evaluating each <code>{&#8230;&#8203;}</code> field and
-concatenating its string representation. The current lexical environment is
-used, including function parameters and local variables.</p>
+concatenating its string representation. Each field is a complete expression,
+so calls, indexing, arithmetic, ranges, and null coalescing all work directly:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>say "args: {args.len()}"
+say "score: {scores[key] ?? 0}"
+say "inclusive: {1..=5}"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The current lexical environment is used, including function parameters and
+local variables.</p>
 </div>
 </div>
 </div>
@@ -3026,13 +3055,21 @@ suite after the opening brace is accepted.</p>
 
 for NAME in EXPRESSION {
     BLOCK
+}
+
+for KEY, VALUE in EXPRESSION {
+    BLOCK
 }</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p><code>while</code> reevaluates its condition before each iteration. <code>for</code> iterates over
-the elements of a list, the UTF-8 code points of a string, or the keys of a
-dictionary. <code>break</code> and <code>continue</code> affect the innermost loop.</p>
+<p><code>while</code> reevaluates its condition before each iteration. The single-variable
+form of <code>for</code> iterates over the elements of a list, the UTF-8 code points of a
+string, or the keys of a dictionary. The two-variable form iterates a
+dictionary, binding the key to <code>KEY</code> and the corresponding value to <code>VALUE</code>;
+dictionary iteration order is unspecified. Use <code>.sorted()</code> or
+<code>.sorted_keys()</code> when deterministic key order is needed. <code>break</code> and
+<code>continue</code> affect the innermost loop.</p>
 </div>
 <div class="paragraph">
 <p>There is no C-style <code>for</code>, no <code>do</code>, and no <code>loop</code> statement.</p>
@@ -3068,20 +3105,38 @@ aborting the remaining iterations. <code>para for</code> does not support <code>
 <h4 id="_functions">Functions</h4>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code>fn NAME(PARAM1, PARAM2, ...) {
+<pre class="highlight"><code>fn NAME(PARAM1, PARAM2: DEFAULT, ...) {
     BLOCK
 }</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Parameters are positional. Type annotations may be written after a parameter
-name and are ignored. A named function body uses the global environment as its
-parent, not the environment of its definition. Functions may be recursive. The
-recursion depth is limited to 200 nested user-function calls.</p>
+<p>Parameters are positional unless passed by name. A parameter may declare a
+default after <code>:</code>, which is used when the caller omits that argument.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>fn greet(name, sep: ", ") {
+    return "Hello" + sep + name
+}
+
+greet("Ada", sep: ": ")</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Type annotations such as <code>fn f(x: i64)</code> remain accepted and ignored. A token
+that looks like a type name is treated as an annotation; any other expression
+after <code>:</code> is a default.</p>
+</div>
+<div class="paragraph">
+<p>A named function body uses the global environment as its parent, not the
+environment of its definition. Functions may be recursive. The recursion depth
+is limited to 200 nested user-function calls.</p>
 </div>
 <div class="paragraph">
 <p><code>return</code> with no value returns null. A function that reaches the end of its
-body returns null. Extra arguments are ignored; missing arguments are null.</p>
+body returns null. Extra arguments are ignored; missing arguments without a
+default are null.</p>
 </div>
 </div>
 <div class="sect3">
@@ -3105,7 +3160,7 @@ function. For example:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code>var lines = std.capture("test-suite").stdout.lines()
+<pre class="highlight"><code>var lines = sh("test-suite").stdout.lines()
 var passes = lines.count(|l| l.starts_with("[pass]"))
 
 
@@ -3256,9 +3311,9 @@ execution.
 command statement. A failed shell command does not raise a script error; it
 sets `status`.
 
-`status` is deprecated for new scripts. `shell`, `capture`, and `run` return a
-result dictionary with `status`, `stdout`, `stderr`, and `ok` fields; use
-those fields instead. `status` remains available while existing scripts are
+`status` is deprecated for new scripts. `sh` and `run` return a result
+dictionary with `status`, `stdout`, `stderr`, and `ok` fields; use those
+fields instead. `status` remains available while existing scripts are
 migrated.
 
 === Builtin functions
@@ -3267,10 +3322,11 @@ Builtins are grouped in the `std` namespace. They are ordinary function values
 and can be called as `std.len(x)`, `std.read_file(path)`, and so on.
 
 A small bare-name prelude is also available: the `say` statement and the
-functions `print`, `eprint`, `exit`, `cd`, and `run`. These names may be
-shadowed by user definitions; a warning is written to standard error when that
-happens. The `std.` forms are always available and never shadowed, so
-`std.print(...)` and `std.run(...)` are the unambiguous spellings.
+functions `print`, `eprint`, `exit`, `cd`, `run`, `len`, `str`, `range`, and
+`sh`. These names may be shadowed by user definitions; a warning is written to
+standard error when that happens. The `std.` forms are always available and
+never shadowed, so `std.print(...)`, `std.len(...)`, and `std.sh(...)` are the
+unambiguous spellings.
 
 [cols="1,1,3",options="header"]
 |===
@@ -3291,11 +3347,9 @@ standard output. Returns null.
 standard input. Returns a string, or null on end of input.
 |`std.sleep(ms)` |1 |Sleep for the given number of milliseconds.
 |`std.exit([code])` |0 or 1 |Request shell exit with the given status. Default 0.
-|`std.shell(command)` |1 |Execute a shell command line and return a result
-dictionary with `status`, `stdout`, `stderr`, and `ok`. Both output streams
-are captured.
-|`std.capture(command)` |1 |Execute a shell command line and return the same
-result dictionary as `std.shell`.
+|`sh(command, check: bool)` |1 |Execute a command line and return a result
+dictionary with `status`, `stdout`, `stderr`, and `ok`. Both output streams are
+captured. With `check: true`, a non-zero status raises a runtime error.
 |`std.run(argv, merge_stderr: bool, cwd: string)` |1 |Execute a list of arguments
 directly without a shell and return a result dictionary. `merge_stderr`
 combines stderr into `stdout`; `cwd` sets the child working directory.
@@ -3383,10 +3437,11 @@ for which `fn(x)` is truthy.
 [cols="1,1,2",options="header"]
 |===
 |Method |Arity |Behaviour
-|`get(key[, default])` |1 or 2 |Value for key, or default/null.
+|`get(key[, default: x])` |1 or 2 |Value for key, or the supplied default/null.
 |`set(key, value)` |2 |Set a key.
 |`contains(key)` |1 |Key membership.
 |`keys()` |0 |List of keys.
+|`sorted()` / `sorted_keys()` |0 |New list of keys sorted by string value.
 |`values()` |0 |List of values.
 |`items()` |0 |List of `[key, value]` pairs.
 |`len()` |0 |Number of keys.
@@ -3419,6 +3474,13 @@ final element; `\r\n` is accepted.
 |`len()` |0 |Byte length.
 |`chars()` |0 |List of UTF-8 code points as strings.
 |`join(list)` |1 |Join a list with the receiver as separator.
+|`parent()` |0 |Directory component of a path.
+|`basename()` |0 |Final component of a path.
+|`stem()` |0 |Final component of a path with its last extension removed.
+|`exists()` |0 |Whether the path exists.
+|`is_file()` |0 |Whether the path exists and is not a directory.
+|`is_dir()` |0 |Whether the path is a directory.
+|`is_executable()` |0 |Whether the path is executable.
 |===
 
 ==== Numeric methods
@@ -3501,12 +3563,12 @@ if-stmt      = "if" expression suite
 
 while-stmt   = "while" expression suite ;
 
-for-stmt     = "for" IDENT "in" expression suite ;
+for-stmt     = "for" IDENT [ "," IDENT ] "in" expression suite ;
 
 para-for-stmt = "para" "for" IDENT "in" expression suite ;
 
 fn-stmt      = "fn" IDENT "(" [ param { "," param } [ "," ] ] ")" suite ;
-param        = IDENT [ ":" type-text ] ;
+param        = IDENT [ ":" ( type-text | expression ) ] ;
 
 try-stmt     = "try" suite ( "catch" | "except" ) [ IDENT ] suite ;
 
@@ -3521,13 +3583,15 @@ assign-op    = "=" | "+=" | "-=" | "*=" | "/=" ;
 
 expression-stmt = expression [ NEWLINE ] ;
 
-expression   = or-expr ;
+expression   = coalesce-expr ;
+coalesce-expr = or-expr [ "??" coalesce-expr ] ;
 or-expr      = and-expr { "or" and-expr } ;
 and-expr     = not-expr { "and" not-expr } ;
 not-expr     = "not" not-expr | comparison ;
-comparison   = additive
+comparison   = range-expr
                [ ( "==" | "!=" | "&lt;" | "&gt;" | "&lt;=" | "&gt;="
-                 | "in" | "not" "in" ) additive ] ;
+                 | "in" | "not" "in" ) range-expr ] ;
+range-expr   = additive [ ( ".." | "..=" ) additive ] ;
 additive     = multiplicative { ( "+" | "-" ) multiplicative } ;
 multiplicative = unary { ( "*" | "/" | "%" ) unary } ;
 unary        = ( "-" | "+" ) unary | postfix ;
@@ -3561,8 +3625,9 @@ lambda       = "|" [ IDENT { "," IDENT } ] "|"
 ....
 
 `type-text` is accepted and skipped by the parser; type annotations have no
-runtime effect. A `SHELL` statement is recognised by the statement-start
-heuristic and consumes the remainder of the source line.
+runtime effect. Any other expression after a parameter's `:` is a default
+value. A `SHELL` statement is recognised by the statement-start heuristic and
+consumes the remainder of the source line.
 
 === Evaluation order
 
@@ -3809,7 +3874,7 @@ say output
 say "status is {status}"</p>
 </div>
 <div class="paragraph">
-<p>std.shell("true")</p>
+<p>sh("true")</p>
 </div>
 <div class="listingblock">
 <div class="content">
