@@ -61,6 +61,7 @@ pub enum NodeKind = {
     Index
     Attr
     CmdSubst
+    FnLit
 }
 
 pub enum BinOp = {
@@ -2117,6 +2118,43 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
         }
         if !expect_op(p, c"}") {
             return n
+        }
+        return n
+    }
+    if t.kind == TokenKind.Op && u.s_eq(t.text, c"|") {
+        advance(p)
+        val n: mut ref Node = node_new(NodeKind.FnLit, t.line, t.col)
+        for {
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c"|") {
+                break
+            }
+            val pt: ref Token = cur(p)
+            if pt.kind != TokenKind.Ident {
+                set_error(pt.line, pt.col, c"expected a parameter name")
+                break
+            }
+            u.vec_pushp(n.params, u.s_dup(pt.text) as ref void)
+            advance(p)
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+                advance(p)
+                continue
+            }
+            break
+        }
+        if !expect_op(p, c"|") {
+            return n
+        }
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c"{") {
+            val saved_style: i64 = p.style
+            p.style = 1
+            u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
+            p.style = saved_style
+        } else {
+            val body: mut ref Node = node_new(NodeKind.Block, t.line, t.col)
+            val ret: mut ref Node = node_new(NodeKind.Return, t.line, t.col)
+            u.vec_pushp(ret.kids, parse_expr(p) as ref void)
+            u.vec_pushp(body.kids, ret as ref void)
+            u.vec_pushp(n.kids, body as ref void)
         }
         return n
     }

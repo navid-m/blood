@@ -16,3 +16,8 @@ for key in keys {
     say(key + " -> " + str(scores[key]))
 }
 say("total: " + str(total))
+
+var labels = ["[pass] parser", "[fail] shell", "[pass] lists"]
+say("passes: " + str(labels.count(|l| l.starts_with("[pass]"))))
+say("upper: " + labels.map(|l| l.upper()).join(" | "))
+say("passing: " + labels.filter(|l| l.starts_with("[pass]")).join(" | "))

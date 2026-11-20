@@ -46,6 +46,14 @@ test "script supports list mutation and methods" {
     }
 }
 
+test "script supports list map filter and count with lambdas" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var xs = [1, 2, 3, 4]\nvar doubled = xs.map(|x| x * 2)\nif doubled.join(\",\") != \"2,4,6,8\" {\n    raise \"map\"\n}\nvar evens = xs.filter(|x| x % 2 == 0)\nif evens.join(\",\") != \"2,4\" {\n    raise \"filter\"\n}\nif xs.count(|x| x > 2) != 2 {\n    raise \"count predicate\"\n}\nif xs.count() != 4 {\n    raise \"count\"\n}\nvar threshold = 2\nif xs.count(|x| x > threshold) != 2 {\n    raise \"count closure\"\n}\nfn make_adder(n) {\n    return |x| x + n\n}\nvar add_ten = make_adder(10)\nif add_ten(5) != 15 {\n    raise \"closure\"\n}\nvar long = [\"a\", \"longer\", \"tiny\"].filter(|s| {\n    return s.len() > 4\n})\nif long.join(\",\") != \"longer\" {\n    raise \"block lambda\"\n}\nif [\"[pass] a\", \"[fail] b\", \"[pass] c\"].count(|l| l.starts_with(\"[pass]\")) != 2 {\n    raise \"pass count\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
 test "script classifies existing .blood and .bx files as commands" {
     trust {
         val dir: ref u8 = c"/tmp/blood-unit-script/exts"

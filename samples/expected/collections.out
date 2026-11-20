@@ -5,3 +5,6 @@ apple -> 3
 kiwi -> 2
 pear -> 1
 total: 6
+passes: 2
+upper: [PASS] PARSER | [FAIL] SHELL | [PASS] LISTS
+passing: [pass] parser | [pass] lists

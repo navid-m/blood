@@ -1473,13 +1473,36 @@ fn NAME(PARAM1, PARAM2, ...) {
 ----
 
 Parameters are positional. Type annotations may be written after a parameter
-name and are ignored. A function body uses the global environment as its
-parent, not the environment of its definition; Blood has no closures.
-Functions may be recursive. The recursion depth is limited to 200
-nested user-function calls.
+name and are ignored. A named function body uses the global environment as its
+parent, not the environment of its definition. Functions may be recursive. The
+recursion depth is limited to 200 nested user-function calls.
 
 `return` with no value returns null. A function that reaches the end of its
 body returns null. Extra arguments are ignored; missing arguments are null.
+
+==== Lambdas
+
+[source]
+----
+|l| EXPRESSION
+|a, b| EXPRESSION
+|a, b| {
+    BLOCK
+}
+----
+
+A lambda is an anonymous function value. The parameter list is enclosed by
+pipes, and the body is either a single expression or a braced block. An
+expression body is returned automatically; a block body returns when it reaches
+`return`, and otherwise returns null. Lambdas capture the environment in which
+they are defined, so they may refer to local variables of an enclosing
+function. For example:
+
+[source]
+----
+var lines = capture("test-suite").stdout.lines()
+var passes = lines.count(|l| l.starts_with("[pass]"))
+
 
 ==== Exceptions
 
@@ -1724,6 +1747,10 @@ Method calls use the attribute syntax `value.name(arguments)`.
 |`contains(x)` |1 |Membership by equality.
 |`join(sep)` |1 |Join string representations with separator `sep`.
 |`sort()` |0 |Sort in place by string representation.
+|`map(fn)` |1 |New list containing `fn(x)` for each element `x`.
+|`filter(fn)` |1 |New list of elements for which `fn(x)` is truthy.
+|`count([fn])` |0 or 1 |Number of elements. With `fn`, the number of elements
+for which `fn(x)` is truthy.
 |===
 
 ==== Dictionary methods
@@ -1897,12 +1924,15 @@ primary      = INT
              | IDENT
              | "(" expression ")"
              | list-literal
-             | dict-literal ;
+             | dict-literal
+             | lambda ;
 
 list-literal = "[" [ list-item { "," list-item } [ "," ] ] "]" ;
 list-item    = [ "..." ] expression ;
 dict-literal = "{" [ expression ":" expression
                      { "," expression ":" expression } [ "," ] ] "}" ;
+lambda       = "|" [ IDENT { "," IDENT } ] "|"
+               ( expression | "{" { statement } "}" ) ;
 ....
 
 `type-text` is accepted and skipped by the parser; type annotations have no
@@ -2024,9 +2054,9 @@ part of the implemented contract:
   multi-command pipeline.
 * There are no heredocs, here-strings, process substitution, `|&`, or
   arbitrary descriptor redirections beyond `2>&N`.
-* The scripting language has no classes, modules, imports, closures,
-  comprehensions, generators, decorators, lambdas, slicing, keyword arguments,
-  default parameters, varargs, `with`, `assert`, `del`, `global`, or `is`.
+* The scripting language has no classes, modules, imports, comprehensions,
+  generators, decorators, slicing, keyword arguments, default parameters,
+  varargs, `with`, `assert`, `del`, `global`, or `is`.
 * Type annotations on function parameters are syntactically accepted but
   ignored.
 * Single-quoted and double-quoted strings both interpolate.

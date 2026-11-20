@@ -24,6 +24,7 @@ pub type Func = {
     params: mut ref u.Vec
     body: mut ref lang.Node
     native: mut i64
+    closure: mut ref Env
 }
 
 type Defer = {
@@ -820,6 +821,15 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         }
         return v_nil()
     }
+    if n.kind == lang.NodeKind.FnLit {
+        val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
+        f.name = c""
+        f.params = n.params
+        f.body = u.vec_p(n.kids, 0) as ref lang.Node
+        f.native = 0
+        f.closure = env
+        return v_func(f)
+    }
     if n.kind == lang.NodeKind.CmdSubst {
         if u.hooks_ready == 0 {
             return v_str(u.s_dup(c""))
@@ -930,7 +940,11 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         return v_nil()
     }
     g_depth++
-    val callenv: mut ref Env = env_new(g_env)
+    val parent: mut ref Env = g_env
+    if f.closure != none {
+        parent = f.closure
+    }
+    val callenv: mut ref Env = env_new(parent)
     val i: mut i64 = 0
     for {
         if i >= f.params.len {
@@ -995,6 +1009,12 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     g_return = saved_return
     g_depth--
     return result
+}
+
+fn call_one(fnv: ref Value, value: ref Value, n: ref lang.Node) ref Value = trust {
+    val args: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(args, value as ref void)
+    return call_func(fnv.p as ref Func, args, n)
 }
 
 fn native_id(name: ref u8) i64 = trust {
@@ -2095,6 +2115,58 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
             sort_values(vec)
             return v_nil()
         }
+        if u.s_eq(name, c"map") || u.s_eq(name, c"filter") {
+            val fnv: ref Value = arg(args, 0)
+            if fnv == none || fnv.tag != 7 {
+                set_error(u.s_cat3(name, c" expects a function", c""), n.line, n.col)
+                return v_nil()
+            }
+            val out: mut ref u.Vec = list_new()
+            val i: mut i64 = 0
+            for {
+                if i >= vec.len {
+                    break
+                }
+                val item: ref Value = u.vec_p(vec, i) as ref Value
+                val result: ref Value = call_one(fnv, item, n)
+                if g_flow != 0 {
+                    return v_nil()
+                }
+                if u.s_eq(name, c"map") {
+                    u.vec_pushp(out, result as ref void)
+                } elif truthy(result) {
+                    u.vec_pushp(out, item as ref void)
+                }
+                i++
+            }
+            return v_list(out)
+        }
+        if u.s_eq(name, c"count") {
+            if args.len == 0 {
+                return v_int(vec.len)
+            }
+            val fnv: ref Value = arg(args, 0)
+            if fnv == none || fnv.tag != 7 {
+                set_error(c"count expects a function", n.line, n.col)
+                return v_nil()
+            }
+            val total: mut i64 = 0
+            val i: mut i64 = 0
+            for {
+                if i >= vec.len {
+                    break
+                }
+                val result: ref Value = call_one(fnv, u.vec_p(vec, i) as ref Value, n)
+                if g_flow != 0 {
+                    return v_nil()
+                }
+                if truthy(result) {
+                    total++
+                }
+                i++
+            }
+            return v_int(total)
+        }
     }
     if obj.tag == 6 {
         val m: mut ref u.Map = obj.p as ref u.Map
@@ -2814,6 +2886,7 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         f.params = n.params
         f.body = u.vec_p(n.kids, 0) as ref lang.Node
         f.native = 0
+        f.closure = none
         env_assign(env, n.s, v_func(f))
         return
     }
@@ -2974,6 +3047,7 @@ fn define_native(env: mut ref Env, name: ref u8) void = trust {
     f.params = u.vec_new()
     f.body = none
     f.native = native_id(name)
+    f.closure = none
     env_define(env, name, v_func(f))
 }
 
@@ -3141,6 +3215,7 @@ fn queue_func_children(f: mut ref Func, jobs: mut ref u.Vec) void = trust {
     enqueue(jobs, f.name as ref void, 0, @ptradd(f as ref void, 0))
     enqueue(jobs, f.params as ref void, 7, @ptradd(f as ref void, 8))
     enqueue(jobs, f.body as ref void, 5, @ptradd(f as ref void, 16))
+    enqueue(jobs, f.closure as ref void, 8, @ptradd(f as ref void, 32))
 }
 
 fn queue_node_children(n: mut ref lang.Node, jobs: mut ref u.Vec) void = trust {
@@ -3237,6 +3312,7 @@ fn promote_all(jobs: mut ref u.Vec, memo: mut ref u.Vec) void = trust {
             nf.params = of.params
             nf.body = of.body
             nf.native = of.native
+            nf.closure = of.closure
             memo_put(memo, old, nf as ref void)
             store_slot(slot, nf as ref void)
             queue_func_children(nf, jobs)
