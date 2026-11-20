@@ -359,6 +359,7 @@ pub fn spawn_redirected(
     }
 }
 
+when windows {
 fn capture_argv_win(
     argv: ref u.Vec,
     quiet_err: bool,
@@ -386,8 +387,8 @@ fn capture_argv_win(
         fd_close(err_fd)
     }
     if pid < 0 {
-        std_remove(out_path)
-        std_remove(err_path)
+        rt.unlink(out_path)
+        rt.unlink(err_path)
         return u.s_dup(c"")
     }
 
@@ -397,8 +398,8 @@ fn capture_argv_win(
         if done == -1 {
             win.kill(pid)
             win.wait_pid(pid, false)
-            std_remove(out_path)
-            std_remove(err_path)
+            rt.unlink(out_path)
+            rt.unlink(err_path)
             return u.s_dup(c"")
         }
     } else {
@@ -409,13 +410,10 @@ fn capture_argv_win(
     if out == none {
         out = u.s_dup(c"")
     }
-    std_remove(out_path)
-    std_remove(err_path)
+    rt.unlink(out_path)
+    rt.unlink(err_path)
     return out
 }
-
-fn std_remove(path: ref u8) void = trust {
-    rt.unlink(path)
 }
 
 pub fn capture_argv(argv: ref u.Vec, quiet_err: bool) ref u8 = trust {
