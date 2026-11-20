@@ -56,6 +56,22 @@ test "formatter is idempotent" {
     }
 }
 
+test "formatter indents lines after an opening bracket" {
+    trust {
+        val src: ref u8 = c"var ok = emit(\"bootstrap/sxc.ssa\", [\"./spectre-dev\"] + defines + [\n\"./src/sxc.sx\",\n\"-b\"\n] + ssa_mode + [\n\"-no-warn\",\n\"-emit-ssa\"\n])\nif not ok {\n    exit(1)\n}\n"
+        val want: ref u8 = c"var ok = emit(\"bootstrap/sxc.ssa\", [\"./spectre-dev\"] + defines + [\n    \"./src/sxc.sx\",\n    \"-b\"\n] + ssa_mode + [\n    \"-no-warn\",\n    \"-emit-ssa\"\n])\nif not ok {\n    exit(1)\n}\n"
+        assert u.s_eq(format.format_text(src), want)
+    }
+}
+
+test "formatter keeps brace blocks nested in brackets on their own lines" {
+    trust {
+        val src: ref u8 = c"var items = [\n{\n\"a\": 1\n}\n]\n"
+        val want: ref u8 = c"var items = [\n    {\n        \"a\": 1\n    }\n]\n"
+        assert u.s_eq(format.format_text(src), want)
+    }
+}
+
 test "formatter walks directories and filters Blood scripts" {
     trust {
         val dir: ref u8 = c"/tmp/blood-unit-format-dir"
