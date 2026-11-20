@@ -14,9 +14,19 @@ for x in ["hello", "world"] {
 
 #### Quick install
 
+POSIX:
+
 ```shell
 git clone https://github.com/navid-m/blood.git && cd blood/fw
 ./install.sh
+```
+
+Windows:
+
+```powershell
+git clone https://github.com/navid-m/blood.git
+cd .\blood\fw
+.\install.ps1
 ```
 
 ## Resources
