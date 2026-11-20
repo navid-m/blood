@@ -89,6 +89,15 @@ pub fn v_str(s: ref u8) ref Value = trust {
     return v
 }
 
+/// Wrap a string allocated by the current scope in a Value without copying it.
+fn v_str_own(s: ref u8) ref Value = trust {
+    val v: mut ref Value = v_new(4)
+    if s != none {
+        v.p = s
+    }
+    return v
+}
+
 fn v_list(vec: ref u.Vec) ref Value = trust {
     val v: mut ref Value = v_new(5)
     v.p = vec
@@ -615,7 +624,7 @@ fn values_equal(a: ref Value, b: ref Value) bool = trust {
 fn bin_op(op: i64, a: ref Value, b: ref Value) ref Value = trust {
     if op == 0 {
         if (a != none && a.tag == 4) || (b != none && b.tag == 4) {
-            return v_str(u.s_cat(v_to_str(a), v_to_str(b)))
+            return v_str_own(u.s_cat(v_to_str(a), v_to_str(b)))
         }
         if a != none && b != none && a.tag == 5 && b.tag == 5 {
             val va: ref u.Vec = a.p as ref u.Vec
@@ -940,13 +949,13 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
     }
     if n.kind == lang.NodeKind.CmdSubst {
         if u.hooks_ready == 0 {
-            return v_str(u.s_dup(c""))
+            return v_str_own(u.s_dup(c""))
         }
         val hook: fn(ref u8) ref u8 = u.run_capture_hook
         val out: ref u8 = hook(n.s)
         set_status(u.hook_status)
         if out == none {
-            return v_str(u.s_dup(c""))
+            return v_str_own(u.s_dup(c""))
         }
         val m: mut i64 = u.s_len(out)
         for {
@@ -959,7 +968,7 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
             }
             m--
         }
-        return v_str(u.s_substr(out, 0, m))
+        return v_str_own(u.s_substr(out, 0, m))
     }
     if n.kind == lang.NodeKind.If {
         return eval_if(n, env)
@@ -1092,7 +1101,7 @@ fn do_index(obj: ref Value, idx: ref Value, n: ref lang.Node) ref Value = trust 
             return v_nil()
         }
         val e: i64 = u.utf8_next(s, i, len)
-        return v_str(u.s_substr(s, i, e))
+        return v_str_own(u.s_substr(s, i, e))
     }
     set_error(c"value is not indexable", n.line, n.col)
     return v_nil()
@@ -1651,7 +1660,7 @@ fn lines_of(s: ref u8) ref Value = trust {
             if i == len && start == len {
                 break
             }
-            u.vec_pushp(vec, v_str(u.s_substr(s, start, end)) as ref void)
+            u.vec_pushp(vec, v_str_own(u.s_ndup(@ptradd(s, start), end - start)) as ref void)
             start = i + 1
         }
         i++
@@ -1682,7 +1691,7 @@ fn split_words_value(s: ref u8) ref Value = trust {
             inword = 1
         } elif c == 32 || c == 9 || c == 10 || c == 13 {
             if inword != 0 {
-                u.vec_pushp(vec, v_str(u.buf_take(b)) as ref void)
+                u.vec_pushp(vec, v_str_own(u.buf_take(b)) as ref void)
                 b = u.buf_new()
                 inword = 0
             }
@@ -1693,7 +1702,7 @@ fn split_words_value(s: ref u8) ref Value = trust {
         i++
     }
     if inword != 0 {
-        u.vec_pushp(vec, v_str(u.buf_take(b)) as ref void)
+        u.vec_pushp(vec, v_str_own(u.buf_take(b)) as ref void)
     }
     return v_list(vec)
 }
@@ -1911,7 +1920,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
                     break
                 }
                 if u.map_used_at(m, i) {
-                    u.vec_pushp(out, v_str(u.s_dup(u.map_key_at(m, i))) as ref void)
+                    u.vec_pushp(out, v_str_own(u.s_dup(u.map_key_at(m, i))) as ref void)
                 }
                 i++
             }
@@ -1949,7 +1958,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
             }
             return v_nil()
         }
-        return v_str(data)
+        return v_str_own(data)
     }
     if id == 21 || id == 22 {
         val path: ref u8 = u.expand_tilde(v_to_str(arg(args, 0)))
@@ -1974,7 +1983,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
                 return v_nil()
             }
         }
-        return v_str(u.s_dup(v))
+        return v_str_own(u.s_dup(v))
     }
     if id == 24 {
         return v_int(u.now_ms())
@@ -1982,7 +1991,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     if id == 25 {
         val code: i64 = num_i(arg(args, 0))
         val c: mut u8 = code as u8
-        return v_str(u.s_ndup(@addr(c), 1))
+        return v_str_own(u.s_ndup(@addr(c), 1))
     }
     if id == 26 {
         val s: ref u8 = v_to_str(arg(args, 0))
@@ -2006,7 +2015,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
                 }
                 if u.map_used_at(m, i) {
                     val pair: mut ref u.Vec = list_new()
-                    u.vec_pushp(pair, v_str(u.s_dup(u.map_key_at(m, i))) as ref void)
+                    u.vec_pushp(pair, v_str_own(u.s_dup(u.map_key_at(m, i))) as ref void)
                     u.vec_pushp(pair, @bitcast(u.map_val_at(m, i), ref void))
                     u.vec_pushp(out, v_list(pair) as ref void)
                 }
@@ -2041,7 +2050,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
             return v_nil()
         }
         val m: mut ref u.Map = dict_new()
-        u.map_put(m, c"name", @bitcast(v_str(u.path_base(g_script_path)), i64))
+        u.map_put(m, c"name", @bitcast(v_str_own(u.path_base(g_script_path)), i64))
         u.map_put(m, c"path", @bitcast(v_str(g_script_path), i64))
         return v_dict(m)
     }
@@ -2049,7 +2058,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         if g_script_path == none {
             return v_nil()
         }
-        return v_str(u.path_dir(g_script_path))
+        return v_str_own(u.path_dir(g_script_path))
     }
     if id == 33 {
         val argv_val: ref Value = arg(args, 0)
@@ -2114,7 +2123,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         val name: ref u8 = v_to_str(arg(args, 0))
         if u.s_contains(name, c"/") {
             if u.file_exists(name) && u.is_executable(name) {
-                return v_str(u.s_dup(name))
+                return v_str_own(u.s_dup(name))
             }
             return v_nil()
         }
@@ -2180,10 +2189,10 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         return v_bool(remove_all_path(u.expand_tilde(v_to_str(v))))
     }
     if id == 44 {
-        return v_str(u.path_dir(v_to_str(arg(args, 0))))
+        return v_str_own(u.path_dir(v_to_str(arg(args, 0))))
     }
     if id == 45 {
-        return v_str(u.path_base(v_to_str(arg(args, 0))))
+        return v_str_own(u.path_base(v_to_str(arg(args, 0))))
     }
     if id == 46 {
         val base: ref u8 = u.path_base(v_to_str(arg(args, 0)))
@@ -2194,14 +2203,14 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
                 break
             }
             if @load8(@ptradd(base, i)) == 46 {
-                return v_str(u.s_substr(base, 0, i))
+                return v_str_own(u.s_substr(base, 0, i))
             }
             i--
         }
         return v_str(base)
     }
     if id == 47 {
-        return v_str(u.path_join(v_to_str(arg(args, 0)), v_to_str(arg(args, 1))))
+        return v_str_own(u.path_join(v_to_str(arg(args, 0)), v_to_str(arg(args, 1))))
     }
     if id == 48 {
         val path: ref u8 = u.expand_tilde(v_to_str(arg(args, 0)))
@@ -2248,7 +2257,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
             }
             i++
         }
-        return v_str(u.buf_take(b))
+        return v_str_own(u.buf_take(b))
     }
     if id == 51 {
         return v_bool(u.mkdir_p(u.expand_tilde(v_to_str(arg(args, 0)))))
@@ -2331,7 +2340,7 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
                 u.buf_add(b, v_to_str(u.vec_p(vec, i) as ref Value))
                 i++
             }
-            return v_str(u.buf_take(b))
+            return v_str_own(u.buf_take(b))
         }
         if u.s_eq(name, c"sort") {
             sort_values(vec)
@@ -2456,10 +2465,10 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
                 }
                 i++
             }
-            return v_str(u.buf_take(b))
+            return v_str_own(u.buf_take(b))
         }
         if u.s_eq(name, c"strip") {
-            return v_str(u.s_trim(s))
+            return v_str_own(u.s_trim(s))
         }
         if u.s_eq(name, c"split") {
             return v_str_split(s, v_to_str(arg(args, 0)))
@@ -2481,7 +2490,7 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
             val sl: i64 = u.s_len(s)
             val pl: i64 = u.s_len(suffix)
             if pl <= sl && u.s_eq(u.s_substr(s, sl - pl, sl), suffix) {
-                return v_str(u.s_substr(s, 0, sl - pl))
+                return v_str_own(u.s_substr(s, 0, sl - pl))
             }
             return v_str(s)
         }
@@ -2500,7 +2509,7 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
                 return v_nil()
             }
             val start: i64 = u.utf8_prev(s, len)
-            return v_str(u.s_substr(s, start, len))
+            return v_str_own(u.s_substr(s, start, len))
         }
         if u.s_eq(name, c"contains") {
             return v_bool(u.s_contains(s, v_to_str(arg(args, 0))))
@@ -2512,7 +2521,7 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
             return v_int(u.s_len(s))
         }
         if u.s_eq(name, c"abs") {
-            return v_str(u.absolute_path(s))
+            return v_str_own(u.absolute_path(s))
         }
         if u.s_eq(name, c"parent") {
             return call_native(44, args_for(obj), n)
@@ -2544,7 +2553,7 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
                     break
                 }
                 val j: i64 = u.utf8_next(s, i, len)
-                u.vec_pushp(vec, v_str(u.s_substr(s, i, j)) as ref void)
+                u.vec_pushp(vec, v_str_own(u.s_substr(s, i, j)) as ref void)
                 i = j
             }
             return v_list(vec)
@@ -2565,9 +2574,9 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
                     u.buf_add(b, v_to_str(u.vec_p(vec, i) as ref Value))
                     i++
                 }
-                return v_str(u.buf_take(b))
+                return v_str_own(u.buf_take(b))
             }
-            return v_str(u.s_dup(c""))
+            return v_str_own(u.s_dup(c""))
         }
     }
     if obj.tag == 2 || obj.tag == 3 {
@@ -2619,7 +2628,7 @@ fn v_str_split(s: ref u8, sep: ref u8) ref Value = trust {
                 break
             }
             val j: i64 = u.utf8_next(s, i, n)
-            u.vec_pushp(vec, v_str(u.s_substr(s, i, j)) as ref void)
+            u.vec_pushp(vec, v_str_own(u.s_ndup(@ptradd(s, i), j - i)) as ref void)
             i = j
         }
         return v_list(vec)
@@ -2629,11 +2638,11 @@ fn v_str_split(s: ref u8, sep: ref u8) ref Value = trust {
     for {
         val found: i64 = u.s_find(@ptradd(s, start), sep)
         if found < 0 {
-            u.vec_pushp(vec, v_str(u.s_substr(s, start, n)) as ref void)
+            u.vec_pushp(vec, v_str_own(u.s_ndup(@ptradd(s, start), n - start)) as ref void)
             break
         }
         val at: i64 = start + found
-        u.vec_pushp(vec, v_str(u.s_substr(s, start, at)) as ref void)
+        u.vec_pushp(vec, v_str_own(u.s_ndup(@ptradd(s, start), at - start)) as ref void)
         start = at + u.s_len(sep)
         if start > n {
             break
@@ -2777,7 +2786,7 @@ fn para_items(iterable: ref Value) ref u.Vec = trust {
                 break
             }
             val j: i64 = u.utf8_next(s, i, len)
-            u.vec_pushp(items, v_str(u.s_substr(s, i, j)) as ref void)
+            u.vec_pushp(items, v_str_own(u.s_substr(s, i, j)) as ref void)
             i = j
         }
         return items
@@ -2790,7 +2799,7 @@ fn para_items(iterable: ref Value) ref u.Vec = trust {
                 break
             }
             if u.map_used_at(m, i) {
-                u.vec_pushp(items, v_str(u.s_dup(u.map_key_at(m, i))) as ref void)
+                u.vec_pushp(items, v_str_own(u.s_dup(u.map_key_at(m, i))) as ref void)
             }
             i++
         }
@@ -3095,7 +3104,7 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                     break
                 }
                 val j: i64 = u.utf8_next(s, i, len)
-                env_assign(env, n.s, v_str(u.s_substr(s, i, j)))
+                env_assign(env, n.s, v_str_own(u.s_substr(s, i, j)))
                 clear_var_decls(loop_env, decls)
                 exec_block(body, loop_env, false)
                 if g_flow == 1 {
@@ -3125,7 +3134,7 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                     break
                 }
                 if u.map_used_at(m, i) {
-                    env_assign(env, n.s, v_str(u.s_dup(u.map_key_at(m, i))))
+                    env_assign(env, n.s, v_str_own(u.s_dup(u.map_key_at(m, i))))
                     if n.params.len > 0 {
                         env_assign(
                             env,
