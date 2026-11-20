@@ -1709,6 +1709,15 @@ standard error when that happens. The `std.` forms are always available and
 never shadowed, so `std.print(...)`, `std.len(...)`, and `std.sh(...)` are the
 unambiguous spellings.
 
+The `std.os` value is the host platform name, either `darwin` or `linux`:
+
+[source]
+----
+if std.os == "darwin" {
+    say "hi macos"
+}
+----
+
 [cols="1,1,3",options="header"]
 |===
 |Function |Arity |Behaviour

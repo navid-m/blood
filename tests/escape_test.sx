@@ -166,10 +166,11 @@ test ":ft finds files recursively and reports absolute paths" {
 
         val saved: ref u8 = u.cwd()
         assert u.chdir(dir) == 0
+        val real_dir: ref u8 = u.cwd()
         val hits: ref u.Vec = esc.find_matching_files(c"foo bar")
         assert hits.len == 2
-        assert vec_has_path(hits, top)
-        assert vec_has_path(hits, nested)
+        assert vec_has_path(hits, u.path_join(real_dir, c"foo bar.txt"))
+        assert vec_has_path(hits, u.path_join(real_dir, c"sub/Foo Bar.md"))
         assert esc.find_matching_files(c"HELLEW").len == 0
         assert u.chdir(saved) == 0
 

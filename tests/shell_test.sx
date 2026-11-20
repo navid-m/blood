@@ -394,7 +394,10 @@ test "run_line changes directories and reports exit" {
     trust {
         init_shell()
         val old: ref u8 = u.cwd()
-        val target: ref u8 = c"/tmp/blood-unit-shell/cd"
+        val target: mut ref u8 = c"/tmp/blood-unit-shell/cd"
+        when darwin {
+            target = c"/private/tmp/blood-unit-shell/cd"
+        }
         assert u.mkdir_p(target)
         assert sh.run_line(u.s_cat(c"cd ", target)) == 0
         assert u.s_eq(u.cwd(), target)

@@ -3290,6 +3290,12 @@ pub fn script_init() void = trust {
     g_args = u.vec_new_perm()
     g_prelude = u.map_new_perm()
     val stdm: mut ref u.Map = u.map_new_perm()
+    when darwin {
+        u.map_put(stdm, c"os", @bitcast(v_str(c"darwin"), i64))
+    }
+    otherwise {
+        u.map_put(stdm, c"os", @bitcast(v_str(c"linux"), i64))
+    }
     define_std_native(stdm, c"say")
     define_std_native(stdm, c"len")
     define_std_native(stdm, c"str")
