@@ -2821,6 +2821,10 @@ literal: <code>[first, &#8230;&#8203;rest]</code>.</p>
 <p>Dictionary literals: <code>key1: value1, key2: value2, &#8230;&#8203;</code> inside braces.</p>
 </li>
 <li>
+<p>Conditional expressions: <code>if CONDITION { &#8230;&#8203; } elif CONDITION { &#8230;&#8203; }
+else { &#8230;&#8203; }</code>.</p>
+</li>
+<li>
 <p>Command substitutions.</p>
 </li>
 </ul>
@@ -3043,6 +3047,19 @@ expressions, writes a newline.</p>
 <p>The first true branch is executed. <code>elif</code> is the only spelling for an
 additional condition; <code>else if</code> is not part of the language. A single-line
 suite after the opening brace is accepted.</p>
+</div>
+<div class="paragraph">
+<p>A conditional is also an expression. In expression position it yields the
+value of the selected branch, defined as the value of that suite&#8217;s final
+expression statement. A branch ending in any other statement, and a
+conditional where no branch matches, yields <code>null</code>. This allows conditionals
+to be used as arguments, initializers, and return values:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>var label = if count &gt; 1 { "items" } else { "item" }
+exit(if failed.len() &gt; 0 { 1 } else { 0 })</code></pre>
+</div>
 </div>
 </div>
 <div class="sect3">
@@ -3571,7 +3588,9 @@ continue-stmt= "continue" [ NEWLINE ] ;
 pass-stmt    = "pass" [ NEWLINE ] ;
 raise-stmt   = ( "raise" | "throw" ) [ expression ] [ NEWLINE ] ;
 
-if-stmt      = "if" expression suite
+if-stmt      = if-expr ;
+
+if-expr      = "if" expression suite
                { "elif" expression suite }
                [ "else" suite ] ;
 
@@ -3628,6 +3647,7 @@ primary      = INT
              | "(" expression ")"
              | list-literal
              | dict-literal
+             | if-expr
              | lambda ;
 
 list-literal = "[" [ list-item { "," list-item } [ "," ] ] "]" ;

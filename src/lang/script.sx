@@ -961,6 +961,9 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         }
         return v_str(u.s_substr(out, 0, m))
     }
+    if n.kind == lang.NodeKind.If {
+        return eval_if(n, env)
+    }
     if n.kind == lang.NodeKind.Call {
         val callee: ref lang.Node = u.vec_p(n.kids, 0) as ref lang.Node
         if callee.kind == lang.NodeKind.Attr {
@@ -981,6 +984,59 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         }
         val args: ref u.Vec = eval_args(n, 1, env)
         return call_func(fnval.p as ref Func, args, n)
+    }
+    return v_nil()
+}
+
+fn eval_if(n: ref lang.Node, env: mut ref Env) ref Value = trust {
+    val pairs: i64 = n.a
+    val i: mut i64 = 0
+    for {
+        if i >= pairs {
+            break
+        }
+        val cond: ref Value = eval(u.vec_p(n.kids, i * 2) as ref lang.Node, env)
+        if g_flow != 0 {
+            return v_nil()
+        }
+        if truthy(cond) {
+            return eval_block_value(u.vec_p(n.kids, i * 2 + 1) as ref lang.Node, env)
+        }
+        i++
+    }
+    if n.b != 0 && pairs * 2 < n.kids.len {
+        return eval_block_value(u.vec_p(n.kids, pairs * 2) as ref lang.Node, env)
+    }
+    return v_nil()
+}
+
+/// Evaluate a suite for its value: the trailing expression statement, if any.
+fn eval_block_value(n: ref lang.Node, env: mut ref Env) ref Value = trust {
+    if n == none {
+        return v_nil()
+    }
+    val last: i64 = n.kids.len - 1
+    val i: mut i64 = 0
+    for {
+        if i >= n.kids.len {
+            break
+        }
+        val s: ref lang.Node = u.vec_p(n.kids, i) as ref lang.Node
+        if i == last {
+            if s.kind == lang.NodeKind.ExprStmt {
+                return eval(u.vec_p(s.kids, 0) as ref lang.Node, env)
+            }
+            if s.kind == lang.NodeKind.If {
+                return eval(s, env)
+            }
+            exec_stmt(s, env, false)
+            return v_nil()
+        }
+        exec_stmt(s, env, false)
+        if g_flow != 0 {
+            break
+        }
+        i++
     }
     return v_nil()
 }

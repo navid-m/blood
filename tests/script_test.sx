@@ -479,6 +479,14 @@ test "script supports bulk var declarations" {
     }
 }
 
+test "script supports conditional expressions" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var a = if 2 > 1 { 1 } else { 0 }\nif a != 1 {\n    raise \"if expression true\"\n}\nvar b = if 0 { 1 } elif 1 { 2 } else { 3 }\nif b != 2 {\n    raise \"if expression elif\"\n}\nfn pick(n) {\n    return if n { \"yes\" } else { \"no\" }\n}\nif pick(false) != \"no\" {\n    raise \"if expression return\"\n}\nvar c = if 0 { 1 } else { if 1 { 2 } else { 3 } }\nif c != 2 {\n    raise \"nested if expression\"\n}\nexit(if a == 1 { 0 } else { 7 })\n"
+        assert run(src) == 0
+    }
+}
+
 test "script var declarations are fresh on each loop iteration" {
     trust {
         fresh()

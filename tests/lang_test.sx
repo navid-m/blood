@@ -236,6 +236,26 @@ test "parser builds assignments, conditions and loops" {
     }
 }
 
+test "parser accepts conditionals as expressions" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"exit(if a > 0 { 1 } else { 0 })\n")
+        assert lang.last_error() == none
+        val call: ref lang.Node = kid(kid(prog, 0), 0)
+        assert call.kind == lang.NodeKind.Call
+        val arg: ref lang.Node = kid(call, 1)
+        assert arg.kind == lang.NodeKind.If
+        assert arg.a == 1
+        assert arg.b == 1
+
+        val assigned: ref lang.Node = lang.parse(c"var n = if a { 1 } elif b { 2 } else { 3 }\n")
+        assert lang.last_error() == none
+        val value: ref lang.Node = kid(kid(assigned, 0), 0)
+        assert value.kind == lang.NodeKind.If
+        assert value.a == 2
+        assert value.b == 1
+    }
+}
+
 test "parser handles raw strings, spread, defer and named arguments" {
     trust {
         val raw: ref lang.Node = lang.parse(c"x = r\"a\\{b\\}\"\n")

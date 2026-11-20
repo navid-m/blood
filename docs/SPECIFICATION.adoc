@@ -1289,6 +1289,8 @@ values as missing.
 * List literals: `[e1, e2, ...]`. A leading `...` spreads a list into the
 literal: `[first, ...rest]`.
 * Dictionary literals: `key1: value1, key2: value2, ...` inside braces.
+* Conditional expressions: `if CONDITION { ... } elif CONDITION { ... }
+else { ... }`.
 * Command substitutions.
 
 ==== Calls, indexing, and attributes
@@ -1440,6 +1442,18 @@ if CONDITION {
 The first true branch is executed. `elif` is the only spelling for an
 additional condition; `else if` is not part of the language. A single-line
 suite after the opening brace is accepted.
+
+A conditional is also an expression. In expression position it yields the
+value of the selected branch, defined as the value of that suite's final
+expression statement. A branch ending in any other statement, and a
+conditional where no branch matches, yields `null`. This allows conditionals
+to be used as arguments, initializers, and return values:
+
+[source]
+----
+var label = if count > 1 { "items" } else { "item" }
+exit(if failed.len() > 0 { 1 } else { 0 })
+----
 
 ==== Loops
 
@@ -1948,7 +1962,9 @@ continue-stmt= "continue" [ NEWLINE ] ;
 pass-stmt    = "pass" [ NEWLINE ] ;
 raise-stmt   = ( "raise" | "throw" ) [ expression ] [ NEWLINE ] ;
 
-if-stmt      = "if" expression suite
+if-stmt      = if-expr ;
+
+if-expr      = "if" expression suite
                { "elif" expression suite }
                [ "else" suite ] ;
 
@@ -2005,6 +2021,7 @@ primary      = INT
              | "(" expression ")"
              | list-literal
              | dict-literal
+             | if-expr
              | lambda ;
 
 list-literal = "[" [ list-item { "," list-item } [ "," ] ] "]" ;

@@ -2153,6 +2153,9 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
         return n
     }
     if t.kind == TokenKind.Ident {
+        if keyword(t, c"if") {
+            return parse_if(p)
+        }
         if keyword(t, c"true") {
             advance(p)
             val n: mut ref Node = node_new(NodeKind.BoolLit, t.line, t.col)
