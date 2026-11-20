@@ -336,6 +336,29 @@ test "parser accepts brace blocks" {
     }
 }
 
+test "parser closes brace blocks after bare identifiers" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"if true {\n    b\n}\n")
+        assert lang.last_error() == none
+        val ifn: ref lang.Node = kid(prog, 0)
+        assert ifn.kind == lang.NodeKind.If
+        assert kid(ifn, 1).kind == lang.NodeKind.Block
+        assert kid(kid(ifn, 1), 0).kind == lang.NodeKind.ShellCmd
+
+        val one_line: ref lang.Node = lang.parse(c"if true { b }\n")
+        assert lang.last_error() == none
+        assert kid(kid(one_line, 0), 1).kids.len == 1
+
+        val semi: ref lang.Node = lang.parse(c"if true { b; say \"x\" }\n")
+        assert lang.last_error() == none
+        assert kid(kid(semi, 0), 1).kids.len == 2
+
+        val shell: ref lang.Node = lang.parse(c"if true { echo hi }\n")
+        assert lang.last_error() == none
+        assert kid(kid(shell, 0), 1).kids.len == 1
+    }
+}
+
 test "parser reports syntax errors with positions" {
     trust {
         lang.parse(c"if true\n")

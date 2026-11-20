@@ -1080,6 +1080,9 @@ fn parse_shell_cmd(p: mut ref Parser, t: ref Token) ref Node = trust {
         if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent {
             break
         }
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c"}") {
+            break
+        }
         advance(p)
     }
     if cur(p).kind == TokenKind.Newline {
@@ -1570,10 +1573,10 @@ fn try_command_call(p: mut ref Parser) ref Node = trust {
     g_no_unparen = 1
     val call: ref Node = parse_unparen_call(p, t)
     g_no_unparen = saved_unparen
-    val done: bool = cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent || (cur(p).kind == TokenKind.Op && text_is(
+    val done: bool = cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent || (cur(p).kind == TokenKind.Op && (text_is(
             cur(p),
             c";"
-        ))
+        ) || text_is(cur(p), c"}")))
     if g_error != none || !done {
         p.i = save
         g_no_unparen = saved_unparen
@@ -1679,7 +1682,10 @@ fn starts_shell(p: ref Parser) bool = trust {
                 return false
             }
         }
-        if u.s_eq(b.text, c")") || u.s_eq(b.text, c",") || u.s_eq(b.text, c":") {
+        if u.s_eq(b.text, c")") || u.s_eq(b.text, c",") || u.s_eq(b.text, c":") || u.s_eq(
+            b.text,
+            c"}"
+        ) || u.s_eq(b.text, c";") {
             return false
         }
         return true
@@ -1799,6 +1805,9 @@ fn parse_simple(p: mut ref Parser) ref Node = trust {
         n.s = line_slice(p, t.start)
         for {
             if cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent {
+                break
+            }
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c"}") {
                 break
             }
             advance(p)

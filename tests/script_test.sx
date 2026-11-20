@@ -244,6 +244,14 @@ test "script supports brace block style" {
     }
 }
 
+test "script handles bare identifiers in brace suites" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var b = \"B\"\nif true { b }\nif true { b; pass }\nvar x = if true { b } else { \"z\" }\nif x != \"B\" {\n    raise \"bare identifier in if expression\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
 test "script exposes arguments, status and exit" {
     trust {
         fresh()
