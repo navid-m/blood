@@ -14,9 +14,18 @@ for x in ["hello", "world"] {
 
 Quick install:
 
+Linux:
+
 ```shell
 git clone https://github.com/navid-m/blood.git && cd blood
 ./fw/build.sh && sudo mv blood /usr/bin/blood
+```
+
+MacOS:
+
+```shell
+git clone https://github.com/navid-m/blood.git && cd blood
+./fw/build.sh && sudo mv blood /usr/local/bin/blood
 ```
 
 Builtins live under the `std` namespace, such as `std.read_file` and
