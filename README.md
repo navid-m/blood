@@ -12,6 +12,13 @@ for x in ["hello", "world"] {
 }
 ```
 
+Quick install:
+
+```shell
+git clone https://github.com/navid-m/blood.git && cd blood
+./fw/build.sh && sudo mv blood /usr/bin/blood
+```
+
 Builtins live under the `std` namespace, such as `std.read_file` and
 `std.glob`. Only `say`, `print`, `eprint`, `exit`, `cd`, `run`, `len`, `str`,
 `range`, and `sh` are available as short bare-name prelude calls; their `std.`
