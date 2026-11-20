@@ -12,7 +12,7 @@ for x in ["hello", "world"] {
 }
 ```
 
-Quick install:
+#### Quick install
 
 Linux:
 
