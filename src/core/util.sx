@@ -118,6 +118,7 @@ pub type Map = {
     slots: mut ref MapEntry
     cap: mut i64
     len: mut i64
+    occupied: mut i64
     perm: mut i64
 }
 
@@ -1028,6 +1029,7 @@ fn map_new_mode(perm: bool) ref Map = trust {
     }
     m.cap = 32
     m.len = 0
+    m.occupied = 0
     m.perm = 0
     if perm {
         m.perm = 1
@@ -1052,20 +1054,27 @@ fn map_slot(m: ref Map, key: ref u8) i64 = trust {
     val h: i64 = (map_hash(key) as i64) & mask
     val start: i64 = h
     val i: mut i64 = h
+    val first_tomb: mut i64 = -1
     for {
         val e: ref MapEntry = @ptradd(
             m.slots as ref void,
             i * @sizeof(MapEntry) as i64
         ) as ref MapEntry
         if e.used == 0 {
+            if first_tomb >= 0 {
+                return first_tomb
+            }
             return i
         }
         if e.used == 1 && s_eq(e.key, key) {
             return i
         }
+        if e.used == 2 && first_tomb < 0 {
+            first_tomb = i
+        }
         i = (i + 1) & mask
         if i == start {
-            return -1
+            return first_tomb
         }
     }
     return -1
@@ -1105,13 +1114,14 @@ fn map_grow(m: mut ref Map) void = trust {
         i++
     }
     xfree(old_slots)
+    m.occupied = m.len
 }
 
 pub fn map_put(m: mut ref Map, key: ref u8, value: i64) void = trust {
     if key == none {
         return
     }
-    if m.len * 4 >= m.cap * 3 {
+    if (m.occupied + 1) * 4 >= m.cap * 3 {
         map_grow(m)
     }
     val slot: i64 = map_slot(m, key)
@@ -1125,6 +1135,9 @@ pub fn map_put(m: mut ref Map, key: ref u8, value: i64) void = trust {
     if e.used == 1 {
         e.value = value
         return
+    }
+    if e.used == 0 {
+        m.occupied++
     }
     if m.perm != 0 {
         e.key = s_dup_perm(key)
@@ -1229,6 +1242,7 @@ pub fn map_free(m: mut ref Map) void = trust {
     xfree(m.slots as ref void)
     m.slots = none
     m.len = 0
+    m.occupied = 0
     m.cap = 0
     m.perm = 0
 }

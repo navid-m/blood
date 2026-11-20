@@ -1,0 +1,10 @@
+# Blood sample: loop-local declarations are rebuilt on every iteration.
+
+var total = 0
+for i in 1..40 {
+    var a = i
+    var b = i + 1
+    var c = i + 2
+    total += a + b + c
+}
+say(total)

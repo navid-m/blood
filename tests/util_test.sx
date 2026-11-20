@@ -170,6 +170,22 @@ test "maps put, replace, delete and iterate" {
     }
 }
 
+test "maps reuse deleted slots" {
+    trust {
+        val m: mut ref u.Map = u.map_new()
+        val i: mut i64 = 0
+        for i < 200 {
+            u.map_put(m, c"alpha", i)
+            assert u.map_get(m, c"alpha") == i
+            u.map_del(m, c"alpha")
+            i++
+        }
+        u.map_put(m, c"alpha", 7)
+        assert u.map_get(m, c"alpha") == 7
+        u.map_free(m)
+    }
+}
+
 test "path helpers join, split and normalise" {
     trust {
         assert u.s_eq(u.path_join(c"a", c"b"), c"a/b")
