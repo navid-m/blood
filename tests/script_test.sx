@@ -81,6 +81,32 @@ test "script supports ranges, sh, dict iteration, defaults and path methods" {
     }
 }
 
+test "run_file isolates top-level declarations between runs" {
+    trust {
+        fresh()
+        val dir: ref u8 = c"/tmp/blood-unit-script/repeat"
+        assert u.mkdir_p(dir)
+        val file: ref u8 = u.path_join(dir, c"repeat.bx")
+        assert u.write_file(file, c"var x = 1\nfn inc(n) {\n    return n + 1\n}\n")
+        assert script.run_file(file) == 0
+        assert script.run_file(file) == 0
+    }
+}
+
+test "source shares the current script environment" {
+    trust {
+        fresh()
+        val dir: ref u8 = c"/tmp/blood-unit-script/source"
+        assert u.mkdir_p(dir)
+        val lib_path: ref u8 = u.path_join(dir, c"lib.bx")
+        assert u.write_file(lib_path, c"var y = 7\nfn bump() {\n    return y + 1\n}\n")
+        val main_path: ref u8 = u.path_join(dir, c"main.bx")
+        val code: ref u8 = u.s_cat3(c"std.source(\"", lib_path, c"\")\nif y != 7 or bump() != 8 {\n    raise \"source env\"\n}\n")
+        assert u.write_file(main_path, code)
+        assert script.run_file(main_path) == 0
+    }
+}
+
 test "script classifies existing .blood and .bx files as commands" {
     trust {
         val dir: ref u8 = c"/tmp/blood-unit-script/exts"

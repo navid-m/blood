@@ -54,6 +54,7 @@ fn install_hooks() void = trust {
     u.run_shell_hook = shell.run_line
     u.run_capture_hook = shell.capture_text
     u.run_script_file_hook = script.run_file
+    u.run_script_source_hook = script.run_source_file
     u.hooks_ready = 1
 }
 
@@ -200,7 +201,7 @@ fn run_startup(c: ref cfgmod.Config) void = trust {
             break
         }
         val path: ref u8 = u.vec_p(files, i) as ref u8
-        val st: i32 = script.run_file(path)
+        val st: i32 = script.run_source_file(path)
         if st != 0 {
             u.write_fd(2, u.s_cat3(c"blood: startup: ", path, c" failed\n"))
         }
@@ -218,7 +219,7 @@ fn run_bloodrc(c: ref cfgmod.Config) void = trust {
     }
     val path: ref u8 = cfgmod.bloodrc_path(c)
     if u.file_exists(path) {
-        script.run_file(path)
+        script.run_source_file(path)
     }
     u.scratch_end()
 }

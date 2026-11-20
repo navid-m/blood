@@ -2038,7 +2038,7 @@ fn bi_source(cmd: ref Command) i32 = trust {
     if u.hooks_ready == 0 {
         return 1
     }
-    val hook: fn(ref u8) i32 = u.run_script_file_hook
+    val hook: fn(ref u8) i32 = u.run_script_source_hook
     return hook(path)
 }
 

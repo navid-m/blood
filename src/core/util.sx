@@ -124,6 +124,7 @@ pub type Map = {
 pub val run_shell_hook: mut fn(ref u8) i32 = @zeroed
 pub val run_capture_hook: mut fn(ref u8) ref u8 = @zeroed
 pub val run_script_file_hook: mut fn(ref u8) i32 = @zeroed
+pub val run_script_source_hook: mut fn(ref u8) i32 = @zeroed
 pub val hooks_ready: mut i64 = 0
 pub val hook_status: mut i64 = 0
 pub val script_exit_code: mut i64 = -1

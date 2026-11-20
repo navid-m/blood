@@ -1635,6 +1635,11 @@ but cannot capture local variables of a caller.
 A binding created by `for` is assigned in the current environment and is
 visible after the loop.
 
+Executing a script file as a command runs it in a fresh top-level environment.
+Its `var` and `fn` declarations do not leak into the interactive session, so
+the same script can be run repeatedly. `source` and startup files execute in
+the current environment instead, so their declarations remain visible.
+
 The working directory is process-global, not scoped. `cd(path)` calls `chdir`
 in the interpreter process, updates `PWD`, and affects all later shell
 commands, `run` calls, and file operations. There is no automatic restoration

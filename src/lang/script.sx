@@ -34,6 +34,7 @@ type Defer = {
 }
 
 val g_env: mut ref Env = none
+val g_builtins: mut ref Env = none
 val g_error: mut ref u8 = none
 val g_err_line: mut i64 = 0
 val g_err_col: mut i64 = 0
@@ -1932,11 +1933,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         return v_int(@load8(s) as i64)
     }
     if id == 28 {
-        if u.hooks_ready == 0 {
-            return v_int(1)
-        }
-        val hook: fn(ref u8) i32 = u.run_script_file_hook
-        return v_int(hook(u.expand_tilde(v_to_str(arg(args, 0)))) as i64)
+        return v_int(run_source_file(u.expand_tilde(v_to_str(arg(args, 0)))) as i64)
     }
     if id == 27 {
         val v: ref Value = arg(args, 0)
@@ -3272,6 +3269,16 @@ fn define_prelude(name: ref u8) void = trust {
     u.map_put(g_prelude, name, @bitcast(native_value(name), i64))
 }
 
+fn new_top_env(perm: bool) ref Env = trust {
+    val e: mut ref Env = env_new_mode(g_builtins, perm)
+    env_define(e, c"status", v_int(0))
+    env_define(e, c"null", v_nil())
+    env_define(e, c"true", v_bool(true))
+    env_define(e, c"false", v_bool(false))
+    env_define(e, c"args", v_list(g_args))
+    return e
+}
+
 pub fn script_init() void = trust {
     val builtins: mut ref Env = env_new_mode(none, true)
     g_error = none
@@ -3343,13 +3350,9 @@ pub fn script_init() void = trust {
     define_prelude(c"range")
     define_prelude(c"sh")
     env_define(builtins, c"std", v_namespace(stdm))
-    g_env = env_new_mode(builtins, true)
+    g_builtins = builtins
+    g_env = new_top_env(true)
     g_defers = u.vec_new_perm()
-    env_define(g_env, c"status", v_int(0))
-    env_define(g_env, c"null", v_nil())
-    env_define(g_env, c"true", v_bool(true))
-    env_define(g_env, c"false", v_bool(false))
-    env_define(g_env, c"args", v_list(g_args))
 }
 
 pub fn set_args(args: ref u.Vec) void = trust {
@@ -3611,6 +3614,7 @@ fn promote_roots() void = trust {
     val memo: mut ref u.Vec = u.vec_new()
     val jobs: mut ref u.Vec = u.vec_new()
     val old_env: ref void = g_env as ref void
+    val old_builtins: ref void = g_builtins as ref void
     val old_args: ref void = g_args as ref void
     val old_ret: ref void = g_return as ref void
     val old_err: ref void = g_error as ref void
@@ -3622,6 +3626,12 @@ fn promote_roots() void = trust {
     u.gc_finish()
     if old_env != none {
         g_env = memo_get(memo, @bitcast(old_env, i64)) as ref Env
+    }
+    if old_builtins != none {
+        val nb: ref Env = memo_get(memo, @bitcast(old_builtins, i64)) as ref Env
+        if nb != none {
+            g_builtins = nb
+        }
     }
     if old_args != none {
         g_args = memo_get(memo, @bitcast(old_args, i64)) as ref u.Vec
@@ -3718,7 +3728,35 @@ pub fn run_file(path: ref u8) i32 = trust {
         u.scratch_end()
         return 1
     }
-    if g_env == none {
+    if g_env == none || g_builtins == none {
+        script_init()
+    }
+    val previous_env: ref Env = g_env
+    val previous: ref u8 = g_script_path
+    val previous_exit: i64 = u.script_exit_code
+    g_env = new_top_env(false)
+    g_script_path = resolved
+    env_define(g_env, c"__file__", v_str(path))
+    g_run_depth++
+    val st: i32 = run_text(src, false, path)
+    g_run_depth--
+    g_env = previous_env
+    g_script_path = previous
+    u.script_exit_code = previous_exit
+    u.scratch_end()
+    return st
+}
+
+pub fn run_source_file(path: ref u8) i32 = trust {
+    u.scratch_begin()
+    val resolved: ref u8 = u.absolute_path(path)
+    val src: ref u8 = u.read_file(resolved)
+    if src == none {
+        u.write_fd(2, u.s_cat3(c"blood: ", path, c": cannot read script\n"))
+        u.scratch_end()
+        return 1
+    }
+    if g_env == none || g_builtins == none {
         script_init()
     }
     val previous: ref u8 = g_script_path

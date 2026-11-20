@@ -91,10 +91,12 @@ if std.which("spectre") {
 
 say("==> running samples")
 
-var samples  = std.glob("samples/*.bx")
-var results  = samples.map(|sample| check_sample(sample))
-var count    = results.count(|result| result != null)
-var failures = results.filter(|result| result != true).count()
+var (
+    samples  = std.glob("samples/*.bx")
+    results  = samples.map(|sample| check_sample(sample))
+    count    = results.count(|result| result != null)
+    failures = results.filter(|result| result != true).count()
+)
 
 if count == 0 {
     fail("error: no samples found")
