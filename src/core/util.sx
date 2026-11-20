@@ -1640,15 +1640,22 @@ pub fn write_fd_n(fd: i32, s: ref u8, n: i64) void = trust {
         return
     }
     val done: mut i64 = 0
+    val retries: mut i64 = 0
     for {
         if done >= n {
             break
         }
         val w: i64 = rt.write(fd, @ptradd(s, done) as ref void, (n - done) as usize)
-        if w <= 0 {
-            break
+        if w > 0 {
+            done = done + w
+            retries = 0
+            continue
         }
-        done = done + w
+        if w < 0 && retries < 8 {
+            retries++
+            continue
+        }
+        break
     }
 }
 

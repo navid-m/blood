@@ -536,11 +536,21 @@ fn read_key() i32 = trust {
         return key
     }
     val c: mut u8 = 0
-    val n: i64 = rt.read(0, @addr(c) as ref void, 1)
-    if n <= 0 {
-        return -1
+    val retries: mut i64 = 0
+    for {
+        val n: i64 = rt.read(0, @addr(c) as ref void, 1)
+        if n > 0 {
+            return c as i32
+        }
+        if n == 0 {
+            return -1
+        }
+        if retries >= 8 {
+            return -1
+        }
+        retries++
     }
-    return c as i32
+    return -1
 }
 
 fn read_key_timeout(ms: i32) i32 = trust {
