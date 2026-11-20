@@ -61,6 +61,8 @@ pub type TermState = {
 val term: mut TermState = @zeroed
 val vscode_integration: mut i64 = 0
 val vscode_announced: mut i64 = 0
+val last_cols: mut i64 = 0
+val last_rows: mut i64 = 0
 
 /// Bytes read while probing the terminal for its cursor position. They are
 /// genuine keystrokes (typed ahead while a command was running) and are fed
@@ -166,6 +168,38 @@ fn query_winsize(ws: ref WinSize) i32 = trust {
     }
 }
 
+/// Record the current terminal size so later changes can be detected.
+fn sync_size() void = trust {
+    val ws: mut WinSize = @zeroed
+    if query_winsize(@addr(ws)) == 0 && ws.cols > 0 && ws.rows > 0 {
+        last_cols = ws.cols as i64
+        last_rows = ws.rows as i64
+        return
+    }
+    if last_cols == 0 {
+        last_cols = 80
+    }
+    if last_rows == 0 {
+        last_rows = 24
+    }
+}
+
+/// Whether the terminal has been resized since the last check.
+fn size_changed() bool = trust {
+    val ws: mut WinSize = @zeroed
+    if query_winsize(@addr(ws)) != 0 || ws.cols == 0 || ws.rows == 0 {
+        return false
+    }
+    val c: i64 = ws.cols as i64
+    val r: i64 = ws.rows as i64
+    if c == last_cols && r == last_rows {
+        return false
+    }
+    last_cols = c
+    last_rows = r
+    return true
+}
+
 pub fn init_terminal() void = trust {
     val t: mut Termios = @zeroed
     if rt.tcgetattr(0, @addr(t) as ref void) == 0 {
@@ -180,6 +214,7 @@ pub fn init_terminal() void = trust {
     if program != none && u.s_eq(program, c"vscode") {
         vscode_integration = 1
     }
+    sync_size()
 }
 
 pub fn have_tty() bool = trust {
@@ -536,8 +571,26 @@ fn read_key() i32 = trust {
         return key
     }
     val c: mut u8 = 0
-    val retries: mut i64 = 0
+    val fails: mut i64 = 0
     for {
+        val pfd: mut PollFd = @zeroed
+        pfd.fd = 0
+        pfd.events = 1
+        pfd.revents = 0
+        val ready: i32 = rt.poll(@addr(pfd) as ref void, 1, 100)
+        if ready < 0 {
+            if fails >= 8 {
+                return -1
+            }
+            fails++
+            continue
+        }
+        if ready == 0 {
+            if size_changed() {
+                return -2
+            }
+            continue
+        }
         val n: i64 = rt.read(0, @addr(c) as ref void, 1)
         if n > 0 {
             return c as i32
@@ -545,10 +598,10 @@ fn read_key() i32 = trust {
         if n == 0 {
             return -1
         }
-        if retries >= 8 {
+        if fails >= 8 {
             return -1
         }
-        retries++
+        fails++
     }
     return -1
 }
@@ -562,6 +615,9 @@ fn read_key_timeout(ms: i32) i32 = trust {
     pfd.events = 1
     pfd.revents = 0
     if rt.poll(@addr(pfd) as ref void, 1, ms) <= 0 {
+        if size_changed() {
+            return -2
+        }
         return -1
     }
     return read_key()
@@ -1635,9 +1691,14 @@ fn readline_impl(e: mut ref Editor, prompt: ref u8, right: ref u8, kind: i64) re
     e.right_prompt = u.s_dup(right)
     e.first_draw = 1
     e.view_start = 0
+    sync_size()
     draw(e, prompt, kind)
     for {
         val k: i32 = read_key()
+        if k == -2 {
+            draw(e, prompt, kind)
+            continue
+        }
         if k < 0 {
             e.eof = 1
             write_s(c"\n")
