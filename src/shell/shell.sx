@@ -1330,6 +1330,11 @@ fn is_builtin(name: ref u8) bool = trust {
     ) || u.s_eq(name, c"true") || u.s_eq(name, c"false") || u.s_eq(name, c":") {
         return true
     }
+    when windows {
+        if u.s_eq(name, c"ls") {
+            return true
+        }
+    }
     return false
 }
 
@@ -1995,6 +2000,22 @@ fn run_external_win(cmd: ref Command) i32 = trust {
     val pid: mut i32 = -1
     if redir_ok {
         pid = ex.spawn_redirected(cmd.argv, 0, 1, 2, none)
+        if pid < 0 {
+            // Fall back to cmd.exe for commands implemented as cmd builtins
+            // (copy, del, move, dir, ...).
+            val fallback: mut ref u.Vec = u.vec_new()
+            u.vec_pushp(fallback, c"cmd.exe" as ref void)
+            u.vec_pushp(fallback, c"/C" as ref void)
+            val fi: mut i64 = 0
+            for {
+                if fi >= cmd.argv.len {
+                    break
+                }
+                u.vec_pushp(fallback, u.vec_p(cmd.argv, fi))
+                fi++
+            }
+            pid = ex.spawn_redirected(fallback, 0, 1, 2, none)
+        }
     }
     restore_child_env(env_saved)
     restore_std_fds(saved)
@@ -2108,7 +2129,115 @@ fn run_builtin(cmd: ref Command) i32 = trust {
     if u.s_eq(name, c"wait") {
         return bi_wait(cmd)
     }
+    when windows {
+        if u.s_eq(name, c"ls") {
+            return bi_ls(cmd)
+        }
+    }
     return 127
+}
+
+fn bi_ls(cmd: ref Command) i32 = trust {
+    val target: mut ref u8 = c"."
+    val long: mut bool = false
+    val ai: mut i64 = 1
+    for {
+        if ai >= cmd.argv.len {
+            break
+        }
+        val arg: ref u8 = argv_at(cmd, ai)
+        if @load8(arg) == 45 {
+            if u.s_eq(arg, c"-l") {
+                long = true
+            }
+        } elif @load8(arg) == 47 {
+            // Ignore cmd-style switches such as /a.
+        } else {
+            target = arg
+        }
+        ai++
+    }
+
+    val path: ref u8 = u.expand_tilde(target)
+    if !u.is_dir(path) {
+        if u.file_exists(path) {
+            u.stdout_ln(u.path_base(path))
+            return 0
+        }
+        u.write_fd(2, u.s_cat3(c"blood: ls: ", path, c": no such directory\n"))
+        return 1
+    }
+
+    val names: mut ref u.Vec = u.vec_new()
+    val d: ref void = u.dir_open(path)
+    if d == none {
+        u.write_fd(2, u.s_cat3(c"blood: ls: ", path, c": cannot open directory\n"))
+        return 1
+    }
+    for {
+        val name: ref u8 = u.dir_next(d)
+        if name == none {
+            break
+        }
+        if u.s_len(name) == 0 {
+            continue
+        }
+        if u.s_eq(name, c".") || u.s_eq(name, c"..") {
+            continue
+        }
+        u.vec_pushp(names, u.s_dup(name))
+    }
+    u.dir_close(d)
+
+    val si: mut i64 = 1
+    for {
+        if si >= names.len {
+            break
+        }
+        val key: ref u8 = u.vec_p(names, si) as ref u8
+        val sj: mut i64 = si - 1
+        for {
+            if sj < 0 {
+                break
+            }
+            val cur: ref u8 = u.vec_p(names, sj) as ref u8
+            if u.s_cmp(cur, key) <= 0 {
+                break
+            }
+            u.vec_setp(names, sj + 1, cur)
+            sj--
+        }
+        u.vec_setp(names, sj + 1, key)
+        si++
+    }
+
+    val ni: mut i64 = 0
+    for {
+        if ni >= names.len {
+            break
+        }
+        val name: ref u8 = u.vec_p(names, ni) as ref u8
+        val full: ref u8 = u.path_join(path, name)
+        val is_dir: bool = u.is_dir(full)
+        if long {
+            val fi: u.FileInfo = u.file_info(full)
+            if is_dir {
+                u.stdout_s(c"d")
+            } else {
+                u.stdout_s(c"-")
+            }
+            u.stdout_s(c" ")
+            u.stdout_s(u.s_int(fi.size))
+            u.stdout_s(c" ")
+        }
+        u.stdout_s(name)
+        if is_dir {
+            u.stdout_s(c"/")
+        }
+        u.stdout_s(c"\n")
+        ni++
+    }
+    return 0
 }
 
 fn bi_cd(cmd: ref Command) i32 = trust {
