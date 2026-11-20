@@ -3,11 +3,11 @@ version "v0.1.3"
 spectre_version "v0.0.18"
 
 build sl {
-    action "mkdir -p ./generated && spectre ./src/main.sx -src-target:linux -release -b -emit-alt > ./generated/blood_linux.c"
+    action "mkdir -p ./generated && spectre ./src/main.sx -src-target:linux -release -b -emit-alt -d:GIT_HASH=$(git rev-parse --short HEAD) > ./generated/blood_linux.c"
 }
 
 build sm {
-    action "mkdir -p ./generated && spectre ./src/main.sx -src-target:darwin -release -b -emit-alt > ./generated/blood_darwin.c"
+    action "mkdir -p ./generated && spectre ./src/main.sx -src-target:darwin -release -b -emit-alt -d:GIT_HASH=$(git rev-parse --short HEAD) > ./generated/blood_darwin.c"
 }
 
 

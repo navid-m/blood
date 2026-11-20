@@ -1276,7 +1276,7 @@ static char sx__str980[]="show this help message";
 static char sx__str981[]="-h, -help";
 static char sx__str982[]="blood ";
 static char sx__str983[]="v0.1.3";
-static char sx__str984[]="GIT_HASH";
+static char sx__str984[]="e73687d";
 static char sx__str985[]="usage: blood [options] [script.blood|script.bx [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  -init            write a default configuration file\n  -login           initialize a login-shell environment\n  -translate-sh    translate .sh/.bash files or directories to .bx\n  -fmt             format Blood scripts or directories in place\n  -o DIR           write translated files under DIR\n  -version, -v     print the version\n  -help, -h        show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n";
 static char sx__str986[]=" — type ";
 static char sx__str987[]=" for commands, ";
@@ -30334,7 +30334,7 @@ return 0;
 }
 
 static int32_t sx__print_version(void){
-(void)(u__stdout_ln(u__s_cat4(((int64_t)(intptr_t)sx__str982),((int64_t)(intptr_t)sx__str983),((int64_t)(intptr_t)sx__str181),std__env__get(((int64_t)(intptr_t)sx__str984)))));
+(void)(u__stdout_ln(u__s_cat4(((int64_t)(intptr_t)sx__str982),((int64_t)(intptr_t)sx__str983),((int64_t)(intptr_t)sx__str181),((int64_t)(intptr_t)sx__str984))));
 return 0;
 }
 
