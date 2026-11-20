@@ -3427,6 +3427,14 @@ pub fn script_init() void = trust {
     g_defers = u.vec_new_perm()
 }
 
+pub fn reset_env() void = trust {
+    if g_env == none {
+        script_init()
+        return
+    }
+    g_env = new_top_env(true)
+}
+
 pub fn set_args(args: ref u.Vec) void = trust {
     g_args = u.vec_new_perm()
     val i: mut i64 = 0

@@ -449,6 +449,7 @@ fn reload(c: mut ref cfgmod.Config, h: mut ref histmod.History) i32 = trust {
     histmod.history_apply_config(h, c)
     shell.reload_config(c, h)
     cfgmod.init_bloodrc(c)
+    script.reset_env()
     val rc: ref u8 = cfgmod.bloodrc_path(c)
     if u.file_exists(rc) {
         return script.run_source_file(rc)
