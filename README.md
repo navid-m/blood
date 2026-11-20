@@ -14,18 +14,9 @@ for x in ["hello", "world"] {
 
 #### Quick install
 
-Linux:
-
 ```shell
-git clone https://github.com/navid-m/blood.git && cd blood
-./fw/build.sh && sudo mv blood /usr/bin/blood
-```
-
-MacOS:
-
-```shell
-git clone https://github.com/navid-m/blood.git && cd blood
-./fw/build.sh && sudo mv blood /usr/local/bin/blood
+git clone https://github.com/navid-m/blood.git && cd blood/fw
+./install.sh
 ```
 
 ## Resources
