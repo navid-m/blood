@@ -9,7 +9,7 @@ say("largest: {numbers[-1]}")
 
 var scores = {"apple": 3, "pear": 1, "kiwi": 2}
 var keys   = scores.sorted()
-var total = 0
+var total  = 0
 for key in keys {
     total += scores[key]
     say("{key} -> {scores[key]}")
