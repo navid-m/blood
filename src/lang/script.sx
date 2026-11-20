@@ -1429,11 +1429,7 @@ fn result_status(v: ref Value) i64 = trust {
 }
 
 fn drain_fd(fd: i32, b: mut ref u.Buf, chunk: ref u8, timeout: i32) i64 = trust {
-    val pf: mut ex.PollFd = @zeroed
-    pf.fd = fd
-    pf.events = 1
-    pf.revents = 0
-    val ready: i32 = rt.poll(@addr(pf) as ref void, 1, timeout)
+    val ready: i32 = ex.fd_poll(fd, timeout)
     if ready <= 0 {
         return 0
     }
@@ -1445,6 +1441,73 @@ fn drain_fd(fd: i32, b: mut ref u.Buf, chunk: ref u8, timeout: i32) i64 = trust 
     return 1
 }
 
+fn spawn_result_win(
+    argv: ref u.Vec,
+    command: ref u8,
+    as_shell: bool,
+    merge: bool,
+    cwd: ref u8
+) ref Value = trust {
+    val out_path: ref u8 = u.temp_path(c"blood-run-out")
+    val err_path: ref u8 = u.temp_path(c"blood-run-err")
+    val out_fd: i32 = ex.open_write(out_path, false)
+    val err_fd: mut i32 = out_fd
+    if !merge {
+        err_fd = ex.open_write(err_path, false)
+    }
+    if out_fd < 0 {
+        return v_result(127, c"", c"blood: run: cannot create output file\n")
+    }
+
+    val status: mut i32 = 127
+    if as_shell {
+        val saved_out: i32 = ex.fd_dup(1)
+        val saved_err: i32 = ex.fd_dup(2)
+        val old_cwd: ref u8 = u.cwd()
+        val cwd_ok: mut bool = true
+        if cwd != none && u.s_len(cwd) > 0 {
+            cwd_ok = u.chdir(u.expand_tilde(cwd)) == 0
+        }
+        ex.fd_dup2(out_fd, 1)
+        ex.fd_dup2(err_fd, 2)
+        if cwd_ok {
+            status = sh.run_line(command)
+        }
+        ex.fd_dup2(saved_out, 1)
+        ex.fd_dup2(saved_err, 2)
+        ex.fd_close(saved_out)
+        ex.fd_close(saved_err)
+        if u.s_len(old_cwd) > 0 {
+            u.chdir(old_cwd)
+        }
+    } else {
+        val pid: i32 = ex.spawn_redirected(argv, -1, out_fd, err_fd, cwd)
+        if pid > 0 {
+            status = ex.wait_pid(pid)
+        }
+    }
+
+    ex.fd_close(out_fd)
+    if !merge {
+        ex.fd_close(err_fd)
+    }
+
+    val out: mut ref u8 = u.read_file(out_path)
+    if out == none {
+        out = u.s_dup(c"")
+    }
+    val err_text: mut ref u8 = u.s_dup(c"")
+    if !merge {
+        err_text = u.read_file(err_path)
+        if err_text == none {
+            err_text = u.s_dup(c"")
+        }
+    }
+    rt.unlink(out_path)
+    rt.unlink(err_path)
+    return v_result(status as i64, out, err_text)
+}
+
 fn spawn_result(
     argv: ref u.Vec,
     command: ref u8,
@@ -1452,6 +1515,10 @@ fn spawn_result(
     merge: bool,
     cwd: ref u8
 ) ref Value = trust {
+    when windows {
+        return spawn_result_win(argv, command, as_shell, merge, cwd)
+    }
+    otherwise {
     val outp: ex.Pipe = ex.make_pipe()
     val errp: mut ex.Pipe = @zeroed
     val has_err: bool = !merge
@@ -1545,6 +1612,7 @@ fn spawn_result(
     }
     val status: i64 = ex.wait_pid(pid) as i64
     return v_result(status, u.buf_take(outb), u.buf_take(errb))
+    }
 }
 
 fn remove_all_path(path: ref u8) bool = trust {
@@ -1582,8 +1650,17 @@ fn remove_all_path(path: ref u8) bool = trust {
 }
 
 fn temp_dir(prefix: ref u8) ref u8 = trust {
-    val base: ref u8 = u.env_get(c"TMPDIR")
+    val base: mut ref u8 = u.env_get(c"TMPDIR")
     val dir: mut ref u8 = c"/tmp"
+    when windows {
+        dir = c"."
+        if base == none {
+            base = u.env_get(c"TEMP")
+        }
+        if base == none {
+            base = u.env_get(c"TMP")
+        }
+    }
     if base != none && u.s_len(base) > 0 {
         dir = base
     }
@@ -2121,9 +2198,16 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     }
     if id == 40 {
         val name: ref u8 = v_to_str(arg(args, 0))
-        if u.s_contains(name, c"/") {
-            if u.file_exists(name) && u.is_executable(name) {
-                return v_str_own(u.s_dup(name))
+        val has_sep: mut bool = u.s_contains(name, c"/")
+        when windows {
+            if u.s_contains(name, c"\\") {
+                has_sep = true
+            }
+        }
+        if has_sep {
+            val direct: ref u8 = u.resolve_executable(name)
+            if direct != none {
+                return v_str_own(u.s_dup(direct))
             }
             return v_nil()
         }
@@ -2138,12 +2222,13 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
             if i > len {
                 break
             }
-            if i == len || @load8(@ptradd(path, i)) == 58 {
+            if i == len || @load8(@ptradd(path, i)) == u.path_list_sep() {
                 val dir: ref u8 = u.s_substr(path, start, i)
                 if u.s_len(dir) > 0 {
                     val full: ref u8 = u.path_join(dir, name)
-                    if u.file_exists(full) && !u.is_dir(full) && u.is_executable(full) {
-                        return v_str(full)
+                    val found: ref u8 = u.resolve_executable(full)
+                    if found != none {
+                        return v_str_own(u.s_dup(found))
                     }
                 }
                 start = i + 1
@@ -2814,6 +2899,54 @@ fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
     }
     val items: ref u.Vec = para_items(iterable)
     val body: ref lang.Node = u.vec_p(n.kids, 1) as ref lang.Node
+    when windows {
+        val serial_failed: mut i64 = 0
+        val si: mut i64 = 0
+        for {
+            if si >= items.len {
+                break
+            }
+            if u.interrupt_flag != 0 {
+                break
+            }
+            val item: ref Value = u.vec_p(items, si) as ref Value
+            g_error = none
+            g_flow = 0
+            g_return = none
+            env_assign(env, n.s, item)
+            set_status(0)
+            exec_block(body, env, false)
+            val code: mut i64 = 0
+            if g_flow == 4 {
+                val msg: mut ref u8 = g_error
+                if msg == none {
+                    msg = u.s_dup(c"error")
+                }
+                report_error(c"", g_err_line, g_err_col, msg)
+                code = 1
+            } elif g_flow == 5 {
+                code = u.script_exit_code
+            } else {
+                code = status_value()
+            }
+            if code < 0 {
+                code = 0
+            }
+            if code != 0 && serial_failed == 0 {
+                serial_failed = code
+            }
+            si++
+        }
+        if items.len > 0 {
+            env_assign(env, n.s, u.vec_p(items, items.len - 1) as ref Value)
+        }
+        set_status(serial_failed)
+        if u.interrupt_flag != 0 {
+            u.interrupt_flag = 0
+            set_error(c"interrupted", n.line, n.col)
+        }
+        return
+    }
     val pids: mut ref u.Vec = u.vec_new()
     val failed: mut i64 = 0
     val i: mut i64 = 0

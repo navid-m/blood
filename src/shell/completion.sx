@@ -69,7 +69,7 @@ fn scan_path() ref u.Vec = trust {
         if i > n {
             break
         }
-        if i == n || @load8(@ptradd(path, i)) == 58 {
+        if i == n || @load8(@ptradd(path, i)) == u.path_list_sep() {
             val dir: ref u8 = u.s_ndup(@ptradd(path, start), i - start)
             if u.s_len(dir) > 0 && is_executable_dir(dir) {
                 scan_dir_into(v, dir)

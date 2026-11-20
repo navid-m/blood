@@ -10,6 +10,10 @@ build sm {
     action "mkdir -p ./generated && spectre ./src/main.sx -src-target:darwin -release -b -emit-alt -d:GIT_HASH=$(git rev-parse --short HEAD) > ./generated/blood_darwin.c"
 }
 
+build sw {
+    action "mkdir -p ./generated && spectre ./src/main.sx -src-target:windows -release -b -emit-alt -d:GIT_HASH=$(git rev-parse --short HEAD) > ./generated/blood_windows.c"
+}
+
 
 build release {
     flags "-release"

@@ -2,6 +2,9 @@
 
 val allocators = use("std/allocators")
 val rt         = use("std/runtime")
+val win        = use("win.sx")
+
+val g_temp_seq: mut i64 = 0
 
 val g_heap: allocators.HeapAllocator = @zeroed
 
@@ -24,25 +27,36 @@ type AllocHdr = {
     perm: mut i64
 }
 
-when darwin {
-    /// Darwin `struct dirent` with 64-bit inode numbers.
+when windows {
+    /// `sx__win_dirent` from Spectre's Windows C backend.
     pub type DirEntry = {
-        d_ino: u64
-        d_seekoff: u64
+        d_ino: i32
         d_reclen: u16
         d_namlen: u16
-        d_type: u8
-        d_name: [1024]u8
+        d_name: [260]u8
     }
 }
 otherwise {
-    /// Linux `struct dirent` (x86_64 and aarch64).
-    pub type DirEntry = {
-        d_ino: u64
-        d_off: i64
-        d_reclen: u16
-        d_type: u8
-        d_name: [256]u8
+    when darwin {
+        /// Darwin `struct dirent` with 64-bit inode numbers.
+        pub type DirEntry = {
+            d_ino: u64
+            d_seekoff: u64
+            d_reclen: u16
+            d_namlen: u16
+            d_type: u8
+            d_name: [1024]u8
+        }
+    }
+    otherwise {
+        /// Linux `struct dirent` (x86_64 and aarch64).
+        pub type DirEntry = {
+            d_ino: u64
+            d_off: i64
+            d_reclen: u16
+            d_type: u8
+            d_name: [256]u8
+        }
     }
 }
 
@@ -1247,6 +1261,46 @@ pub fn map_free(m: mut ref Map) void = trust {
     m.perm = 0
 }
 
+pub fn path_sep(c: u8) bool = trust {
+    when windows {
+        return c == 47 || c == 92
+    }
+    otherwise {
+        return c == 47
+    }
+}
+
+pub fn path_list_sep() u8 = trust {
+    when windows {
+        return 59
+    }
+    otherwise {
+        return 58
+    }
+}
+
+pub fn path_has_drive(s: ref u8) bool = trust {
+    if s == none || s_len(s) < 2 {
+        return false
+    }
+    val c: u8 = @load8(s)
+    val colon: u8 = @load8(@ptradd(s, 1))
+    if colon != 58 {
+        return false
+    }
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+}
+
+pub fn path_is_abs(s: ref u8) bool = trust {
+    if s == none || s_len(s) == 0 {
+        return false
+    }
+    if path_sep(@load8(s)) {
+        return true
+    }
+    return path_has_drive(s) && s_len(s) >= 3 && path_sep(@load8(@ptradd(s, 2)))
+}
+
 pub fn path_join(a: ref u8, b: ref u8) ref u8 = trust {
     if a == none || s_len(a) == 0 {
         return s_dup(b)
@@ -1254,11 +1308,11 @@ pub fn path_join(a: ref u8, b: ref u8) ref u8 = trust {
     if b == none {
         return s_dup(a)
     }
-    if s_len(b) > 0 && @load8(b) == 47 {
+    if path_is_abs(b) {
         return s_dup(b)
     }
     val an: i64 = s_len(a)
-    if @load8(@ptradd(a, an - 1)) == 47 {
+    if path_sep(@load8(@ptradd(a, an - 1))) {
         return s_cat(a, b)
     }
     return s_cat3(a, c"/", b)
@@ -1274,9 +1328,12 @@ pub fn path_dir(s: ref u8) ref u8 = trust {
         if i < 0 {
             break
         }
-        if @load8(@ptradd(s, i)) == 47 {
+        if path_sep(@load8(@ptradd(s, i))) {
             if i == 0 {
                 return s_dup(c"/")
+            }
+            if path_has_drive(s) && i == 2 {
+                return s_ndup(s, 3)
             }
             return s_ndup(s, i)
         }
@@ -1289,16 +1346,22 @@ pub fn path_clean(s: ref u8) ref u8 = trust {
     if s == none || s_len(s) == 0 {
         return s_dup(c".")
     }
-    val absolute: bool = @load8(s) == 47
+    val absolute: bool = path_is_abs(s)
+    val drive: bool = path_has_drive(s)
     val parts: mut ref Vec = vec_new()
     val n: i64 = s_len(s)
     val i: mut i64 = 0
+    if drive {
+        i = 2
+    } elif absolute {
+        i = 1
+    }
     for {
         for {
             if i >= n {
                 break
             }
-            if @load8(@ptradd(s, i)) != 47 {
+            if !path_sep(@load8(@ptradd(s, i))) {
                 break
             }
             i++
@@ -1311,7 +1374,7 @@ pub fn path_clean(s: ref u8) ref u8 = trust {
             if i >= n {
                 break
             }
-            if @load8(@ptradd(s, i)) == 47 {
+            if path_sep(@load8(@ptradd(s, i))) {
                 break
             }
             i++
@@ -1331,7 +1394,13 @@ pub fn path_clean(s: ref u8) ref u8 = trust {
         vec_pushp(parts, s_ndup(@ptradd(s, start), len) as ref void)
     }
     val b: mut ref Buf = buf_new()
-    if absolute {
+    if drive {
+        buf_ch(b, @load8(s))
+        buf_ch(b, @load8(@ptradd(s, 1)))
+        if absolute {
+            buf_ch(b, 47)
+        }
+    } elif absolute {
         buf_ch(b, 47)
     }
     val j: mut i64 = 0
@@ -1356,7 +1425,7 @@ pub fn absolute_path(s: ref u8) ref u8 = trust {
         return cwd()
     }
     val p: ref u8 = expand_tilde(s)
-    if s_len(p) > 0 && @load8(p) == 47 {
+    if path_is_abs(p) {
         return path_clean(p)
     }
     return path_clean(path_join(cwd(), p))
@@ -1372,7 +1441,7 @@ pub fn path_base(s: ref u8) ref u8 = trust {
         if i < 0 {
             return s_dup(s)
         }
-        if @load8(@ptradd(s, i)) == 47 {
+        if path_sep(@load8(@ptradd(s, i))) {
             if i == n - 1 {
                 return s_ndup(s, i)
             }
@@ -1384,11 +1453,16 @@ pub fn path_base(s: ref u8) ref u8 = trust {
 }
 
 pub fn home_dir() ref u8 = trust {
-    val h: ref u8 = rt.getenv(c"HOME")
+    val h: mut ref u8 = rt.getenv(c"HOME")
+    if h == none {
+        when windows {
+            h = rt.getenv(c"USERPROFILE")
+        }
+    }
     if h == none {
         return c"/"
     }
-    return h
+    return path_clean(h)
 }
 
 pub fn expand_tilde(s: ref u8) ref u8 = trust {
@@ -1399,8 +1473,8 @@ pub fn expand_tilde(s: ref u8) ref u8 = trust {
     if s_len(s) == 1 {
         return s_dup(h)
     }
-    if @load8(@ptradd(s, 1)) == 47 {
-        return s_cat(h, @ptradd(s, 1))
+    if path_sep(@load8(@ptradd(s, 1))) {
+        return s_cat3(h, c"/", @ptradd(s, 2))
     }
     return s_dup(s)
 }
@@ -1410,8 +1484,9 @@ pub fn cwd() ref u8 = trust {
     val r: ref u8 = rt.getcwd(b, 4096 as usize)
     if r == none {
         @store8(b, 0)
+        return b
     }
-    return b
+    return path_clean(b)
 }
 
 pub fn chdir(path: ref u8) i32 = trust {
@@ -1429,7 +1504,41 @@ pub fn file_info(path: ref u8) FileInfo = trust {
 }
 
 pub fn is_executable(path: ref u8) bool = trust {
-    return rt.access(path, 1) == 0
+    when windows {
+        return file_exists(path) && !is_dir(path)
+    }
+    otherwise {
+        return rt.access(path, 1) == 0
+    }
+}
+
+/// Resolve a command name to an existing executable path.
+pub fn resolve_executable(path: ref u8) ref u8 = trust {
+    if path == none {
+        return none
+    }
+    if file_exists(path) && !is_dir(path) {
+        return path
+    }
+    when windows {
+        val exe: ref u8 = s_cat(path, c".exe")
+        if file_exists(exe) && !is_dir(exe) {
+            return exe
+        }
+        val cmd: ref u8 = s_cat(path, c".cmd")
+        if file_exists(cmd) && !is_dir(cmd) {
+            return cmd
+        }
+        val bat: ref u8 = s_cat(path, c".bat")
+        if file_exists(bat) && !is_dir(bat) {
+            return bat
+        }
+        val com: ref u8 = s_cat(path, c".com")
+        if file_exists(com) && !is_dir(com) {
+            return com
+        }
+    }
+    return none
 }
 
 pub fn is_dir(path: ref u8) bool = trust {
@@ -1492,20 +1601,26 @@ pub fn mkdir_p(path: ref u8) bool = trust {
     if path == none || s_len(path) == 0 {
         return false
     }
-    if is_dir(path) {
+    val norm: ref u8 = path_clean(path)
+    if is_dir(norm) {
         return true
     }
-    val n: i64 = s_len(path)
-    val tmp: ref u8 = s_dup(path)
+    val n: i64 = s_len(norm)
+    val tmp: ref u8 = s_dup(norm)
     val i: mut i64 = 0
-    if n > 0 && @load8(tmp) == 47 {
+    if path_has_drive(tmp) {
+        i = 2
+        if n > 2 && path_sep(@load8(@ptradd(tmp, 2))) {
+            i = 3
+        }
+    } elif n > 0 && path_sep(@load8(tmp)) {
         i = 1
     }
     for {
         if i >= n {
             break
         }
-        if @load8(@ptradd(tmp, i)) == 47 {
+        if path_sep(@load8(@ptradd(tmp, i))) {
             @store8(@ptradd(tmp, i), 0)
             if s_len(tmp) > 0 && !is_dir(tmp) {
                 rt.mkdir(tmp, 493 as u32)
@@ -1599,6 +1714,31 @@ pub fn now_ms() i64 = trust {
     return tv.tv_sec * 1000 + tv.tv_usec / 1000
 }
 
+pub fn temp_path(prefix: ref u8) ref u8 = trust {
+    val base: mut ref u8 = rt.getenv(c"TMPDIR")
+    if base == none {
+        base = rt.getenv(c"TEMP")
+    }
+    if base == none {
+        base = rt.getenv(c"TMP")
+    }
+    if base == none || s_len(base) == 0 {
+        when windows {
+            base = c"."
+        }
+        otherwise {
+            base = c"/tmp"
+        }
+    }
+    g_temp_seq++
+    val name: ref u8 = s_cat3(
+        prefix,
+        c"-",
+        s_cat3(s_int(now_ms()), c"-", s_int(g_temp_seq))
+    )
+    return path_join(base, name)
+}
+
 pub fn env_get(name: ref u8) ref u8 = trust {
     return rt.getenv(name)
 }
@@ -1607,12 +1747,22 @@ pub fn env_set(name: ref u8, value: ref u8) void = trust {
     if name == none || value == none {
         return
     }
-    rt.setenv(name, value, 1)
+    when windows {
+        win.setenv(name, value)
+    }
+    otherwise {
+        rt.setenv(name, value, 1)
+    }
 }
 
 pub fn env_unset(name: ref u8) void = trust {
     if name != none {
-        rt.unsetenv(name)
+        when windows {
+            win.unsetenv(name)
+        }
+        otherwise {
+            rt.unsetenv(name)
+        }
     }
 }
 
@@ -1640,7 +1790,12 @@ pub fn dir_next_type(dir: ref void, typ: ref u8) ref u8 = trust {
     if e == none {
         return none
     }
-    @store8(typ, e.d_type)
+    when windows {
+        @store8(typ, 0)
+    }
+    otherwise {
+        @store8(typ, e.d_type)
+    }
     return @addr(e.d_name) as ref u8
 }
 
@@ -1660,7 +1815,13 @@ pub fn write_fd_n(fd: i32, s: ref u8, n: i64) void = trust {
         if done >= n {
             break
         }
-        val w: i64 = rt.write(fd, @ptradd(s, done) as ref void, (n - done) as usize)
+        val w: mut i64 = 0
+        when windows {
+            w = win.write(fd, @ptradd(s, done) as ref void, n - done)
+        }
+        otherwise {
+            w = rt.write(fd, @ptradd(s, done) as ref void, (n - done) as usize)
+        }
         if w > 0 {
             done = done + w
             retries = 0

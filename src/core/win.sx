@@ -1,0 +1,221 @@
+/// Windows support shims backed by src/windows_compat.c.
+///
+/// POSIX builds never reference these symbols; the externs are only emitted
+/// when the Windows target is selected.
+
+when windows {
+    extern (C, header) fn bx_read(fd: i32, buf: ref void, n: i64) i64 = "bx_read"
+    extern (C, header) fn bx_write(fd: i32, buf: ref void, n: i64) i64 = "bx_write"
+    extern (C, header) fn bx_open_read(path: ref u8) i32 = "bx_open_read"
+    extern (C, header) fn bx_open_write(path: ref u8, append: i32) i32 = "bx_open_write"
+    extern (C, header) fn bx_close(fd: i32) i32 = "bx_close"
+    extern (C, header) fn bx_dup(fd: i32) i32 = "bx_dup"
+    extern (C, header) fn bx_dup2(oldfd: i32, newfd: i32) i32 = "bx_dup2"
+    extern (C, header) fn bx_pipe(fds: ref i32) i32 = "bx_pipe"
+    extern (C, header) fn bx_getpid() i32 = "bx_getpid"
+    extern (C, header) fn bx_setenv(name: ref u8, value: ref u8) i32 = "bx_setenv"
+    extern (C, header) fn bx_unsetenv(name: ref u8) i32 = "bx_unsetenv"
+    extern (C, header) fn bx_spawn_argv(
+        argv: ref ref u8,
+        in_fd: i32,
+        out_fd: i32,
+        err_fd: i32,
+        cwd: ref u8
+    ) i32 = "bx_spawn_argv"
+    extern (C, header) fn bx_wait_pid(id: i32, nohang: i32) i32 = "bx_wait_pid"
+    extern (C, header) fn bx_wait_pid_timeout(id: i32, timeout_ms: i32) i32 = "bx_wait_pid_timeout"
+    extern (C, header) fn bx_kill(id: i32) i32 = "bx_kill"
+    extern (C, header) fn bx_poll_fd(fd: i32, timeout_ms: i32) i32 = "bx_poll_fd"
+    extern (C, header) fn bx_term_init() i32 = "bx_term_init"
+    extern (C, header) fn bx_term_raw() void = "bx_term_raw"
+    extern (C, header) fn bx_term_cooked() void = "bx_term_cooked"
+    extern (C, header) fn bx_term_size(rows: ref i64, cols: ref i64) i32 = "bx_term_size"
+}
+
+pub fn read(fd: i32, buf: ref void, n: i64) i64 = trust {
+    when windows {
+        return bx_read(fd, buf, n)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn write(fd: i32, buf: ref void, n: i64) i64 = trust {
+    when windows {
+        return bx_write(fd, buf, n)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn open_read(path: ref u8) i32 = trust {
+    when windows {
+        return bx_open_read(path)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn open_write(path: ref u8, append: bool) i32 = trust {
+    when windows {
+        val flag: mut i32 = 0
+        if append {
+            flag = 1
+        }
+        return bx_open_write(path, flag)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn close(fd: i32) i32 = trust {
+    when windows {
+        return bx_close(fd)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn dup(fd: i32) i32 = trust {
+    when windows {
+        return bx_dup(fd)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn dup2(oldfd: i32, newfd: i32) i32 = trust {
+    when windows {
+        return bx_dup2(oldfd, newfd)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn pipe(fds: ref i32) i32 = trust {
+    when windows {
+        return bx_pipe(fds)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn setenv(name: ref u8, value: ref u8) i32 = trust {
+    when windows {
+        return bx_setenv(name, value)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn unsetenv(name: ref u8) i32 = trust {
+    when windows {
+        return bx_unsetenv(name)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn getpid() i32 = trust {
+    when windows {
+        return bx_getpid()
+    }
+    otherwise {
+        return 0
+    }
+}
+
+pub fn spawn_argv(
+    argv: ref ref u8,
+    in_fd: i32,
+    out_fd: i32,
+    err_fd: i32,
+    cwd: ref u8
+) i32 = trust {
+    when windows {
+        return bx_spawn_argv(argv, in_fd, out_fd, err_fd, cwd)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn wait_pid(id: i32, nohang: bool) i32 = trust {
+    when windows {
+        val flag: mut i32 = 0
+        if nohang {
+            flag = 1
+        }
+        return bx_wait_pid(id, flag)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn wait_pid_timeout(id: i32, timeout_ms: i32) i32 = trust {
+    when windows {
+        return bx_wait_pid_timeout(id, timeout_ms)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn kill(id: i32) i32 = trust {
+    when windows {
+        return bx_kill(id)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn poll_fd(fd: i32, timeout_ms: i32) i32 = trust {
+    when windows {
+        return bx_poll_fd(fd, timeout_ms)
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn term_init() i32 = trust {
+    when windows {
+        return bx_term_init()
+    }
+    otherwise {
+        return 0
+    }
+}
+
+pub fn term_raw() void = trust {
+    when windows {
+        bx_term_raw()
+    }
+}
+
+pub fn term_cooked() void = trust {
+    when windows {
+        bx_term_cooked()
+    }
+}
+
+pub fn term_size(rows: ref i64, cols: ref i64) i32 = trust {
+    when windows {
+        return bx_term_size(rows, cols)
+    }
+    otherwise {
+        return -1
+    }
+}

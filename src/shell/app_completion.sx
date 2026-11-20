@@ -125,7 +125,7 @@ fn find_bash() ref u8 = trust {
             if i > n {
                 break
             }
-            if i == n || @load8(@ptradd(path, i)) == 58 {
+            if i == n || @load8(@ptradd(path, i)) == u.path_list_sep() {
                 val dir: ref u8 = u.s_ndup(@ptradd(path, start), i - start)
                 val candidate: ref u8 = u.path_join(dir, c"bash")
                 if u.is_executable(candidate) {

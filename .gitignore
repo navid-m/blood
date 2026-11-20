@@ -3,6 +3,7 @@ blood2
 *.DS_Store
 blood-dev
 blood
+blood.exe
 SPECTRE_LANGUAGE_REFERENCE.md
 lib/
 std__*

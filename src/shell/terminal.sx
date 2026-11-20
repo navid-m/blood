@@ -5,6 +5,8 @@ val cfgmod  = use("../core/config.sx")
 val histmod = use("../core/history.sx")
 val comp    = use("completion.sx")
 val rt      = use("std/runtime")
+val ex      = use("../core/exec.sx")
+val win     = use("../core/win.sx")
 
 when darwin {
     /// Darwin `struct termios`: `tcflag_t` and `speed_t` are C `unsigned long`
@@ -46,10 +48,10 @@ pub type PollFd = {
 }
 
 pub type WinSize = {
-    rows: u16
-    cols: u16
-    xpixel: u16
-    ypixel: u16
+    rows: mut u16
+    cols: mut u16
+    xpixel: mut u16
+    ypixel: mut u16
 }
 
 pub type TermState = {
@@ -159,12 +161,24 @@ fn winsize_request() u64 = trust {
     }
 }
 
-fn query_winsize(ws: ref WinSize) i32 = trust {
-    when darwin {
-        return c_ioctl(1, winsize_request(), ws as ref void)
+fn query_winsize(ws: mut ref WinSize) i32 = trust {
+    when windows {
+        val rows: mut i64 = 0
+        val cols: mut i64 = 0
+        if win.term_size(@addr(rows), @addr(cols)) != 0 {
+            return -1
+        }
+        ws.rows = rows as u16
+        ws.cols = cols as u16
+        return 0
     }
     otherwise {
-        return rt.ioctl(1, winsize_request(), ws as ref void)
+        when darwin {
+            return c_ioctl(1, winsize_request(), ws as ref void)
+        }
+        otherwise {
+            return rt.ioctl(1, winsize_request(), ws as ref void)
+        }
     }
 }
 
@@ -201,12 +215,17 @@ fn size_changed() bool = trust {
 }
 
 pub fn init_terminal() void = trust {
-    val t: mut Termios = @zeroed
-    if rt.tcgetattr(0, @addr(t) as ref void) == 0 {
-        term.orig = t
-        term.have_tty = 1
-    } else {
-        term.have_tty = 0
+    when windows {
+        term.have_tty = win.term_init() as i64
+    }
+    otherwise {
+        val t: mut Termios = @zeroed
+        if rt.tcgetattr(0, @addr(t) as ref void) == 0 {
+            term.orig = t
+            term.have_tty = 1
+        } else {
+            term.have_tty = 0
+        }
     }
     term.raw_active = 0
     vscode_integration = 0
@@ -225,31 +244,45 @@ pub fn raw_mode() void = trust {
     if term.have_tty == 0 {
         return
     }
-    when darwin {
-        val t: mut Termios = term.orig
-        t.c_lflag = t.c_lflag & ~(d_const_echo() | d_const_icanon() | d_const_iexten() | d_const_isig())
-        t.c_iflag = t.c_iflag & ~(d_const_ixon() | d_const_icrnl())
-        @store8(@ptradd(@addr(t.c_cc) as ref u8, 16), 1)
-        @store8(@ptradd(@addr(t.c_cc) as ref u8, 17), 0)
-        rt.tcsetattr(0, 0, @addr(t) as ref void)
+    when windows {
+        win.term_raw()
+        term.raw_active = 1
+        return
     }
     otherwise {
-        val t: mut Termios = term.orig
-        t.c_lflag = t.c_lflag & ~(const_echo() | const_icanon() | const_iexten() | const_isig())
-        t.c_iflag = t.c_iflag & ~(const_ixon() | const_icrnl())
-        @store8(@ptradd(@addr(t.c_cc) as ref u8, 6), 1)
-        @store8(@ptradd(@addr(t.c_cc) as ref u8, 5), 0)
-        rt.tcsetattr(0, 0, @addr(t) as ref void)
+        when darwin {
+            val t: mut Termios = term.orig
+            t.c_lflag = t.c_lflag & ~(d_const_echo() | d_const_icanon() | d_const_iexten() | d_const_isig())
+            t.c_iflag = t.c_iflag & ~(d_const_ixon() | d_const_icrnl())
+            @store8(@ptradd(@addr(t.c_cc) as ref u8, 16), 1)
+            @store8(@ptradd(@addr(t.c_cc) as ref u8, 17), 0)
+            rt.tcsetattr(0, 0, @addr(t) as ref void)
+        }
+        otherwise {
+            val t: mut Termios = term.orig
+            t.c_lflag = t.c_lflag & ~(const_echo() | const_icanon() | const_iexten() | const_isig())
+            t.c_iflag = t.c_iflag & ~(const_ixon() | const_icrnl())
+            @store8(@ptradd(@addr(t.c_cc) as ref u8, 6), 1)
+            @store8(@ptradd(@addr(t.c_cc) as ref u8, 5), 0)
+            rt.tcsetattr(0, 0, @addr(t) as ref void)
+        }
+        term.raw_active = 1
     }
-    term.raw_active = 1
 }
 
 pub fn cooked_mode() void = trust {
     if term.have_tty == 0 {
         return
     }
-    rt.tcsetattr(0, 0, @addr(term.orig) as ref void)
-    term.raw_active = 0
+    when windows {
+        win.term_cooked()
+        term.raw_active = 0
+        return
+    }
+    otherwise {
+        rt.tcsetattr(0, 0, @addr(term.orig) as ref void)
+        term.raw_active = 0
+    }
 }
 
 pub fn cols() i64 = trust {
@@ -399,11 +432,11 @@ fn read_tty_byte_timeout(ms: i32) i32 = trust {
     pfd.fd = 0
     pfd.events = 1
     pfd.revents = 0
-    if rt.poll(@addr(pfd) as ref void, 1, ms) <= 0 {
+    if ex.fd_poll(0, ms) <= 0 {
         return -1
     }
     val c: mut u8 = 0
-    val n: i64 = rt.read(0, @addr(c) as ref void, 1)
+    val n: i64 = ex.fd_read(0, @addr(c) as ref u8, 1)
     if n <= 0 {
         return -1
     }
@@ -577,7 +610,7 @@ fn read_key() i32 = trust {
         pfd.fd = 0
         pfd.events = 1
         pfd.revents = 0
-        val ready: i32 = rt.poll(@addr(pfd) as ref void, 1, 100)
+        val ready: i32 = ex.fd_poll(0, 100)
         if ready < 0 {
             if fails >= 8 {
                 return -1
@@ -591,7 +624,7 @@ fn read_key() i32 = trust {
             }
             continue
         }
-        val n: i64 = rt.read(0, @addr(c) as ref void, 1)
+        val n: i64 = ex.fd_read(0, @addr(c) as ref u8, 1)
         if n > 0 {
             return c as i32
         }
@@ -614,7 +647,7 @@ fn read_key_timeout(ms: i32) i32 = trust {
     pfd.fd = 0
     pfd.events = 1
     pfd.revents = 0
-    if rt.poll(@addr(pfd) as ref void, 1, ms) <= 0 {
+    if ex.fd_poll(0, ms) <= 0 {
         if size_changed() {
             return -2
         }

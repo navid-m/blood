@@ -1,5 +1,5 @@
 #!/usr/bin/env blood
 
-for x in ["sl", "sm"] {
+for x in ["sl", "sm", "sw"] {
     sh("spectre build {x}")
 }

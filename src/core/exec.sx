@@ -2,7 +2,8 @@
 
 val u = use("util.sx")
 
-val rt = use("std/runtime")
+val rt  = use("std/runtime")
+val win = use("win.sx")
 
 when darwin {
     /// `open` is variadic, and Darwin's AArch64 ABI passes variadic
@@ -12,7 +13,12 @@ when darwin {
 }
 
 pub fn getpid() i32 = trust {
-    return rt.getpid()
+    when windows {
+        return win.getpid()
+    }
+    otherwise {
+        return rt.getpid()
+    }
 }
 
 pub fn signal_default(sig: i32) void = trust {
@@ -28,23 +34,48 @@ pub fn signal_handler(sig: i32, handler: fn(i32) void) void = trust {
 }
 
 pub fn fd_close(fd: i32) void = trust {
-    rt.close(fd)
+    when windows {
+        win.close(fd)
+    }
+    otherwise {
+        rt.close(fd)
+    }
 }
 
 pub fn fd_dup(fd: i32) i32 = trust {
-    return rt.dup(fd)
+    when windows {
+        return win.dup(fd)
+    }
+    otherwise {
+        return rt.dup(fd)
+    }
 }
 
 pub fn fd_dup2(oldfd: i32, newfd: i32) i32 = trust {
-    return rt.dup2(oldfd, newfd)
+    when windows {
+        return win.dup2(oldfd, newfd)
+    }
+    otherwise {
+        return rt.dup2(oldfd, newfd)
+    }
 }
 
 pub fn fd_read(fd: i32, buf: ref u8, n: i64) i64 = trust {
-    return rt.read(fd, buf, n as usize)
+    when windows {
+        return win.read(fd, buf as ref void, n)
+    }
+    otherwise {
+        return rt.read(fd, buf, n as usize)
+    }
 }
 
 pub fn fd_write(fd: i32, buf: ref u8, n: i64) i64 = trust {
-    return rt.write(fd, buf, n as usize)
+    when windows {
+        return win.write(fd, buf as ref void, n)
+    }
+    otherwise {
+        return rt.write(fd, buf, n as usize)
+    }
 }
 
 fn open_fd(path: ref u8, flags: i32, mode: i32) i32 = trust {
@@ -57,34 +88,49 @@ fn open_fd(path: ref u8, flags: i32, mode: i32) i32 = trust {
 }
 
 pub fn open_write(path: ref u8, append: bool) i32 = trust {
-    when darwin {
-        val flags: mut i32 = 1 | 512 | 1024
-        if append {
-            flags = 1 | 512 | 8
-        }
-        return open_fd(path, flags, 438)
+    when windows {
+        return win.open_write(path, append)
     }
     otherwise {
-        val flags: mut i32 = 1 | 64 | 512
-        if append {
-            flags = 1 | 64 | 1024
+        when darwin {
+            val flags: mut i32 = 1 | 512 | 1024
+            if append {
+                flags = 1 | 512 | 8
+            }
+            return open_fd(path, flags, 438)
         }
-        return open_fd(path, flags, 438)
+        otherwise {
+            val flags: mut i32 = 1 | 64 | 512
+            if append {
+                flags = 1 | 64 | 1024
+            }
+            return open_fd(path, flags, 438)
+        }
     }
 }
 
 /// Signal number used for terminal suspension (SIGTSTP).
 pub fn sig_tstp() i32 = trust {
-    when darwin {
-        return 18
+    when windows {
+        return 0
     }
     otherwise {
-        return 20
+        when darwin {
+            return 18
+        }
+        otherwise {
+            return 20
+        }
     }
 }
 
 pub fn open_read(path: ref u8) i32 = trust {
-    return open_fd(path, 0, 0)
+    when windows {
+        return win.open_read(path)
+    }
+    otherwise {
+        return open_fd(path, 0, 0)
+    }
 }
 
 pub fn p_fork() i32 = trust {
@@ -96,7 +142,12 @@ pub fn p_exit(code: i32) void = trust {
 }
 
 pub fn p_kill(pid: i32, sig: i32) i32 = trust {
-    return rt.kill(pid, sig)
+    when windows {
+        return win.kill(pid)
+    }
+    otherwise {
+        return rt.kill(pid, sig)
+    }
 }
 
 pub type Pipe = {
@@ -112,8 +163,27 @@ pub type PollFd = {
 
 pub fn make_pipe() Pipe = trust {
     val fds: mut [2]i32 = [0, 0]
-    rt.pipe(@addr(fds) as ref i32)
+    when windows {
+        win.pipe(@addr(fds) as ref i32)
+    }
+    otherwise {
+        rt.pipe(@addr(fds) as ref i32)
+    }
     return Pipe{read_fd: @load32(@addr(fds)), write_fd: @load32(@ptradd(@addr(fds), 4))}
+}
+
+/// Wait until `fd` has input available, or `timeout_ms` elapses.
+pub fn fd_poll(fd: i32, timeout_ms: i32) i32 = trust {
+    when windows {
+        return win.poll_fd(fd, timeout_ms)
+    }
+    otherwise {
+        val pfd: mut PollFd = @zeroed
+        pfd.fd = fd
+        pfd.events = 1
+        pfd.revents = 0
+        return rt.poll(@addr(pfd) as ref void, 1, timeout_ms)
+    }
 }
 
 pub fn status_code(status: i32) i32 = trust {
@@ -124,37 +194,52 @@ pub fn status_code(status: i32) i32 = trust {
 }
 
 pub fn wait_pid(pid: i32) i32 = trust {
-    val status: mut i32 = 0
-    val got: mut i32 = -1
-    val fails: mut i64 = 0
-    for {
-        got = rt.waitpid(pid, @addr(status), 0)
-        if got >= 0 {
-            break
-        }
-        fails++
-        if fails > 1000 {
-            return 127
-        }
+    when windows {
+        return win.wait_pid(pid, false)
     }
-    return status_code(status)
+    otherwise {
+        val status: mut i32 = 0
+        val got: mut i32 = -1
+        val fails: mut i64 = 0
+        for {
+            got = rt.waitpid(pid, @addr(status), 0)
+            if got >= 0 {
+                break
+            }
+            fails++
+            if fails > 1000 {
+                return 127
+            }
+        }
+        return status_code(status)
+    }
 }
 
 pub fn wait_nohang(pid: i32) i32 = trust {
-    val status: mut i32 = 0
-    val r: i32 = rt.waitpid(pid, @addr(status), 1)
-    if r <= 0 {
-        return -1
+    when windows {
+        return win.wait_pid(pid, true)
     }
-    return status_code(status)
+    otherwise {
+        val status: mut i32 = 0
+        val r: i32 = rt.waitpid(pid, @addr(status), 1)
+        if r <= 0 {
+            return -1
+        }
+        return status_code(status)
+    }
 }
 
 pub fn reap() void = trust {
-    val status: mut i32 = 0
-    for {
-        val r: i32 = rt.waitpid(-1, @addr(status), 1)
-        if r <= 0 {
-            break
+    when windows {
+        return
+    }
+    otherwise {
+        val status: mut i32 = 0
+        for {
+            val r: i32 = rt.waitpid(-1, @addr(status), 1)
+            if r <= 0 {
+                break
+            }
         }
     }
 }
@@ -214,54 +299,169 @@ pub fn run_argv(argv: ref u.Vec) i32 = trust {
 }
 
 pub fn spawn_argv(argv: ref u.Vec) i32 = trust {
-    val pid: i32 = rt.fork()
-    if pid == 0 {
-        child_reset()
-        child_exec(argv)
-        p_exit(127)
+    when windows {
+        return win.spawn_argv(build_argv(argv), -1, -1, -1, none)
     }
-    return pid
+    otherwise {
+        val pid: i32 = rt.fork()
+        if pid == 0 {
+            child_reset()
+            child_exec(argv)
+            p_exit(127)
+        }
+        return pid
+    }
+}
+
+pub fn wait_pid_timeout(pid: i32, timeout_ms: i32) i32 = trust {
+    when windows {
+        return win.wait_pid_timeout(pid, timeout_ms)
+    }
+    otherwise {
+        return wait_pid(pid)
+    }
+}
+
+/// Spawn a child with explicit standard descriptors and working directory.
+pub fn spawn_redirected(
+    argv: ref u.Vec,
+    in_fd: i32,
+    out_fd: i32,
+    err_fd: i32,
+    cwd: ref u8
+) i32 = trust {
+    if argv.len == 0 {
+        return -1
+    }
+    when windows {
+        return win.spawn_argv(build_argv(argv), in_fd, out_fd, err_fd, cwd)
+    }
+    otherwise {
+        val pid: i32 = rt.fork()
+        if pid == 0 {
+            child_reset()
+            if in_fd >= 0 {
+                fd_dup2(in_fd, 0)
+            }
+            if out_fd >= 0 {
+                fd_dup2(out_fd, 1)
+            }
+            if err_fd >= 0 {
+                fd_dup2(err_fd, 2)
+            }
+            if cwd != none && u.s_len(cwd) > 0 && u.chdir(u.expand_tilde(cwd)) != 0 {
+                p_exit(127)
+            }
+            child_exec(argv)
+            p_exit(127)
+        }
+        return pid
+    }
+}
+
+fn capture_argv_win(
+    argv: ref u.Vec,
+    quiet_err: bool,
+    timeout_ms: i32,
+    use_timeout: bool
+) ref u8 = trust {
+    val out_path: ref u8 = u.temp_path(c"blood-out")
+    val err_path: ref u8 = u.temp_path(c"blood-err")
+    val out_fd: i32 = open_write(out_path, false)
+    val err_fd: mut i32 = -1
+    if quiet_err {
+        err_fd = win.open_write(c"NUL", false)
+    } else {
+        err_fd = open_write(err_path, false)
+    }
+
+    if out_fd < 0 {
+        return u.s_dup(c"")
+    }
+
+    val av: ref ref u8 = build_argv(argv)
+    val pid: i32 = win.spawn_argv(av, -1, out_fd, err_fd, none)
+    fd_close(out_fd)
+    if err_fd >= 0 {
+        fd_close(err_fd)
+    }
+    if pid < 0 {
+        std_remove(out_path)
+        std_remove(err_path)
+        return u.s_dup(c"")
+    }
+
+    val done: mut i32 = 0
+    if use_timeout {
+        done = win.wait_pid_timeout(pid, timeout_ms)
+        if done == -1 {
+            win.kill(pid)
+            win.wait_pid(pid, false)
+            std_remove(out_path)
+            std_remove(err_path)
+            return u.s_dup(c"")
+        }
+    } else {
+        done = win.wait_pid(pid, false)
+    }
+
+    val out: mut ref u8 = u.read_file(out_path)
+    if out == none {
+        out = u.s_dup(c"")
+    }
+    std_remove(out_path)
+    std_remove(err_path)
+    return out
+}
+
+fn std_remove(path: ref u8) void = trust {
+    rt.unlink(path)
 }
 
 pub fn capture_argv(argv: ref u.Vec, quiet_err: bool) ref u8 = trust {
     if argv.len == 0 {
         return u.s_dup(c"")
     }
-    val p: Pipe = make_pipe()
-    val pid: i32 = rt.fork()
-    if pid == 0 {
-        child_reset()
-        fd_close(p.read_fd)
-        fd_dup2(p.write_fd, 1)
-        if quiet_err {
-            val nullfd: i32 = open_fd(c"/dev/null", 1, 438)
-            if nullfd >= 0 {
-                fd_dup2(nullfd, 2)
-                fd_close(nullfd)
+    when windows {
+        return capture_argv_win(argv, quiet_err, 0, false)
+    }
+    otherwise {
+        val p: Pipe = make_pipe()
+        val pid: i32 = rt.fork()
+        if pid == 0 {
+            child_reset()
+            fd_close(p.read_fd)
+            fd_dup2(p.write_fd, 1)
+            if quiet_err {
+                val nullfd: i32 = open_fd(c"/dev/null", 1, 438)
+                if nullfd >= 0 {
+                    fd_dup2(nullfd, 2)
+                    fd_close(nullfd)
+                }
             }
+            fd_close(p.write_fd)
+            child_exec(argv)
+            p_exit(127)
         }
         fd_close(p.write_fd)
-        child_exec(argv)
-        p_exit(127)
-    }
-    fd_close(p.write_fd)
-    if pid < 0 {
-        fd_close(p.read_fd)
-        return u.s_dup(c"")
-    }
-    val b: mut ref u.Buf = u.buf_new()
-    val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
-    for {
-        val n: i64 = fd_read(p.read_fd, chunk, 4096)
-        if n <= 0 {
-            break
+        if pid < 0 {
+            fd_close(p.read_fd)
+            return u.s_dup(c"")
         }
-        u.buf_addn(b, chunk, n)
+        val b: mut ref u.Buf = u.buf_new()
+        val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
+        for {
+            val n: i64 = fd_read(p.read_fd, chunk, 4096)
+            if n <= 0 {
+                break
+            }
+            u.buf_addn(b, chunk, n)
+        }
+        u.xfree(chunk)
+        fd_close(p.read_fd)
+        wait_pid(pid)
+        return u.buf_take(b)
     }
-    u.xfree(chunk)
-    fd_close(p.read_fd)
-    wait_pid(pid)
-    return u.buf_take(b)
 }
 
 /// Capture stdout like `capture_argv`, but terminate the child if it has not
@@ -274,64 +474,65 @@ pub fn capture_argv_timeout(
     if argv.len == 0 {
         return u.s_dup(c"")
     }
-    val p: Pipe = make_pipe()
-    val pid: i32 = rt.fork()
-    if pid == 0 {
-        child_reset()
-        fd_close(p.read_fd)
-        fd_dup2(p.write_fd, 1)
-        if quiet_err {
-            val nullfd: i32 = open_fd(c"/dev/null", 1, 438)
-            if nullfd >= 0 {
-                fd_dup2(nullfd, 2)
-                fd_close(nullfd)
+    when windows {
+        return capture_argv_win(argv, quiet_err, timeout_ms as i32, true)
+    }
+    otherwise {
+        val p: Pipe = make_pipe()
+        val pid: i32 = rt.fork()
+        if pid == 0 {
+            child_reset()
+            fd_close(p.read_fd)
+            fd_dup2(p.write_fd, 1)
+            if quiet_err {
+                val nullfd: i32 = open_fd(c"/dev/null", 1, 438)
+                if nullfd >= 0 {
+                    fd_dup2(nullfd, 2)
+                    fd_close(nullfd)
+                }
             }
+            fd_close(p.write_fd)
+            child_exec(argv)
+            p_exit(127)
         }
         fd_close(p.write_fd)
-        child_exec(argv)
-        p_exit(127)
-    }
-    fd_close(p.write_fd)
-    if pid < 0 {
+        if pid < 0 {
+            fd_close(p.read_fd)
+            return u.s_dup(c"")
+        }
+        val b: mut ref u.Buf = u.buf_new()
+        val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
+        val started: i64 = u.now_ms()
+        val timed_out: mut bool = false
+        for {
+            val remaining: i64 = timeout_ms - (u.now_ms() - started)
+            if remaining <= 0 {
+                timed_out = true
+                break
+            }
+            val ready: i32 = fd_poll(p.read_fd, remaining as i32)
+            if ready < 0 {
+                break
+            }
+            if ready == 0 {
+                timed_out = true
+                break
+            }
+            val n: i64 = fd_read(p.read_fd, chunk, 4096)
+            if n <= 0 {
+                break
+            }
+            u.buf_addn(b, chunk, n)
+        }
+        u.xfree(chunk)
         fd_close(p.read_fd)
-        return u.s_dup(c"")
-    }
-    val b: mut ref u.Buf = u.buf_new()
-    val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
-    val started: i64 = u.now_ms()
-    val timed_out: mut bool = false
-    for {
-        val remaining: i64 = timeout_ms - (u.now_ms() - started)
-        if remaining <= 0 {
-            timed_out = true
-            break
+        if timed_out {
+            p_kill(pid, 9)
         }
-        val pfd: mut PollFd = @zeroed
-        pfd.fd = p.read_fd
-        pfd.events = 1
-        pfd.revents = 0
-        val ready: i32 = rt.poll(@addr(pfd) as ref void, 1, remaining as i32)
-        if ready < 0 {
-            break
+        wait_pid(pid)
+        if timed_out {
+            return u.s_dup(c"")
         }
-        if ready == 0 {
-            timed_out = true
-            break
-        }
-        val n: i64 = fd_read(p.read_fd, chunk, 4096)
-        if n <= 0 {
-            break
-        }
-        u.buf_addn(b, chunk, n)
+        return u.buf_take(b)
     }
-    u.xfree(chunk)
-    fd_close(p.read_fd)
-    if timed_out {
-        p_kill(pid, 9)
-    }
-    wait_pid(pid)
-    if timed_out {
-        return u.s_dup(c"")
-    }
-    return u.buf_take(b)
 }

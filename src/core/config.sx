@@ -239,6 +239,12 @@ pub fn config_path() ref u8 = trust {
     if xdg != none && u.s_len(xdg) > 0 {
         return u.path_join(u.path_join(xdg, c"blood"), c"blood.ini")
     }
+    when windows {
+        val appdata: ref u8 = u.env_get(c"APPDATA")
+        if appdata != none && u.s_len(appdata) > 0 {
+            return u.path_join(u.path_join(appdata, c"blood"), c"blood.ini")
+        }
+    }
     return u.path_join(u.path_join(u.home_dir(), c".config/blood"), c"blood.ini")
 }
 
@@ -275,6 +281,15 @@ pub fn default_config() ref Config = trust {
             u.path_join(u.home_dir(), c".local/share/blood"),
             c"history"
         ))
+    when windows {
+        val local: ref u8 = u.env_get(c"LOCALAPPDATA")
+        if local != none && u.s_len(local) > 0 {
+            c.history_file = u.s_dup_perm(u.path_join(
+                    u.path_join(local, c"blood"),
+                    c"history"
+                ))
+        }
+    }
     c.history_max = 10000
     c.history_ignore_dups = 1
     c.completion_enabled = 1

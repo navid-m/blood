@@ -17,7 +17,12 @@ pub fn init(login: bool) void = trust {
             apply_path_helper()
         }
         otherwise {
-            apply_etc_environment()
+            when windows {
+                // Windows inherits PATH from the user environment.
+            }
+            otherwise {
+                apply_etc_environment()
+            }
         }
     }
     ensure_path()
@@ -43,7 +48,12 @@ fn default_path() ref u8 = trust {
             return value
         }
     }
-    return u.s_dup(DEFAULT_PATH)
+    when windows {
+        return c"C:\\windows\\system32;C:\\windows"
+    }
+    otherwise {
+        return u.s_dup(DEFAULT_PATH)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +199,7 @@ fn collect_path(parts: mut ref u.Vec, path: ref u8) void = trust {
         if i > n {
             break
         }
-        if i == n || @load8(@ptradd(path, i)) == 58 {
+        if i == n || @load8(@ptradd(path, i)) == u.path_list_sep() {
             add_path_part(parts, path, start, i)
             start = i + 1
         }
@@ -209,7 +219,7 @@ pub fn merge_paths(primary: ref u8, secondary: ref u8) ref u8 = trust {
             break
         }
         if i > 0 {
-            u.buf_ch(b, 58)
+            u.buf_ch(b, u.path_list_sep())
         }
         u.buf_add(b, u.vec_p(parts, i) as ref u8)
         i++

@@ -123,7 +123,12 @@ pub fn seed_env() void = trust {
     if p != none {
         u.map_put(sh_vars, c"PATH", @bitcast(u.s_dup_perm(p), i64))
     }
-    val h: ref u8 = u.env_get(c"HOME")
+    val h: mut ref u8 = u.env_get(c"HOME")
+    when windows {
+        if h == none {
+            h = u.env_get(c"USERPROFILE")
+        }
+    }
     if h != none {
         u.map_put(sh_vars, c"HOME", @bitcast(u.s_dup_perm(h), i64))
     }
@@ -1329,6 +1334,10 @@ fn is_builtin(name: ref u8) bool = trust {
 }
 
 fn run_pipeline(pipe: ref Pipeline, background: bool) i32 = trust {
+    when windows {
+        return run_pipeline_win(pipe, background)
+    }
+    otherwise {
     if pipe.cmds.len == 0 {
         return 0
     }
@@ -1416,6 +1425,7 @@ fn run_pipeline(pipe: ref Pipeline, background: bool) i32 = trust {
         w++
     }
     return last
+    }
 }
 
 fn close_pipes(pipes: ref u.Vec) void = trust {
@@ -1429,6 +1439,283 @@ fn close_pipes(pipes: ref u.Vec) void = trust {
         ex.fd_close(p.write_fd)
         i++
     }
+}
+
+fn stage_is_builtin(cmd: ref Command) bool = trust {
+    if cmd.argv.len == 0 {
+        return true
+    }
+    val name: ref u8 = u.vec_p(cmd.argv, 0) as ref u8
+    if u.map_has(sh_aliases, name) {
+        return true
+    }
+    if is_builtin(name) {
+        return true
+    }
+    if (u.s_ends_with(name, c".blood") || u.s_ends_with(name, c".bx")) && u.file_exists(name) {
+        return true
+    }
+    return false
+}
+
+fn save_std_fds() ref u.Vec = trust {
+    val saved: mut ref u.Vec = u.vec_new()
+    u.vec_push(saved, ex.fd_dup(0) as i64)
+    u.vec_push(saved, ex.fd_dup(1) as i64)
+    u.vec_push(saved, ex.fd_dup(2) as i64)
+    return saved
+}
+
+fn restore_std_fds(saved: ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= saved.len || i > 2 {
+            break
+        }
+        val fd: i32 = u.vec_gets(saved, i) as i32
+        if fd >= 0 {
+            ex.fd_dup2(fd, i as i32)
+            ex.fd_close(fd)
+        }
+        i++
+    }
+}
+
+fn save_child_env(cmd: ref Command) ref u.Vec = trust {
+    val saved: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = 0
+    for {
+        if i >= cmd.assigns.len {
+            break
+        }
+        val def: ref u8 = u.vec_p(cmd.assigns, i) as ref u8
+        val eq: i64 = u.s_index_of_char(def, 61, 0)
+        if eq > 0 {
+            val name: ref u8 = u.s_substr(def, 0, eq)
+            val old: ref u8 = u.env_get(name)
+            u.vec_pushp(saved, name as ref void)
+            if old == none {
+                u.vec_push(saved, 0)
+            } else {
+                u.vec_push(saved, @bitcast(old, i64))
+            }
+            u.env_set(name, u.s_substr(def, eq + 1, u.s_len(def)))
+        }
+        i++
+    }
+    return saved
+}
+
+fn restore_child_env(saved: ref u.Vec) void = trust {
+    val j: mut i64 = 0
+    for {
+        if j + 1 >= saved.len {
+            break
+        }
+        val name: ref u8 = u.vec_p(saved, j) as ref u8
+        val old: i64 = u.vec_gets(saved, j + 1)
+        if old == 0 {
+            u.env_unset(name)
+        } else {
+            u.env_set(name, @bitcast(old, ref u8))
+        }
+        j += 2
+    }
+}
+
+fn spawn_stage_win(cmd: ref Command, in_fd: i32, out_fd: i32) i32 = trust {
+    if cmd.argv.len == 0 {
+        return -1
+    }
+    val saved: ref u.Vec = save_std_fds()
+    if in_fd != 0 {
+        ex.fd_dup2(in_fd, 0)
+    }
+    if out_fd != 1 {
+        ex.fd_dup2(out_fd, 1)
+    }
+    val redir_ok: bool = apply_redirs(cmd.redirs) == 0
+    val env_saved: ref u.Vec = save_child_env(cmd)
+    val pid: mut i32 = -1
+    if redir_ok {
+        pid = ex.spawn_redirected(cmd.argv, 0, 1, 2, none)
+    }
+    restore_child_env(env_saved)
+    restore_std_fds(saved)
+    return pid
+}
+
+fn run_builtin_stage_win(cmd: ref Command, in_fd: i32, out_fd: i32) i32 = trust {
+    val saved: ref u.Vec = save_std_fds()
+    if in_fd != 0 {
+        ex.fd_dup2(in_fd, 0)
+    }
+    if out_fd != 1 {
+        ex.fd_dup2(out_fd, 1)
+    }
+    val st: i32 = run_single(cmd)
+    restore_std_fds(saved)
+    return st
+}
+
+fn run_pipeline_win(pipe: ref Pipeline, background: bool) i32 = trust {
+    val n: i64 = pipe.cmds.len
+    if n == 0 {
+        return 0
+    }
+
+    if background && n == 1 {
+        val cmd: ref Command = u.vec_p(pipe.cmds, 0) as ref Command
+        if !stage_is_builtin(cmd) {
+            val pid: i32 = spawn_stage_win(cmd, 0, 1)
+            if pid > 0 {
+                u.vec_push(sh_jobs, pid as i64)
+                sh_last_pid = pid as i64
+                return 0
+            }
+            return 127
+        }
+        run_builtin_stage_win(cmd, 0, 1)
+        return 0
+    }
+
+    if !background && n == 1 {
+        val cmd: ref Command = u.vec_p(pipe.cmds, 0) as ref Command
+        return run_single(cmd)
+    }
+
+    val pipes: mut ref u.Vec = u.vec_new()
+    val k: mut i64 = 0
+    for {
+        if k >= n - 1 {
+            break
+        }
+        val pp: mut ref ex.Pipe = u.xalloc(@sizeof(ex.Pipe) as i64) as ref ex.Pipe
+        val made: ex.Pipe = ex.make_pipe()
+        pp.read_fd = made.read_fd
+        pp.write_fd = made.write_fd
+        u.vec_pushp(pipes, pp)
+        k++
+    }
+
+    val builtin: mut ref u.Vec = u.vec_new()
+    val c: mut i64 = 0
+    for {
+        if c >= n {
+            break
+        }
+        val cmd: ref Command = u.vec_p(pipe.cmds, c) as ref Command
+        val flag: mut i64 = 0
+        if stage_is_builtin(cmd) {
+            flag = 1
+        }
+        u.vec_push(builtin, flag)
+        c++
+    }
+
+    val pids: mut ref u.Vec = u.vec_new()
+    val pidx: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = 0
+    val spawn_failed: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        if u.vec_gets(builtin, i) == 0 {
+            val cmd: ref Command = u.vec_p(pipe.cmds, i) as ref Command
+            val in_fd: mut i32 = 0
+            val out_fd: mut i32 = 1
+            if i > 0 {
+                val prev: ref ex.Pipe = u.vec_p(pipes, i - 1) as ref ex.Pipe
+                in_fd = prev.read_fd
+            }
+            if i < n - 1 {
+                val next: ref ex.Pipe = u.vec_p(pipes, i) as ref ex.Pipe
+                out_fd = next.write_fd
+            }
+            val pid: i32 = spawn_stage_win(cmd, in_fd, out_fd)
+            if pid > 0 {
+                u.vec_push(pids, pid as i64)
+                u.vec_push(pidx, i)
+            } else {
+                spawn_failed = 127
+            }
+        }
+        i++
+    }
+
+    val p: mut i64 = 0
+    for {
+        if p >= n - 1 {
+            break
+        }
+        val pp: ref ex.Pipe = u.vec_p(pipes, p) as ref ex.Pipe
+        if u.vec_gets(builtin, p) == 0 {
+            ex.fd_close(pp.write_fd)
+        }
+        if u.vec_gets(builtin, p + 1) == 0 {
+            ex.fd_close(pp.read_fd)
+        }
+        p++
+    }
+
+    val last: mut i32 = 0
+    val b: mut i64 = 0
+    for {
+        if b >= n {
+            break
+        }
+        if u.vec_gets(builtin, b) == 1 {
+            val cmd: ref Command = u.vec_p(pipe.cmds, b) as ref Command
+            val in_fd: mut i32 = 0
+            val out_fd: mut i32 = 1
+            if b > 0 {
+                val prev: ref ex.Pipe = u.vec_p(pipes, b - 1) as ref ex.Pipe
+                in_fd = prev.read_fd
+            }
+            if b < n - 1 {
+                val next: ref ex.Pipe = u.vec_p(pipes, b) as ref ex.Pipe
+                out_fd = next.write_fd
+            }
+            val st: i32 = run_builtin_stage_win(cmd, in_fd, out_fd)
+            if b == n - 1 {
+                last = st
+            }
+        }
+        b++
+    }
+
+    close_pipes(pipes)
+
+    if background {
+        val j: mut i64 = 0
+        for {
+            if j >= pids.len {
+                break
+            }
+            val pid: i32 = u.vec_gets(pids, j) as i32
+            u.vec_push(sh_jobs, pid as i64)
+            sh_last_pid = pid as i64
+            j++
+        }
+        return 0
+    }
+
+    val w: mut i64 = 0
+    for {
+        if w >= pids.len {
+            break
+        }
+        val st: i32 = ex.wait_pid(u.vec_gets(pids, w) as i32)
+        if u.vec_gets(pidx, w) == n - 1 {
+            last = st
+        }
+        w++
+    }
+    if spawn_failed != 0 && last == 0 {
+        last = spawn_failed as i32
+    }
+    return last
 }
 
 fn run_single(cmd: ref Command) i32 = trust {
@@ -1679,18 +1966,43 @@ fn run_builtin_with_redirs(cmd: ref Command) i32 = trust {
 }
 
 fn run_external(cmd: ref Command) i32 = trust {
-    val pid: i32 = ex.p_fork()
-    if pid == 0 {
-        ex.child_reset()
-        apply_assigns_child(cmd.assigns)
-        if apply_redirs(cmd.redirs) != 0 {
-            ex.p_exit(1)
+    when windows {
+        return run_external_win(cmd)
+    }
+    otherwise {
+        val pid: i32 = ex.p_fork()
+        if pid == 0 {
+            ex.child_reset()
+            apply_assigns_child(cmd.assigns)
+            if apply_redirs(cmd.redirs) != 0 {
+                ex.p_exit(1)
+            }
+            ex.child_exec(cmd.argv)
+            ex.p_exit(127)
         }
-        ex.child_exec(cmd.argv)
-        ex.p_exit(127)
+        if pid < 0 {
+            u.write_fd(2, c"blood: fork failed\n")
+            return 127
+        }
+        return ex.wait_pid(pid)
+    }
+}
+
+fn run_external_win(cmd: ref Command) i32 = trust {
+    val saved: ref u.Vec = save_std_fds()
+    val env_saved: ref u.Vec = save_child_env(cmd)
+    val redir_ok: bool = apply_redirs(cmd.redirs) == 0
+    val pid: mut i32 = -1
+    if redir_ok {
+        pid = ex.spawn_redirected(cmd.argv, 0, 1, 2, none)
+    }
+    restore_child_env(env_saved)
+    restore_std_fds(saved)
+    if !redir_ok {
+        return 1
     }
     if pid < 0 {
-        u.write_fd(2, c"blood: fork failed\n")
+        u.write_fd(2, c"blood: failed to start process\n")
         return 127
     }
     return ex.wait_pid(pid)
@@ -2122,12 +2434,13 @@ fn bi_which(cmd: ref Command) i32 = trust {
             if i > n {
                 break
             }
-            if i == n || @load8(@ptradd(path, i)) == 58 {
+            if i == n || @load8(@ptradd(path, i)) == u.path_list_sep() {
                 val dir: ref u8 = u.s_ndup(@ptradd(path, start), i - start)
                 if u.s_len(dir) > 0 {
                     val full: ref u8 = u.path_join(dir, name)
-                    if u.file_exists(full) && !u.is_dir(full) {
-                        u.write_fd(1, u.s_cat(full, c"\n"))
+                    val resolved: ref u8 = u.resolve_executable(full)
+                    if resolved != none {
+                        u.write_fd(1, u.s_cat(resolved, c"\n"))
                         return 0
                     }
                 }
@@ -2201,36 +2514,66 @@ pub fn job_count() i64 = trust {
     return sh_jobs.len
 }
 
-pub fn capture_text(cmd: ref u8) ref u8 = trust {
-    val p: ex.Pipe = ex.make_pipe()
-    val pid: i32 = ex.p_fork()
-    if pid == 0 {
-        ex.child_reset()
-        ex.fd_close(p.read_fd)
-        ex.fd_dup2(p.write_fd, 1)
-        ex.fd_close(p.write_fd)
-        val st: i32 = run_line(cmd)
-        ex.p_exit(st)
-    }
-    ex.fd_close(p.write_fd)
-    if pid < 0 {
-        ex.fd_close(p.read_fd)
+fn capture_text_win(cmd: ref u8) ref u8 = trust {
+    val path: ref u8 = u.temp_path(c"blood-capture")
+    val fd: i32 = ex.open_write(path, false)
+    if fd < 0 {
         u.hook_status = 2
         return u.s_dup(c"")
     }
-    val b: mut ref u.Buf = u.buf_new()
-    val chunk: ref u8 = u.xalloc(4096) as ref u8
-    for {
-        val n: i64 = ex.fd_read(p.read_fd, chunk, 4096)
-        if n <= 0 {
-            break
-        }
-        u.buf_addn(b, chunk, n)
+    val saved: i32 = ex.fd_dup(1)
+    ex.fd_dup2(fd, 1)
+    ex.fd_close(fd)
+    val st: i32 = run_line(cmd)
+    if saved >= 0 {
+        ex.fd_dup2(saved, 1)
+        ex.fd_close(saved)
     }
-    u.xfree(chunk)
-    ex.fd_close(p.read_fd)
-    val st: i32 = ex.wait_pid(pid)
+    val out: mut ref u8 = u.read_file(path)
+    if out == none {
+        out = u.s_dup(c"")
+    }
+    rt.unlink(path)
     sh_last_status = st as i64
     u.hook_status = st as i64
-    return u.buf_take(b)
+    return out
+}
+
+pub fn capture_text(cmd: ref u8) ref u8 = trust {
+    when windows {
+        return capture_text_win(cmd)
+    }
+    otherwise {
+        val p: ex.Pipe = ex.make_pipe()
+        val pid: i32 = ex.p_fork()
+        if pid == 0 {
+            ex.child_reset()
+            ex.fd_close(p.read_fd)
+            ex.fd_dup2(p.write_fd, 1)
+            ex.fd_close(p.write_fd)
+            val st: i32 = run_line(cmd)
+            ex.p_exit(st)
+        }
+        ex.fd_close(p.write_fd)
+        if pid < 0 {
+            ex.fd_close(p.read_fd)
+            u.hook_status = 2
+            return u.s_dup(c"")
+        }
+        val b: mut ref u.Buf = u.buf_new()
+        val chunk: ref u8 = u.xalloc(4096) as ref u8
+        for {
+            val n: i64 = ex.fd_read(p.read_fd, chunk, 4096)
+            if n <= 0 {
+                break
+            }
+            u.buf_addn(b, chunk, n)
+        }
+        u.xfree(chunk)
+        ex.fd_close(p.read_fd)
+        val st: i32 = ex.wait_pid(pid)
+        sh_last_status = st as i64
+        u.hook_status = st as i64
+        return u.buf_take(b)
+    }
 }
