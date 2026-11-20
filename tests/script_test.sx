@@ -33,7 +33,7 @@ test "script runs arithmetic, comparison and boolean expressions" {
 test "script supports string methods and indexing" {
     trust {
         fresh()
-        val src: ref u8 = c"var s = \"  Hello World  \"\nif s.strip() != \"Hello World\" {\n    raise \"strip\"\n}\nif s.upper().strip() != \"HELLO WORLD\" {\n    raise \"upper\"\n}\nif s.lower().strip() != \"hello world\" {\n    raise \"lower\"\n}\nvar parts = \"a,b,c\".split(\",\")\nif len(parts) != 3 {\n    raise \"split length\"\n}\nif parts[1] != \"b\" {\n    raise \"split value\"\n}\nif \"-\".join([\"a\", \"b\", \"c\"]) != \"a-b-c\" {\n    raise \"join\"\n}\nif \"banana\".replace(\"a\", \"o\") != \"bonono\" {\n    raise \"replace\"\n}\nif \"abc\".startswith(\"ab\") != true {\n    raise \"startswith\"\n}\nif \"abc\".endswith(\"bc\") != true {\n    raise \"endswith\"\n}\nif \"abc\".contains(\"b\") != true {\n    raise \"contains\"\n}\nif \"hello\"[1] != \"e\" {\n    raise \"index\"\n}\nif \"hello\"[-1] != \"o\" {\n    raise \"negative index\"\n}\nif \"hello\".chars().len() != 5 {\n    raise \"chars\"\n}\n"
+        val src: ref u8 = c"var s = \"  Hello World  \"\nif s.strip() != \"Hello World\" {\n    raise \"strip\"\n}\nif s.upper().strip() != \"HELLO WORLD\" {\n    raise \"upper\"\n}\nif s.lower().strip() != \"hello world\" {\n    raise \"lower\"\n}\nvar parts = \"a,b,c\".split(\",\")\nif std.len(parts) != 3 {\n    raise \"split length\"\n}\nif parts[1] != \"b\" {\n    raise \"split value\"\n}\nif \"-\".join([\"a\", \"b\", \"c\"]) != \"a-b-c\" {\n    raise \"join\"\n}\nif \"banana\".replace(\"a\", \"o\") != \"bonono\" {\n    raise \"replace\"\n}\nif \"abc\".startswith(\"ab\") != true {\n    raise \"startswith\"\n}\nif \"abc\".endswith(\"bc\") != true {\n    raise \"endswith\"\n}\nif \"abc\".contains(\"b\") != true {\n    raise \"contains\"\n}\nif \"hello\"[1] != \"e\" {\n    raise \"index\"\n}\nif \"hello\"[-1] != \"o\" {\n    raise \"negative index\"\n}\nif \"hello\".chars().len() != 5 {\n    raise \"chars\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -41,7 +41,7 @@ test "script supports string methods and indexing" {
 test "script supports list mutation and methods" {
     trust {
         fresh()
-        val src: ref u8 = c"var xs = [3, 1, 2]\nxs.append(4)\nif len(xs) != 4 {\n    raise \"append\"\n}\nxs.sort()\nif xs[0] != 1 or xs[3] != 4 {\n    raise \"sort\"\n}\nif 2 not in xs {\n    raise \"membership\"\n}\nif xs.contains(3) != true {\n    raise \"contains\"\n}\nif xs.join(\"-\") != \"1-2-3-4\" {\n    raise \"join\"\n}\nif xs.pop() != 4 {\n    raise \"pop\"\n}\nif xs.len() != 3 {\n    raise \"len\"\n}\nxs.insert(0, 9)\nif xs[0] != 9 {\n    raise \"insert\"\n}\nxs.remove(0)\nif xs[0] != 1 {\n    raise \"remove\"\n}\nxs[0] = 5\nif xs[0] != 5 {\n    raise \"index assignment\"\n}\nif xs[-1] != 3 {\n    raise \"negative index\"\n}\n"
+        val src: ref u8 = c"var xs = [3, 1, 2]\nxs.append(4)\nif std.len(xs) != 4 {\n    raise \"append\"\n}\nxs.sort()\nif xs[0] != 1 or xs[3] != 4 {\n    raise \"sort\"\n}\nif 2 not in xs {\n    raise \"membership\"\n}\nif xs.contains(3) != true {\n    raise \"contains\"\n}\nif xs.join(\"-\") != \"1-2-3-4\" {\n    raise \"join\"\n}\nif xs.pop() != 4 {\n    raise \"pop\"\n}\nif xs.len() != 3 {\n    raise \"len\"\n}\nxs.insert(0, 9)\nif xs[0] != 9 {\n    raise \"insert\"\n}\nxs.remove(0)\nif xs[0] != 1 {\n    raise \"remove\"\n}\nxs[0] = 5\nif xs[0] != 5 {\n    raise \"index assignment\"\n}\nif xs[-1] != 3 {\n    raise \"negative index\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -50,6 +50,14 @@ test "script supports list map filter and count with lambdas" {
     trust {
         fresh()
         val src: ref u8 = c"var xs = [1, 2, 3, 4]\nvar doubled = xs.map(|x| x * 2)\nif doubled.join(\",\") != \"2,4,6,8\" {\n    raise \"map\"\n}\nvar evens = xs.filter(|x| x % 2 == 0)\nif evens.join(\",\") != \"2,4\" {\n    raise \"filter\"\n}\nif xs.count(|x| x > 2) != 2 {\n    raise \"count predicate\"\n}\nif xs.count() != 4 {\n    raise \"count\"\n}\nvar threshold = 2\nif xs.count(|x| x > threshold) != 2 {\n    raise \"count closure\"\n}\nfn make_adder(n) {\n    return |x| x + n\n}\nvar add_ten = make_adder(10)\nif add_ten(5) != 15 {\n    raise \"closure\"\n}\nvar long = [\"a\", \"longer\", \"tiny\"].filter(|s| {\n    return s.len() > 4\n})\nif long.join(\",\") != \"longer\" {\n    raise \"block lambda\"\n}\nif [\"[pass] a\", \"[fail] b\", \"[pass] c\"].count(|l| l.starts_with(\"[pass]\")) != 2 {\n    raise \"pass count\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script exposes builtins through the std namespace" {
+    trust {
+        fresh()
+        val src: ref u8 = c"if std.len([1, 2, 3]) != 3 {\n    raise \"std.len\"\n}\nif std.str(42) != \"42\" {\n    raise \"std.str\"\n}\nif std.range(3).join(\",\") != \"0,1,2\" {\n    raise \"std.range\"\n}\nif std.type(std.len) != \"function\" {\n    raise \"std function value\"\n}\nvar f = std.str\nif f(9) != \"9\" {\n    raise \"std function\"\n}\ntry {\n    var x = len([1])\n} catch err {\n    if \"std.\" not in err {\n        raise \"std hint\"\n    }\n}\n"
         assert run(src) == 0
     }
 }
@@ -70,7 +78,7 @@ test "script classifies existing .blood and .bx files as commands" {
 test "script supports dictionaries and attributes" {
     trust {
         fresh()
-        val src: ref u8 = c"var d = {\"a\": 1, \"b\": 2}\nif d[\"a\"] != 1 {\n    raise \"index\"\n}\nif d.get(\"z\", 9) != 9 {\n    raise \"get default\"\n}\nif d.contains(\"b\") != true {\n    raise \"contains\"\n}\nd[\"c\"] = 3\nif len(d) != 3 {\n    raise \"len\"\n}\nif d.len() != 3 {\n    raise \"method len\"\n}\nvar keys = d.keys()\nkeys.sort()\nif keys[0] != \"a\" or keys[2] != \"c\" {\n    raise \"keys\"\n}\nif len(d.values()) != 3 {\n    raise \"values\"\n}\nif len(d.items()) != 3 {\n    raise \"items\"\n}\nd.remove(\"a\")\nif d.contains(\"a\") {\n    raise \"remove\"\n}\nd.set(\"x\", 5)\nif d[\"x\"] != 5 {\n    raise \"set\"\n}\nd.a = 9\nif d[\"a\"] != 9 or d.a != 9 {\n    raise \"attribute\"\n}\n"
+        val src: ref u8 = c"var d = {\"a\": 1, \"b\": 2}\nif d[\"a\"] != 1 {\n    raise \"index\"\n}\nif d.get(\"z\", 9) != 9 {\n    raise \"get default\"\n}\nif d.contains(\"b\") != true {\n    raise \"contains\"\n}\nd[\"c\"] = 3\nif std.len(d) != 3 {\n    raise \"len\"\n}\nif d.len() != 3 {\n    raise \"method len\"\n}\nvar keys = d.keys()\nkeys.sort()\nif keys[0] != \"a\" or keys[2] != \"c\" {\n    raise \"keys\"\n}\nif std.len(d.values()) != 3 {\n    raise \"values\"\n}\nif std.len(d.items()) != 3 {\n    raise \"items\"\n}\nd.remove(\"a\")\nif d.contains(\"a\") {\n    raise \"remove\"\n}\nd.set(\"x\", 5)\nif d[\"x\"] != 5 {\n    raise \"set\"\n}\nd.a = 9\nif d[\"a\"] != 9 or d.a != 9 {\n    raise \"attribute\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -78,7 +86,7 @@ test "script supports dictionaries and attributes" {
 test "script export assignments update the environment" {
     trust {
         fresh()
-        val src: ref u8 = c"export BLOOD_TEST_EXPORT = [\"a\", \"b\"].join(\":\")\nif env(\"BLOOD_TEST_EXPORT\") != \"a:b\" {\n    raise \"export env\"\n}\nif BLOOD_TEST_EXPORT != \"a:b\" {\n    raise \"export value\"\n}\n"
+        val src: ref u8 = c"export BLOOD_TEST_EXPORT = [\"a\", \"b\"].join(\":\")\nif std.env(\"BLOOD_TEST_EXPORT\") != \"a:b\" {\n    raise \"export env\"\n}\nif BLOOD_TEST_EXPORT != \"a:b\" {\n    raise \"export value\"\n}\n"
         assert run(src) == 0
         assert u.s_eq(u.env_get(c"BLOOD_TEST_EXPORT"), c"a:b")
         u.env_unset(c"BLOOD_TEST_EXPORT")
@@ -105,7 +113,7 @@ test "script filesystem, path and cd builtins" {
     trust {
         fresh()
         val old: ref u8 = u.cwd()
-        val src: ref u8 = c"var dir = mktemp_dir(\"blood-script-test\")\nif not is_dir(dir) {\n    raise \"mktemp_dir\"\n}\nvar file = join(dir, \"a.txt\")\nwrite_file(file, \"hello\")\nif not exists(file) or not is_file(file) or is_dir(file) {\n    raise \"file checks\"\n}\nif basename(file) != \"a.txt\" or stem(file) != \"a\" {\n    raise \"path names\"\n}\nif parent(file) != dir {\n    raise \"parent\"\n}\ncd(dir)\nif run([\"pwd\"]).stdout.strip() != dir {\n    raise \"cd\"\n}\nremove_all(dir)\nif exists(dir) {\n    raise \"remove_all\"\n}\n"
+        val src: ref u8 = c"var dir = std.mktemp_dir(\"blood-script-test\")\nif not std.is_dir(dir) {\n    raise \"mktemp_dir\"\n}\nvar file = std.join(dir, \"a.txt\")\nstd.write_file(file, \"hello\")\nif not std.exists(file) or not std.is_file(file) or std.is_dir(file) {\n    raise \"file checks\"\n}\nif std.basename(file) != \"a.txt\" or std.stem(file) != \"a\" {\n    raise \"path names\"\n}\nif std.parent(file) != dir {\n    raise \"parent\"\n}\ncd(dir)\nif run([\"pwd\"]).stdout.strip() != dir {\n    raise \"cd\"\n}\nstd.remove_all(dir)\nif std.exists(dir) {\n    raise \"remove_all\"\n}\n"
         assert run(src) == 0
         u.chdir(old)
     }
@@ -129,7 +137,7 @@ test "script glob returns sorted matching paths" {
         assert u.write_file(u.path_join(root, c"c.txt"), c"")
         val old: ref u8 = u.cwd()
         assert u.chdir(root) == 0
-        val src: ref u8 = c"var files = glob(\"*.blood\")\nif len(files) != 2 {\n    raise \"length\"\n}\nif files[0] != \"a.blood\" or files[1] != \"b.blood\" {\n    raise \"sorted\"\n}\nif len(glob(\"missing*\")) != 0 {\n    raise \"empty\"\n}\n"
+        val src: ref u8 = c"var files = std.glob(\"*.blood\")\nif std.len(files) != 2 {\n    raise \"length\"\n}\nif files[0] != \"a.blood\" or files[1] != \"b.blood\" {\n    raise \"sorted\"\n}\nif std.len(std.glob(\"missing*\")) != 0 {\n    raise \"empty\"\n}\n"
         val st: i32 = run(src)
         assert u.chdir(old) == 0
         assert st == 0
@@ -144,7 +152,7 @@ test "script rename moves and renames paths" {
         assert u.write_file(u.path_join(root, c"a.blood"), c"a")
         val old: ref u8 = u.cwd()
         assert u.chdir(root) == 0
-        val src: ref u8 = c"if rename(\"a.blood\", \"a.bx\") == false {\n    raise \"rename\"\n}\nif len(glob(\"a.blood\")) != 0 {\n    raise \"source remains\"\n}\nif len(glob(\"a.bx\")) != 1 {\n    raise \"target missing\"\n}\nif rename(\"missing\", \"x\") {\n    raise \"missing should fail\"\n}\n"
+        val src: ref u8 = c"if std.rename(\"a.blood\", \"a.bx\") == false {\n    raise \"rename\"\n}\nif std.len(std.glob(\"a.blood\")) != 0 {\n    raise \"source remains\"\n}\nif std.len(std.glob(\"a.bx\")) != 1 {\n    raise \"target missing\"\n}\nif std.rename(\"missing\", \"x\") {\n    raise \"missing should fail\"\n}\n"
         val st: i32 = run(src)
         assert u.chdir(old) == 0
         assert st == 0
@@ -154,7 +162,7 @@ test "script rename moves and renames paths" {
 test "script supports loops, break and continue" {
     trust {
         fresh()
-        val src: ref u8 = c"var total = 0\nfor i in range(1, 11) {\n    if i == 3 {\n        continue\n    }\n    if i == 9 {\n        break\n    }\n    total += i\n}\nif total != 33 {\n    raise \"for loop\"\n}\nvar n = 0\nwhile n < 5 {\n    n += 1\n}\nif n != 5 {\n    raise \"while loop\"\n}\nvar count = 0\nfor ch in \"abc\" {\n    count += 1\n}\nif count != 3 {\n    raise \"string loop\"\n}\nvar values = []\nfor x in [1, 2, 3] {\n    values.append(x * 2)\n}\nif values.join(\",\") != \"2,4,6\" {\n    raise \"list loop\"\n}\n"
+        val src: ref u8 = c"var total = 0\nfor i in std.range(1, 11) {\n    if i == 3 {\n        continue\n    }\n    if i == 9 {\n        break\n    }\n    total += i\n}\nif total != 33 {\n    raise \"for loop\"\n}\nvar n = 0\nwhile n < 5 {\n    n += 1\n}\nif n != 5 {\n    raise \"while loop\"\n}\nvar count = 0\nfor ch in \"abc\" {\n    count += 1\n}\nif count != 3 {\n    raise \"string loop\"\n}\nvar values = []\nfor x in [1, 2, 3] {\n    values.append(x * 2)\n}\nif values.join(\",\") != \"2,4,6\" {\n    raise \"list loop\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -178,7 +186,7 @@ test "script supports try, catch and raise" {
 test "script supports string interpolation" {
     trust {
         fresh()
-        val src: ref u8 = c"var name = \"world\"\nif \"hello {name}\" != \"hello world\" {\n    raise \"variable\"\n}\nvar expected = chr(123) + \"braces\" + chr(125)\nif \"literal {{braces}}\" != \"literal \" + expected {\n    raise \"escaped braces\"\n}\nif \"math {1 + 2}\" != \"math 3\" {\n    raise \"expression\"\n}\nvar n = 4\nif \"{n * n}\" != \"16\" {\n    raise \"nested expression\"\n}\n"
+        val src: ref u8 = c"var name = \"world\"\nif \"hello {name}\" != \"hello world\" {\n    raise \"variable\"\n}\nvar expected = std.chr(123) + \"braces\" + std.chr(125)\nif \"literal {{braces}}\" != \"literal \" + expected {\n    raise \"escaped braces\"\n}\nif \"math {1 + 2}\" != \"math 3\" {\n    raise \"expression\"\n}\nvar n = 4\nif \"{n * n}\" != \"16\" {\n    raise \"nested expression\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -186,7 +194,7 @@ test "script supports string interpolation" {
 test "script supports brace block style" {
     trust {
         fresh()
-        val src: ref u8 = c"fn main {\n    var total = 0\n    for i in range(4) {\n        total += i\n    }\n    if total != 6 {\n        raise \"brace loop\"\n    }\n}\nmain()\n"
+        val src: ref u8 = c"fn main {\n    var total = 0\n    for i in std.range(4) {\n        total += i\n    }\n    if total != 6 {\n        raise \"brace loop\"\n    }\n}\nmain()\n"
         assert run(src) == 0
     }
 }
@@ -198,9 +206,9 @@ test "script exposes arguments, status and exit" {
         u.vec_pushp(args, c"alpha" as ref void)
         u.vec_pushp(args, c"beta" as ref void)
         script.set_args(args)
-        val src: ref u8 = c"if len(args) != 2 {\n    raise \"argc\"\n}\nif args[0] != \"alpha\" {\n    raise \"argv0\"\n}\nif args[1] != \"beta\" {\n    raise \"argv1\"\n}\n"
+        val src: ref u8 = c"if std.len(args) != 2 {\n    raise \"argc\"\n}\nif args[0] != \"alpha\" {\n    raise \"argv0\"\n}\nif args[1] != \"beta\" {\n    raise \"argv1\"\n}\n"
         assert run(src) == 0
-        assert run(c"exit(len(args))") == 2
+        assert run(c"exit(std.len(args))") == 2
         assert run(c"exit(0)") == 0
         assert run(c"exit(7)") == 7
 
@@ -260,7 +268,7 @@ test "script file natives read, write and append" {
         fresh()
         val dir: ref u8 = c"/tmp/blood-unit-script"
         assert u.mkdir_p(dir)
-        val src: ref u8 = c"var path = \"/tmp/blood-unit-script/note.txt\"\nif write_file(path, \"abc\") != true {\n    raise \"write\"\n}\nif read_file(path) != \"abc\" {\n    raise \"read\"\n}\nif append_file(path, \"def\") != true {\n    raise \"append\"\n}\nif read_file(path) != \"abcdef\" {\n    raise \"read append\"\n}\nif read_file(\"/tmp/blood-unit-script/missing\") != null {\n    raise \"missing\"\n}\n"
+        val src: ref u8 = c"var path = \"/tmp/blood-unit-script/note.txt\"\nif std.write_file(path, \"abc\") != true {\n    raise \"write\"\n}\nif std.read_file(path) != \"abc\" {\n    raise \"read\"\n}\nif std.append_file(path, \"def\") != true {\n    raise \"append\"\n}\nif std.read_file(path) != \"abcdef\" {\n    raise \"read append\"\n}\nif std.read_file(\"/tmp/blood-unit-script/missing\") != null {\n    raise \"missing\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -268,7 +276,7 @@ test "script file natives read, write and append" {
 test "script builtins convert types and aggregate values" {
     trust {
         fresh()
-        val src: ref u8 = c"if len([1, 2]) != 2 {\n    raise \"len\"\n}\nif str(42) != \"42\" {\n    raise \"str\"\n}\nif int(\"17\") != 17 {\n    raise \"int\"\n}\nif type(1) != \"int\" {\n    raise \"type int\"\n}\nif type(\"x\") != \"string\" {\n    raise \"type string\"\n}\nif type([]) != \"list\" {\n    raise \"type list\"\n}\nif type({}) != \"dict\" {\n    raise \"type dict\"\n}\nif min([3, 1, 2]) != 1 {\n    raise \"min\"\n}\nif max([3, 1, 2]) != 3 {\n    raise \"max\"\n}\nif sum([1, 2, 3]) != 6 {\n    raise \"sum\"\n}\nif abs(-4) != 4 {\n    raise \"abs\"\n}\nif ord(\"A\") != 65 {\n    raise \"ord\"\n}\nif chr(66) != \"B\" {\n    raise \"chr\"\n}\nif len(range(3)) != 3 {\n    raise \"range\"\n}\nif len(range(2, 5)) != 3 {\n    raise \"range start\"\n}\nif bool(0) != false or bool(1) != true {\n    raise \"bool\"\n}\nif clock() <= 0 {\n    raise \"clock\"\n}\n"
+        val src: ref u8 = c"if std.len([1, 2]) != 2 {\n    raise \"len\"\n}\nif std.str(42) != \"42\" {\n    raise \"str\"\n}\nif std.int(\"17\") != 17 {\n    raise \"int\"\n}\nif std.type(1) != \"int\" {\n    raise \"type int\"\n}\nif std.type(\"x\") != \"string\" {\n    raise \"type string\"\n}\nif std.type([]) != \"list\" {\n    raise \"type list\"\n}\nif std.type({}) != \"dict\" {\n    raise \"type dict\"\n}\nif std.min([3, 1, 2]) != 1 {\n    raise \"min\"\n}\nif std.max([3, 1, 2]) != 3 {\n    raise \"max\"\n}\nif std.sum([1, 2, 3]) != 6 {\n    raise \"sum\"\n}\nif std.abs(-4) != 4 {\n    raise \"abs\"\n}\nif std.ord(\"A\") != 65 {\n    raise \"ord\"\n}\nif std.chr(66) != \"B\" {\n    raise \"chr\"\n}\nif std.len(std.range(3)) != 3 {\n    raise \"range\"\n}\nif std.len(std.range(2, 5)) != 3 {\n    raise \"range start\"\n}\nif std.bool(0) != false or std.bool(1) != true {\n    raise \"bool\"\n}\nif std.clock() <= 0 {\n    raise \"clock\"\n}\n"
         assert run(src) == 0
     }
 }
@@ -318,7 +326,7 @@ test "script file exit status stays local to the script" {
 test "script this builtins return null without a script file" {
     trust {
         fresh()
-        assert run(c"if this() != null {\n    raise \"this\"\n}\nif this_dir() != null {\n    raise \"this_dir\"\n}\n") == 0
+        assert run(c"if std.this() != null {\n    raise \"this\"\n}\nif std.this_dir() != null {\n    raise \"this_dir\"\n}\n") == 0
     }
 }
 
@@ -332,23 +340,23 @@ test "script this builtins report script name, path and directory" {
         val main: ref u8 = u.path_join(dir, c"main.bx")
         val child: ref u8 = u.path_join(dir, c"child.bx")
         val child_head: ref u8 = u.s_cat4(
-            c"var child_info = this()\nif child_info.name != \"child.bx\" {\n    raise \"child name\"\n}\nif child_info.path != \"",
+            c"var child_info = std.this()\nif child_info.name != \"child.bx\" {\n    raise \"child name\"\n}\nif child_info.path != \"",
             child,
-            c"\" {\n    raise \"child path\"\n}\nif this_dir() != \"",
+            c"\" {\n    raise \"child path\"\n}\nif std.this_dir() != \"",
             dir
         )
         val child_src: ref u8 = u.s_cat(child_head, c"\" {\n    raise \"child dir\"\n}\n")
 
         val main_head: ref u8 = u.s_cat4(
-            c"var info = this()\nif info.name != \"main.bx\" {\n    raise \"name\"\n}\nif info.path != \"",
+            c"var info = std.this()\nif info.name != \"main.bx\" {\n    raise \"name\"\n}\nif info.path != \"",
             main,
-            c"\" {\n    raise \"path\"\n}\nif this_dir() != \"",
+            c"\" {\n    raise \"path\"\n}\nif std.this_dir() != \"",
             dir
         )
         val main_mid: ref u8 = u.s_cat3(
-            c"\" {\n    raise \"dir\"\n}\nif source(\"child.bx\") != 0 {\n    raise \"source\"\n}\ninfo = this()\nif info.path != \"",
+            c"\" {\n    raise \"dir\"\n}\nif std.source(\"child.bx\") != 0 {\n    raise \"source\"\n}\ninfo = std.this()\nif info.path != \"",
             main,
-            c"\" {\n    raise \"restore\"\n}\nif this_dir() != \""
+            c"\" {\n    raise \"restore\"\n}\nif std.this_dir() != \""
         )
         val main_src: ref u8 = u.s_cat(
             u.s_cat(main_head, main_mid),

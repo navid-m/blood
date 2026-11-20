@@ -4,8 +4,8 @@ var numbers = [5, 3, 8, 1]
 numbers.sort()
 say("sorted: " + numbers.join(", "))
 numbers.append(13)
-say("count: " + str(len(numbers)))
-say("largest: " + str(numbers[-1]))
+say("count: " + std.str(std.len(numbers)))
+say("largest: " + std.str(numbers[-1]))
 
 var scores = {"apple": 3, "pear": 1, "kiwi": 2}
 var keys   = scores.keys()
@@ -13,11 +13,11 @@ keys.sort()
 var total = 0
 for key in keys {
     total += scores[key]
-    say(key + " -> " + str(scores[key]))
+    say(key + " -> " + std.str(scores[key]))
 }
-say("total: " + str(total))
+say("total: " + std.str(total))
 
 var labels = ["[pass] parser", "[fail] shell", "[pass] lists"]
-say("passes: " + str(labels.count(|l| l.starts_with("[pass]"))))
+say("passes: " + std.str(labels.count(|l| l.starts_with("[pass]"))))
 say("upper: " + labels.map(|l| l.upper()).join(" | "))
 say("passing: " + labels.filter(|l| l.starts_with("[pass]")).join(" | "))

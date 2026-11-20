@@ -11,8 +11,8 @@ test "formatter normalizes braces, indentation and assignments" {
 
 test "formatter prefers parenthesized calls" {
     trust {
-        val src: ref u8 = c"say \"hello\"\nwhich \"spectre\"\nif not which \"spectre\" {\n    say join(\"/a\", \"b\")\n}\nobj.method(\"x\")\nfn f(a) { return a }\n"
-        val want: ref u8 = c"say(\"hello\")\nwhich(\"spectre\")\nif not which(\"spectre\") {\n    say(join(\"/a\", \"b\"))\n}\nobj.method(\"x\")\nfn f(a) { return a }\n"
+        val src: ref u8 = c"say \"hello\"\nprint \"spectre\"\nif not print \"spectre\" {\n    say run(\"echo hi\")\n}\nobj.method(\"x\")\nfn f(a) { return a }\n"
+        val want: ref u8 = c"say(\"hello\")\nprint(\"spectre\")\nif not print(\"spectre\") {\n    say(run(\"echo hi\"))\n}\nobj.method(\"x\")\nfn f(a) { return a }\n"
         assert u.s_eq(format.format_text(src), want)
     }
 }

@@ -1,11 +1,11 @@
 # Blood sample: read, write and append text files.
 
 var path = "/tmp/blood_sample_file_io.txt"
-write_file(path, "first line\nsecond line\n")
+std.write_file(path, "first line\nsecond line\n")
 
 say("contents:")
-say(read_file(path).strip())
+say(std.read_file(path).strip())
 
-append_file(path, "third line\n")
-var lines = read_file(path).strip().split("\n")
-say("lines: " + str(len(lines)))
+std.append_file(path, "third line\n")
+var lines = std.read_file(path).strip().split("\n")
+say("lines: " + std.str(std.len(lines)))

@@ -18,5 +18,5 @@ for word in text.split(" ") {
 var keys = counts.keys()
 keys.sort()
 for key in keys {
-    say(key + ": " + str(counts[key]))
+    say(key + ": " + std.str(counts[key]))
 }

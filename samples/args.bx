@@ -1,6 +1,6 @@
 # Blood sample: script arguments. Run with: blood args.blood alpha beta
 
-say("argc=" + str(len(args)))
+say("argc=" + std.str(std.len(args)))
 for value in args {
     say(value)
 }

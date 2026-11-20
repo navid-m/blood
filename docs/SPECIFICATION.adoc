@@ -172,13 +172,13 @@ The following constructs are translated:
 * `[ ... ]`, `[[ ... ]]`, and `test ...` conditions become Blood expressions.
   String tests, numeric tests, boolean operators, and common file tests are
   supported. File tests use the platform `test` utility through `shell`.
-* `$(...)` and backtick command substitution become `capture(...)`.
+* `$(...)` and backtick command substitution become `std.capture(...)`.
   `$((...))` arithmetic becomes a Blood arithmetic expression.
 * `$NAME`, `${NAME}`, `${NAME:-default}`, `${#NAME}`, positional parameters,
   `$?`, `$#`, and `$@` are mapped to Blood variables and the standard `args`,
   `status`, and `__file__` values.
-* `read -r NAME` becomes `NAME = input()`. Later commands are wrapped in
-  `shell(...)` so arbitrary command lines, pipelines, and redirections keep
+* `read -r NAME` becomes `NAME = std.input()`. Later commands are wrapped in
+  `std.shell(...)` so arbitrary command lines, pipelines, and redirections keep
   working even when the script parser would otherwise read them as
   expressions.
 
@@ -1386,7 +1386,7 @@ process environment:
 
 [source]
 ----
-export PATH = (user_paths + [env("PATH")]).join(":")
+export PATH = (user_paths + [std.env("PATH")]).join(":")
 ----
 
 The variable remains available as an ordinary script binding.
@@ -1500,7 +1500,7 @@ function. For example:
 
 [source]
 ----
-var lines = capture("test-suite").stdout.lines()
+var lines = std.capture("test-suite").stdout.lines()
 var passes = lines.count(|l| l.starts_with("[pass]"))
 
 
@@ -1646,88 +1646,97 @@ migrated.
 
 === Builtin functions
 
-The following names are predefined in the global environment. They are ordinary
-function values and may be shadowed.
+Builtins are grouped in the `std` namespace. They are ordinary function values
+and can be called as `std.len(x)`, `std.read_file(path)`, and so on.
+
+A small bare-name prelude is also available: the `say` statement and the
+functions `print`, `eprint`, `exit`, `cd`, and `run`. These names may be
+shadowed by user definitions; a warning is written to standard error when that
+happens. The `std.` forms are always available and never shadowed, so
+`std.print(...)` and `std.run(...)` are the unambiguous spellings.
 
 [cols="1,1,3",options="header"]
 |===
 |Function |Arity |Behaviour
-|`len(x)` |1 |Length of a list, dictionary, or string. String length is bytes.
+|`std.say(...)` |variadic |Join arguments with spaces, append newline, write to
+standard output. Equivalent to the `say` statement. Returns null.
+|`std.len(x)` |1 |Length of a list, dictionary, or string. String length is bytes.
 For other values, length of the string representation.
-|`str(x)` |1 |String representation.
-|`int(x)` |1 |Convert to integer.
-|`float(x)` |1 |Convert to float.
-|`bool(x)` |1 |Truthiness as a boolean.
-|`range(a)` / `range(a,b)` |1 or 2 |List of integers from `a` (inclusive) to
+|`std.str(x)` |1 |String representation.
+|`std.int(x)` |1 |Convert to integer.
+|`std.float(x)` |1 |Convert to float.
+|`std.bool(x)` |1 |Truthiness as a boolean.
+|`std.range(a)` / `std.range(a,b)` |1 or 2 |List of integers from `a` (inclusive) to
 `b` (exclusive). With one argument, starts at 0.
-|`print(...)` |variadic |Join arguments with spaces, append newline, write to
+|`std.print(...)` |variadic |Join arguments with spaces, append newline, write to
 standard output. Returns null.
-|`input([prompt])` |0 or 1 |Write prompt if supplied, read one line from
+|`std.input([prompt])` |0 or 1 |Write prompt if supplied, read one line from
 standard input. Returns a string, or null on end of input.
-|`sleep(ms)` |1 |Sleep for the given number of milliseconds.
-|`exit([code])` |0 or 1 |Request shell exit with the given status. Default 0.
-|`shell(command)` |1 |Execute a shell command line and return a result
+|`std.sleep(ms)` |1 |Sleep for the given number of milliseconds.
+|`std.exit([code])` |0 or 1 |Request shell exit with the given status. Default 0.
+|`std.shell(command)` |1 |Execute a shell command line and return a result
 dictionary with `status`, `stdout`, `stderr`, and `ok`. Both output streams
 are captured.
-|`capture(command)` |1 |Execute a shell command line and return the same
-result dictionary as `shell`.
-|`run(argv, merge_stderr: bool, cwd: string)` |1 |Execute a list of arguments
+|`std.capture(command)` |1 |Execute a shell command line and return the same
+result dictionary as `std.shell`.
+|`std.run(argv, merge_stderr: bool, cwd: string)` |1 |Execute a list of arguments
 directly without a shell and return a result dictionary. `merge_stderr`
 combines stderr into `stdout`; `cwd` sets the child working directory.
-|`eprint(...)` |variadic |Like `print`, but writes to standard error.
-|`indent(text, n)` |2 |Prefix every line in `text` with `n` spaces.
-|`exists(path)` |1 |Whether a path exists.
-|`is_file(path)` |1 |Whether a path exists and is not a directory.
-|`is_dir(path)` |1 |Whether a path is a directory.
-|`is_executable(path)` |1 |Whether a path is executable.
-|`which(name)` |1 |Search `PATH` and return the executable path, or null.
-|`mktemp_dir(prefix)` |1 |Create and return a unique temporary directory.
-|`remove_file(path)` |1 |Remove one file. Returns a boolean.
-|`remove_all(path_or_list)` |1 |Recursively remove paths. Returns a boolean.
-|`parent(path)` |1 |Directory component of a path.
-|`basename(path)` |1 |Final component of a path.
-|`stem(path)` |1 |Final component with its last extension removed.
-|`join(a, b)` |2 |Join two path components.
-|`cd(path)` |1 |Change the interpreter working directory. Affects later shell
+|`std.eprint(...)` |variadic |Like `print`, but writes to standard error.
+|`std.indent(text, n)` |2 |Prefix every line in `text` with `n` spaces.
+|`std.exists(path)` |1 |Whether a path exists.
+|`std.is_file(path)` |1 |Whether a path exists and is not a directory.
+|`std.is_dir(path)` |1 |Whether a path is a directory.
+|`std.is_executable(path)` |1 |Whether a path is executable.
+|`std.which(name)` |1 |Search `PATH` and return the executable path, or null.
+|`std.mktemp_dir(prefix)` |1 |Create and return a unique temporary directory.
+|`std.remove_file(path)` |1 |Remove one file. Returns a boolean.
+|`std.remove_all(path_or_list)` |1 |Recursively remove paths. Returns a boolean.
+|`std.parent(path)` |1 |Directory component of a path.
+|`std.basename(path)` |1 |Final component of a path.
+|`std.stem(path)` |1 |Final component with its last extension removed.
+|`std.join(a, b)` |2 |Join two path components.
+|`std.cd(path)` |1 |Change the interpreter working directory. Affects later shell
 and `run` calls and file operations.
-|`unified_diff(expected, actual)` |2 |Line-oriented diagnostic diff for test
+|`std.unified_diff(expected, actual)` |2 |Line-oriented diagnostic diff for test
 harnesses.
-|`source(path)` |1 |Execute a Blood script file and return its status.
-|`this()` |0 |Name and absolute path of the executing script as a dictionary
+|`std.source(path)` |1 |Execute a Blood script file and return its status.
+|`std.this()` |0 |Name and absolute path of the executing script as a dictionary
 with keys `name` (the final path component) and `path` (absolute). Returns null
 when no script file is executing.
-|`this_dir()` |0 |Absolute path of the directory containing the executing
+|`std.this_dir()` |0 |Absolute path of the directory containing the executing
 script. Returns null when no script file is executing.
-|`abs(x)` |1 |Absolute numeric value, returned as a float.
-|`min(x)` / `min(a,b)` |1 or 2 |Minimum of a list, or of two values. With a
+|`std.abs(x)` |1 |Absolute numeric value, returned as a float.
+|`std.min(x)` / `std.min(a,b)` |1 or 2 |Minimum of a list, or of two values. With a
 list, returns the smallest element.
-|`max(x)` / `max(a,b)` |1 or 2 |Maximum of a list, or of two values.
-|`sum(list)` |1 |Sum of numeric elements, returned as a float.
-|`type(x)` |1 |Type name: `null`, `bool`, `int`, `float`, `string`, `list`,
-`dict`, or `function`.
-|`keys(dict)` |1 |List of dictionary keys.
-|`values(dict)` |1 |List of dictionary values.
-|`items(dict)` |1 |List of `[key, value]` pairs.
-|`glob(pattern)` |1 |Expand a pathname pattern and return a sorted list of
+|`std.max(x)` / `std.max(a,b)` |1 or 2 |Maximum of a list, or of two values.
+|`std.sum(list)` |1 |Sum of numeric elements, returned as a float.
+|`std.type(x)` |1 |Type name: `null`, `bool`, `int`, `float`, `string`, `list`,
+`dict`, `function`, or `namespace`.
+|`std.keys(dict)` |1 |List of dictionary keys.
+|`std.values(dict)` |1 |List of dictionary values.
+|`std.items(dict)` |1 |List of `[key, value]` pairs.
+|`std.glob(pattern)` |1 |Expand a pathname pattern and return a sorted list of
 matching paths. An unmatched pattern yields an empty list. A leading `~` is
 expanded.
-|`rename(from, to)` |2 |Rename or move a path. Returns a boolean. A leading `~` is expanded in both paths.
-|`read_file(path, default: x)` |1 |Read a file. Returns a string, or `x` when
+|`std.rename(from, to)` |2 |Rename or move a path. Returns a boolean. A leading `~` is expanded in both paths.
+|`std.read_file(path, default: x)` |1 |Read a file. Returns a string, or `x` when
 `default:` is given and the file cannot be read. Without a default, returns
 null.
-|`write_file(path, data)` |2 |Write a file. Returns a boolean.
-|`append_file(path, data)` |2 |Append to a file. Returns a boolean.
-|`env(name, default: x)` |1 |Read an environment variable. Returns `x` when
+|`std.write_file(path, data)` |2 |Write a file. Returns a boolean.
+|`std.append_file(path, data)` |2 |Append to a file. Returns a boolean.
+|`std.env(name, default: x)` |1 |Read an environment variable. Returns `x` when
 `default:` is given and the variable is unset or empty; otherwise returns a
 string or null.
-|`clock()` |0 |Milliseconds since the Unix epoch.
-|`chr(n)` |1 |One-byte string containing the low byte of `n`.
-|`ord(s)` |1 |Integer value of the first byte of `s`, or 0 for the empty
+|`std.clock()` |0 |Milliseconds since the Unix epoch.
+|`std.chr(n)` |1 |One-byte string containing the low byte of `n`.
+|`std.ord(s)` |1 |Integer value of the first byte of `s`, or 0 for the empty
 string.
 |===
 
-`keys`, `values`, and `items` return empty lists when applied to a non-dict
-value. `read_file` and `write_file` expand a leading `~` in the path.
+`std.keys`, `std.values`, and `std.items` return empty lists when applied to a
+non-dict value. `std.read_file` and `std.write_file` expand a leading `~` in
+the path.
 
 === Methods
 
@@ -2148,7 +2157,7 @@ var output = `printf "a\nb\n"`
 say output
 say "status is {status}"
 
-shell("true")
+std.shell("true")
 ----
 
 == Appendix: default settings

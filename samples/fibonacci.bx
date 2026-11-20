@@ -8,7 +8,7 @@ fn fib(n) {
 }
 
 var values = []
-for i in range(10) {
+for i in std.range(10) {
     values.append(fib(i))
 }
 

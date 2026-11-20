@@ -8,9 +8,13 @@ Outperforms ksh and dash on several benchmarks, outperforming Elvish and Fish by
 
 ```
 for x in ["hello", "world"] {
-    shell("cowsay " + x)
+    std.shell("cowsay " + x)
 }
 ```
+
+Builtins live under the `std` namespace, such as `std.len`, `std.read_file`,
+and `std.glob`. Only `say`, `print`, `eprint`, `exit`, `cd`, and `run` are
+available as short bare-name prelude calls; their `std.` forms always work too.
 
 ## Resources
 
@@ -25,12 +29,12 @@ The shell and the language are one. shell commands are values, strings interpola
 
 ```
 fn lines(path) {
-    return len(read_file(path).strip().split("\n"))
+    return std.len(std.read_file(path).strip().split("\n"))
 }
 
 var total = 0
 
-for file in glob("src/*.sx") {
+for file in std.glob("src/*.sx") {
     var n = lines(file)
     total += n
     say "{file}: {n} lines"
@@ -42,10 +46,10 @@ say "source total: {total} lines"
 Note that captured commands are ordinary strings, so you can do:
 
 ```
-branch = capture("git branch --show-current").strip()
+branch = std.capture("git branch --show-current").strip()
 say "working on {branch}"
 
-changes = capture("git status --porcelain").strip()
+changes = std.capture("git status --porcelain").strip()
 if changes != "" {
     for change in changes.split("\n") {
         say "  {change}"
@@ -56,8 +60,8 @@ if changes != "" {
 Parallelism is a keyword, therefore every iteration is a child process. No thread pools or async/await.
 
 ```
-para for file in glob("src/*.sx") {
-    say capture("sha256sum {file}").strip()
+para for file in std.glob("src/*.sx") {
+    say std.capture("sha256sum {file}").strip()
 }
 ```
 

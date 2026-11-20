@@ -45,6 +45,7 @@ val g_args: mut ref u.Vec = none
 val g_script_path: mut ref u8 = none
 val g_defers: mut ref u.Vec = none
 val g_temp_seq: mut i64 = 0
+val g_prelude: mut ref u.Map = none
 
 fn v_new(tag: i64) ref Value = trust {
     val v: mut ref Value = u.xalloc(@sizeof(Value) as i64) as ref Value
@@ -101,6 +102,12 @@ fn v_dict(m: ref u.Map) ref Value = trust {
 fn v_func(f: ref Func) ref Value = trust {
     val v: mut ref Value = v_new(7)
     v.p = f
+    return v
+}
+
+fn v_namespace(m: ref u.Map) ref Value = trust {
+    val v: mut ref Value = v_new(8)
+    v.p = m
     return v
 }
 
@@ -217,6 +224,9 @@ fn v_to_str(v: ref Value) ref u8 = trust {
         val f: ref Func = v.p as ref Func
         return u.s_cat3(c"<fn ", f.name, c">")
     }
+    if v.tag == 8 {
+        return u.s_dup(c"<namespace>")
+    }
     if v.tag == 5 {
         val vec: ref u.Vec = v.p as ref u.Vec
         val b: mut ref u.Buf = u.buf_new()
@@ -294,6 +304,9 @@ fn type_name(v: ref Value) ref u8 = trust {
     if v.tag == 7 {
         return u.s_dup(c"function")
     }
+    if v.tag == 8 {
+        return u.s_dup(c"namespace")
+    }
     return u.s_dup(c"unknown")
 }
 
@@ -339,7 +352,48 @@ fn env_lookup(e: ref Env, name: ref u8) ref Value = trust {
         }
         chain = chain.parent
     }
+    if g_prelude != none {
+        val raw: i64 = u.map_get(g_prelude, name)
+        if raw != 0 {
+            return @bitcast(raw, ref Value)
+        }
+    }
     return none
+}
+
+fn env_has(e: ref Env, name: ref u8) bool = trust {
+    val chain: mut ref Env = e
+    for {
+        if chain == none {
+            break
+        }
+        if u.map_has(chain.vars, name) {
+            return true
+        }
+        chain = chain.parent
+    }
+    return false
+}
+
+fn is_prelude(name: ref u8) bool = trust {
+    return u.s_eq(name, c"say") || u.s_eq(name, c"print") || u.s_eq(name, c"eprint") || u.s_eq(
+        name,
+        c"exit"
+    ) || u.s_eq(name, c"cd") || u.s_eq(name, c"run")
+}
+
+fn warn_shadow(name: ref u8, line: i64, col: i64) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"blood: warning: ")
+    u.buf_add(b, u.s_int(line))
+    u.buf_add(b, c":")
+    u.buf_add(b, u.s_int(col))
+    u.buf_add(b, c": '")
+    u.buf_add(b, name)
+    u.buf_add(b, c"' shadows a prelude name; use 'std.")
+    u.buf_add(b, name)
+    u.buf_add(b, c"' for the built-in\n")
+    u.write_fd(2, u.buf_take(b))
 }
 
 fn env_assign(e: mut ref Env, name: ref u8, v: ref Value) void = trust {
@@ -717,7 +771,11 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
     if n.kind == lang.NodeKind.Var {
         val v: ref Value = env_lookup(env, n.s)
         if v == none {
-            set_error(u.s_cat3(c"undefined variable '", n.s, c"'"), n.line, n.col)
+            if native_id(n.s) != 0 {
+                set_error(u.s_cat3(c"builtin '", n.s, c"' requires the 'std.' prefix"), n.line, n.col)
+            } else {
+                set_error(u.s_cat3(c"undefined variable '", n.s, c"'"), n.line, n.col)
+            }
             return v_nil()
         }
         return v
@@ -819,6 +877,13 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
                 return @bitcast(raw, ref Value)
             }
         }
+        if obj != none && obj.tag == 8 {
+            val m: mut ref u.Map = obj.p as ref u.Map
+            val raw: i64 = u.map_get(m, n.s)
+            if raw != 0 {
+                return @bitcast(raw, ref Value)
+            }
+        }
         return v_nil()
     }
     if n.kind == lang.NodeKind.FnLit {
@@ -858,6 +923,9 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         if callee.kind == lang.NodeKind.Attr {
             val obj: ref Value = eval(u.vec_p(callee.kids, 0) as ref lang.Node, env)
             val args: ref u.Vec = eval_args(n, 1, env)
+            if obj != none && obj.tag == 8 {
+                return call_namespace(obj, callee.s, args, n)
+            }
             return call_method(obj, callee.s, args, n)
         }
         val fnval: ref Value = eval(callee, env)
@@ -1164,6 +1232,9 @@ fn native_id(name: ref u8) i64 = trust {
     }
     if u.s_eq(name, c"unified_diff") {
         return 49
+    }
+    if u.s_eq(name, c"say") {
+        return 50
     }
     return 0
 }
@@ -1573,7 +1644,7 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         }
         return v_list(vec)
     }
-    if id == 7 {
+    if id == 7 || id == 50 {
         val b: mut ref u.Buf = u.buf_new()
         val i: mut i64 = 0
         for {
@@ -2053,6 +2124,21 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     return v_nil()
 }
 
+fn call_namespace(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
+    val m: ref u.Map = obj.p as ref u.Map
+    val raw: i64 = u.map_get(m, name)
+    if raw == 0 {
+        set_error(u.s_cat3(c"unknown std function '", name, c"'"), n.line, n.col)
+        return v_nil()
+    }
+    val fnval: ref Value = @bitcast(raw, ref Value)
+    if fnval == none || fnval.tag != 7 {
+        set_error(u.s_cat3(c"'std.", name, c"' is not callable"), n.line, n.col)
+        return v_nil()
+    }
+    return call_func(fnval.p as ref Func, args, n)
+}
+
 fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     if obj == none {
         set_error(c"method call on null", n.line, n.col)
@@ -2424,6 +2510,9 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
         if op > 1 {
             final = bin_op(op - 2, cur, value)
         }
+        if is_prelude(target.s) && !env_has(env, target.s) {
+            warn_shadow(target.s, target.line, target.col)
+        }
         env_assign(env, target.s, final)
         return
     }
@@ -2691,6 +2780,9 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
             set_error(c"variable declaration needs a value", n.line, n.col)
             return
         }
+        if is_prelude(n.s) {
+            warn_shadow(n.s, n.line, n.col)
+        }
         val value: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
         if g_flow != 0 {
             return
@@ -2887,7 +2979,10 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         f.body = u.vec_p(n.kids, 0) as ref lang.Node
         f.native = 0
         f.closure = none
-        env_assign(env, n.s, v_func(f))
+        if is_prelude(n.s) {
+            warn_shadow(n.s, n.line, n.col)
+        }
+        env_define(env, n.s, v_func(f))
         return
     }
     if n.kind == lang.NodeKind.Return {
@@ -3041,14 +3136,22 @@ fn exec_block(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
 // Builtin bindings and entry points
 // ---------------------------------------------------------------------------
 
-fn define_native(env: mut ref Env, name: ref u8) void = trust {
+fn native_value(name: ref u8) ref Value = trust {
     val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
     f.name = u.s_dup(name)
     f.params = u.vec_new()
     f.body = none
     f.native = native_id(name)
     f.closure = none
-    env_define(env, name, v_func(f))
+    return v_func(f)
+}
+
+fn define_std_native(stdm: mut ref u.Map, name: ref u8) void = trust {
+    u.map_put(stdm, name, @bitcast(native_value(name), i64))
+}
+
+fn define_prelude(name: ref u8) void = trust {
+    u.map_put(g_prelude, name, @bitcast(native_value(name), i64))
 }
 
 pub fn script_init() void = trust {
@@ -3060,55 +3163,65 @@ pub fn script_init() void = trust {
     g_interactive = 1
     g_script_path = none
     g_args = u.vec_new_perm()
-    define_native(builtins, c"len")
-    define_native(builtins, c"str")
-    define_native(builtins, c"int")
-    define_native(builtins, c"float")
-    define_native(builtins, c"bool")
-    define_native(builtins, c"range")
-    define_native(builtins, c"print")
-    define_native(builtins, c"input")
-    define_native(builtins, c"sleep")
-    define_native(builtins, c"exit")
-    define_native(builtins, c"shell")
-    define_native(builtins, c"capture")
-    define_native(builtins, c"abs")
-    define_native(builtins, c"min")
-    define_native(builtins, c"max")
-    define_native(builtins, c"sum")
-    define_native(builtins, c"type")
-    define_native(builtins, c"keys")
-    define_native(builtins, c"values")
-    define_native(builtins, c"items")
-    define_native(builtins, c"read_file")
-    define_native(builtins, c"write_file")
-    define_native(builtins, c"append_file")
-    define_native(builtins, c"env")
-    define_native(builtins, c"clock")
-    define_native(builtins, c"chr")
-    define_native(builtins, c"ord")
-    define_native(builtins, c"source")
-    define_native(builtins, c"glob")
-    define_native(builtins, c"rename")
-    define_native(builtins, c"this")
-    define_native(builtins, c"this_dir")
-    define_native(builtins, c"run")
-    define_native(builtins, c"eprint")
-    define_native(builtins, c"indent")
-    define_native(builtins, c"exists")
-    define_native(builtins, c"is_file")
-    define_native(builtins, c"is_dir")
-    define_native(builtins, c"is_executable")
-    define_native(builtins, c"which")
-    define_native(builtins, c"mktemp_dir")
-    define_native(builtins, c"remove_file")
-    define_native(builtins, c"remove_all")
-    define_native(builtins, c"parent")
-    define_native(builtins, c"basename")
-    define_native(builtins, c"stem")
-    define_native(builtins, c"join")
-    define_native(builtins, c"cd")
-    define_native(builtins, c"unified_diff")
+    g_prelude = u.map_new_perm()
+    val stdm: mut ref u.Map = u.map_new_perm()
+    define_std_native(stdm, c"say")
+    define_std_native(stdm, c"len")
+    define_std_native(stdm, c"str")
+    define_std_native(stdm, c"int")
+    define_std_native(stdm, c"float")
+    define_std_native(stdm, c"bool")
+    define_std_native(stdm, c"range")
+    define_std_native(stdm, c"print")
+    define_std_native(stdm, c"input")
+    define_std_native(stdm, c"sleep")
+    define_std_native(stdm, c"exit")
+    define_std_native(stdm, c"shell")
+    define_std_native(stdm, c"capture")
+    define_std_native(stdm, c"abs")
+    define_std_native(stdm, c"min")
+    define_std_native(stdm, c"max")
+    define_std_native(stdm, c"sum")
+    define_std_native(stdm, c"type")
+    define_std_native(stdm, c"keys")
+    define_std_native(stdm, c"values")
+    define_std_native(stdm, c"items")
+    define_std_native(stdm, c"read_file")
+    define_std_native(stdm, c"write_file")
+    define_std_native(stdm, c"append_file")
+    define_std_native(stdm, c"env")
+    define_std_native(stdm, c"clock")
+    define_std_native(stdm, c"chr")
+    define_std_native(stdm, c"ord")
+    define_std_native(stdm, c"source")
+    define_std_native(stdm, c"glob")
+    define_std_native(stdm, c"rename")
+    define_std_native(stdm, c"this")
+    define_std_native(stdm, c"this_dir")
+    define_std_native(stdm, c"run")
+    define_std_native(stdm, c"eprint")
+    define_std_native(stdm, c"indent")
+    define_std_native(stdm, c"exists")
+    define_std_native(stdm, c"is_file")
+    define_std_native(stdm, c"is_dir")
+    define_std_native(stdm, c"is_executable")
+    define_std_native(stdm, c"which")
+    define_std_native(stdm, c"mktemp_dir")
+    define_std_native(stdm, c"remove_file")
+    define_std_native(stdm, c"remove_all")
+    define_std_native(stdm, c"parent")
+    define_std_native(stdm, c"basename")
+    define_std_native(stdm, c"stem")
+    define_std_native(stdm, c"join")
+    define_std_native(stdm, c"cd")
+    define_std_native(stdm, c"unified_diff")
+    define_prelude(c"say")
+    define_prelude(c"print")
+    define_prelude(c"eprint")
+    define_prelude(c"exit")
+    define_prelude(c"cd")
+    define_prelude(c"run")
+    env_define(builtins, c"std", v_namespace(stdm))
     g_env = env_new_mode(builtins, true)
     g_defers = u.vec_new_perm()
     env_define(g_env, c"status", v_int(0))
@@ -3173,6 +3286,8 @@ fn queue_value_children(v: mut ref Value, jobs: mut ref u.Vec) void = trust {
         enqueue(jobs, v.p, 3, @ptradd(v as ref void, 16))
     } elif v.tag == 7 {
         enqueue(jobs, v.p, 4, @ptradd(v as ref void, 16))
+    } elif v.tag == 8 {
+        enqueue(jobs, v.p, 3, @ptradd(v as ref void, 16))
     }
 }
 

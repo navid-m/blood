@@ -291,7 +291,7 @@ fn var_expr(t: mut ref Tr, name: ref u8) ref u8 = trust {
             use_helper(t, c"__bx_argc")
             return u.s_dup(c"__bx_argc(__arg1, __arg2, __arg3, __arg4, __arg5, __arg6, __arg7, __arg8, __arg9)")
         }
-        return u.s_dup(c"len(args)")
+        return u.s_dup(c"std.len(args)")
     }
     if u.s_eq(name, c"@") || u.s_eq(name, c"*") {
         if t.in_func != 0 {
@@ -316,7 +316,7 @@ fn var_expr(t: mut ref Tr, name: ref u8) ref u8 = trust {
         return u.s_dup(name)
     }
     use_helper(t, c"__bx_s")
-    return u.s_cat3(c"__bx_s(env(", quote_sq(name), c"))")
+    return u.s_cat3(c"__bx_s(std.env(", quote_sq(name), c"))")
 }
 
 fn stringify(t: mut ref Tr, e: ref u8) ref u8 = trust {
@@ -332,7 +332,7 @@ fn var_interp(t: mut ref Tr, name: ref u8) ref u8 = trust {
 }
 
 fn capture_expr(inner: ref u8) ref u8 = trust {
-    return u.s_cat3(c"capture(", quote_sq(inner), c")")
+    return u.s_cat3(c"std.capture(", quote_sq(inner), c")")
 }
 
 /// Find the end (exclusive) of a `$(` command substitution starting at `i`.
@@ -444,10 +444,10 @@ fn brace_expr(t: mut ref Tr, body: ref u8) ref u8 = trust {
     if ch_at(body, 0) == 35 {
         val name: ref u8 = u.s_substr(body, 1, n)
         if u.s_ends_with(name, c"[@]") || u.s_ends_with(name, c"[*]") {
-            return u.s_cat3(c"len(", var_expr(t, u.s_substr(name, 0, u.s_len(name) - 3)), c")")
+            return u.s_cat3(c"std.len(", var_expr(t, u.s_substr(name, 0, u.s_len(name) - 3)), c")")
         }
         use_helper(t, c"__bx_s")
-        return u.s_cat3(c"len(", stringify(t, var_expr(t, name)), c")")
+        return u.s_cat3(c"std.len(", stringify(t, var_expr(t, name)), c")")
     }
     val sep: i64 = u.s_find(body, c":-")
     if sep >= 0 {
@@ -538,7 +538,7 @@ fn conv_arith(t: mut ref Tr, src: ref u8) ref u8 = trust {
             } else {
                 use_helper(t, c"__bx_s")
                 use_helper(t, c"__bx_num")
-                u.buf_add(b, u.s_cat3(c"__bx_num(env(", quote_sq(name), c"))"))
+                u.buf_add(b, u.s_cat3(c"__bx_num(std.env(", quote_sq(name), c"))"))
             }
             i = e
             continue
@@ -980,7 +980,7 @@ fn conv_word_expr(t: mut ref Tr, w: ref Word, for_list: bool) ref u8 = trust {
         return ex
     }
     if for_list && has_glob_chars(raw) {
-        return u.s_cat3(c"glob(", quote_plain(raw), c")")
+        return u.s_cat3(c"std.glob(", quote_plain(raw), c")")
     }
     if is_numeric(raw) {
         return u.s_dup(raw)
@@ -1142,7 +1142,7 @@ fn unary_file_test(t: mut ref Tr, op: ref u8, operand: ref u8) ref u8 = trust {
         flag = c"-L"
     }
     return u.s_cat3(
-        c"shell(\"test ",
+        c"std.shell(\"test ",
         flag,
         u.s_cat3(c" \" + __bx_quote(", operand, c")).status == 0")
     )
@@ -1266,7 +1266,7 @@ fn parse_test_atom(p: mut ref TP) ref u8 = trust {
         val rhs: ref u8 = test_operand(p.tr, p)
         return binary_test_expr(p.tr, lhs, bin, rhs)
     }
-    return u.s_cat3(c"len(", stringify(p.tr, lhs), c") > 0")
+    return u.s_cat3(c"std.len(", stringify(p.tr, lhs), c") > 0")
 }
 
 fn is_test_unary(op: ref u8) bool = trust {
@@ -1315,10 +1315,10 @@ fn is_test_binary(op: ref u8) bool = trust {
 
 fn unary_test_expr(t: mut ref Tr, op: ref u8, operand: ref u8) ref u8 = trust {
     if u.s_eq(op, c"-z") {
-        return u.s_cat3(c"len(", stringify(t, operand), c") == 0")
+        return u.s_cat3(c"std.len(", stringify(t, operand), c") == 0")
     }
     if u.s_eq(op, c"-n") {
-        return u.s_cat3(c"len(", stringify(t, operand), c") > 0")
+        return u.s_cat3(c"std.len(", stringify(t, operand), c") > 0")
     }
     return unary_file_test(t, op, operand)
 }
@@ -1337,28 +1337,28 @@ fn binary_test_expr(t: mut ref Tr, lhs: ref u8, op: ref u8, rhs: ref u8) ref u8 
         return u.s_cat3(lhs, c" != ", rhs)
     }
     if u.s_eq(op, c"-eq") {
-        return u.s_cat3(c"int(", lhs, u.s_cat3(c") == int(", rhs, c")"))
+        return u.s_cat3(c"std.int(", lhs, u.s_cat3(c") == std.int(", rhs, c")"))
     }
     if u.s_eq(op, c"-ne") {
-        return u.s_cat3(c"int(", lhs, u.s_cat3(c") != int(", rhs, c")"))
+        return u.s_cat3(c"std.int(", lhs, u.s_cat3(c") != std.int(", rhs, c")"))
     }
     if u.s_eq(op, c"-lt") {
-        return u.s_cat3(c"int(", lhs, u.s_cat3(c") < int(", rhs, c")"))
+        return u.s_cat3(c"std.int(", lhs, u.s_cat3(c") < std.int(", rhs, c")"))
     }
     if u.s_eq(op, c"-le") {
-        return u.s_cat3(c"int(", lhs, u.s_cat3(c") <= int(", rhs, c")"))
+        return u.s_cat3(c"std.int(", lhs, u.s_cat3(c") <= std.int(", rhs, c")"))
     }
     if u.s_eq(op, c"-gt") {
-        return u.s_cat3(c"int(", lhs, u.s_cat3(c") > int(", rhs, c")"))
+        return u.s_cat3(c"std.int(", lhs, u.s_cat3(c") > std.int(", rhs, c")"))
     }
     if u.s_eq(op, c"-ge") {
-        return u.s_cat3(c"int(", lhs, u.s_cat3(c") >= int(", rhs, c")"))
+        return u.s_cat3(c"std.int(", lhs, u.s_cat3(c") >= std.int(", rhs, c")"))
     }
     if u.s_eq(op, c"<") {
-        return u.s_cat3(c"str(", lhs, u.s_cat3(c") < str(", rhs, c")"))
+        return u.s_cat3(c"std.str(", lhs, u.s_cat3(c") < std.str(", rhs, c")"))
     }
     if u.s_eq(op, c">") {
-        return u.s_cat3(c"str(", lhs, u.s_cat3(c") > str(", rhs, c")"))
+        return u.s_cat3(c"std.str(", lhs, u.s_cat3(c") > std.str(", rhs, c")"))
     }
     // =~ is a regex extension with no direct Blood equivalent.
     return u.s_dup(c"false")
@@ -1395,7 +1395,7 @@ fn test_expr(t: mut ref Tr, src: ref u8) ref u8 = trust {
     if p.pos < p.toks.len {
         // Trailing tokens are not understood; fall back to running the test.
         use_helper(t, c"__bx_quote")
-        return u.s_cat3(c"shell(\"test ", quote_plain(src), c" \").status == 0")
+        return u.s_cat3(c"std.shell(\"test ", quote_plain(src), c" \").status == 0")
     }
     return e
 }
@@ -1463,11 +1463,11 @@ fn tr_cond(t: mut ref Tr, src: ref u8) ref u8 = trust {
         val words: ref u.Vec = split_words(rest)
         if words.len > 0 {
             val w: ref Word = u.vec_p(words, 0) as ref Word
-            return u.s_cat3(c"shell(\"type ", w.raw, c" >/dev/null 2>&1\").status == 0")
+            return u.s_cat3(c"std.shell(\"type ", w.raw, c" >/dev/null 2>&1\").status == 0")
         }
     }
     use_helper(t, c"__bx_quote")
-    return u.s_cat3(c"shell(", quote_plain(s), c").status == 0")
+    return u.s_cat3(c"std.shell(", quote_plain(s), c").status == 0")
 }
 
 fn parse_if_header(src: ref u8) ref u8 = trust {
@@ -1603,13 +1603,13 @@ fn conv_assignment_value(t: mut ref Tr, src: ref u8) ref u8 = trust {
 
 fn emit_sync(t: mut ref Tr, name: ref u8, exported: bool) void = trust {
     use_helper(t, c"__bx_quote")
-    val cmd: mut ref u8 = u.s_cat(c"shell(", quote_plain(name))
+    val cmd: mut ref u8 = u.s_cat(c"std.shell(", quote_plain(name))
     cmd = u.s_cat(cmd, c" + \"=\" + __bx_quote(")
     cmd = u.s_cat(cmd, name)
     cmd = u.s_cat(cmd, c"))")
     if exported {
         cmd = u.s_cat(
-            c"shell(\"export \" + ",
+            c"std.shell(\"export \" + ",
             u.s_cat(quote_plain(name), c" + \"=\" + __bx_quote(")
         )
         cmd = u.s_cat(cmd, name)
@@ -1807,7 +1807,7 @@ fn tr_echo(t: mut ref Tr, src: ref u8) bool = trust {
         }
         val w: ref Word = u.vec_p(words, i) as ref Word
         if w.kind == 0 && has_glob_chars(w.raw) {
-            u.buf_add(b, u.s_cat3(c"glob(", quote_plain(w.raw), c").join(\" \")"))
+            u.buf_add(b, u.s_cat3(c"std.glob(", quote_plain(w.raw), c").join(\" \")"))
         } else {
             u.buf_add(b, conv_word_expr(t, w, true))
         }
@@ -1858,7 +1858,7 @@ fn tr_read(t: mut ref Tr, src: ref u8) bool = trust {
     if name == none || !is_ident(name) {
         return false
     }
-    emit(t, u.s_cat3(name, c" = input(", u.s_cat(prompt, c")")))
+    emit(t, u.s_cat3(name, c" = std.input(", u.s_cat(prompt, c")")))
     u.map_put(t.assigned, name, 1)
     emit_sync(t, name, false)
     return true
@@ -1942,7 +1942,7 @@ fn tr_export(t: mut ref Tr, src: ref u8) bool = trust {
             break
         }
         val w: ref Word = u.vec_p(words, k) as ref Word
-        emit(t, u.s_cat3(c"shell(\"export ", w.raw, c"\")"))
+        emit(t, u.s_cat3(c"std.shell(\"export ", w.raw, c"\")"))
         k++
     }
     return true
@@ -2115,7 +2115,7 @@ fn tr_shell_statement(t: mut ref Tr, src: ref u8) void = trust {
     // a shell statement (for example `cat /tmp/x` reads as a division
     // expression). Running the line through `shell` is unambiguous and keeps
     // the resulting status in the script `status` variable.
-    emit(t, u.s_cat3(c"status = shell(", quote_plain(s), c").status"))
+    emit(t, u.s_cat3(c"status = std.shell(", quote_plain(s), c").status"))
 }
 
 fn rewrite_func_positionals(src: ref u8) ref u8 = trust {
@@ -2856,7 +2856,7 @@ fn emit_while_read(t: mut ref Tr, cond: ref u8) void = trust {
         }
         emit(t, c"while true {")
         push_block(t, 2, none)
-        emit(t, u.s_cat3(name, c" = input(", u.s_cat(prompt, c")")))
+        emit(t, u.s_cat3(name, c" = std.input(", u.s_cat(prompt, c")")))
         u.map_put(t.assigned, name, 1)
         emit_sync(t, name, false)
         emit(t, u.s_cat3(c"if ", name, c" == null {"))
@@ -2934,7 +2934,7 @@ fn helper_prelude(t: mut ref Tr) ref u8 = trust {
     if u.map_has(t.helpers, c"__bx_s") {
         u.buf_add(
             b,
-            c"fn __bx_s(v) {\n    if v == null {\n        return \"\"\n    }\n    return str(v)\n}\n\n"
+            c"fn __bx_s(v) {\n    if v == null {\n        return \"\"\n    }\n    return std.str(v)\n}\n\n"
         )
     }
     if u.map_has(t.helpers, c"__bx_default") {
@@ -2944,7 +2944,7 @@ fn helper_prelude(t: mut ref Tr) ref u8 = trust {
         )
     }
     if u.map_has(t.helpers, c"__bx_num") {
-        u.buf_add(b, c"fn __bx_num(v) {\n    return int(__bx_s(v))\n}\n\n")
+        u.buf_add(b, c"fn __bx_num(v) {\n    return std.int(__bx_s(v))\n}\n\n")
         u.map_put(t.helpers, c"__bx_s", 1)
     }
     if u.map_has(t.helpers, c"__bx_quote") {
@@ -2969,20 +2969,20 @@ fn helper_prelude(t: mut ref Tr) ref u8 = trust {
     if u.map_has(t.helpers, c"__bx_range") {
         u.buf_add(
             b,
-            c"fn __bx_range(a, b) {\n    var lo = int(a)\n    var hi = int(b)\n    var out = []\n    if lo <= hi {\n        for i in range(lo, hi + 1) {\n            out.append(i)\n        }\n    } else {\n        for i in range(hi, lo + 1) {\n            out.append(i)\n        }\n        out.sort()\n    }\n    return out\n}\n\n"
+            c"fn __bx_range(a, b) {\n    var lo = std.int(a)\n    var hi = std.int(b)\n    var out = []\n    if lo <= hi {\n        for i in std.range(lo, hi + 1) {\n            out.append(i)\n        }\n    } else {\n        for i in std.range(hi, lo + 1) {\n            out.append(i)\n        }\n        out.sort()\n    }\n    return out\n}\n\n"
         )
     }
     if u.map_has(t.helpers, c"__bx_glob") {
         u.buf_add(
             b,
-            c"fn __bx_glob(p, s) {\n    var pi = 0\n    var si = 0\n    var star = -1\n    var mark = 0\n    while si < len(s) {\n        if pi < len(p) and (p[pi] == \"?\" or p[pi] == s[si]) {\n            pi += 1\n            si += 1\n        } elif pi < len(p) and p[pi] == \"*\" {\n            star = pi\n            mark = si\n            pi += 1\n        } elif star != -1 {\n            pi = star + 1\n            mark += 1\n            si = mark\n        } else {\n            return false\n        }\n    }\n    while pi < len(p) and p[pi] == \"*\" {\n        pi += 1\n    }\n    return pi == len(p)\n}\n\n"
+            c"fn __bx_glob(p, s) {\n    var pi = 0\n    var si = 0\n    var star = -1\n    var mark = 0\n    while si < std.len(s) {\n        if pi < std.len(p) and (p[pi] == \"?\" or p[pi] == s[si]) {\n            pi += 1\n            si += 1\n        } elif pi < std.len(p) and p[pi] == \"*\" {\n            star = pi\n            mark = si\n            pi += 1\n        } elif star != -1 {\n            pi = star + 1\n            mark += 1\n            si = mark\n        } else {\n            return false\n        }\n    }\n    while pi < std.len(p) and p[pi] == \"*\" {\n        pi += 1\n    }\n    return pi == std.len(p)\n}\n\n"
         )
         u.map_put(t.helpers, c"__bx_s", 1)
     }
     if u.map_has(t.helpers, c"__bx_sync_args") {
         u.buf_add(
             b,
-            c"fn __bx_sync_args(a, b, c, d, e, f, g, h, i) {\n    shell(\"__arg1=\" + __bx_quote(a))\n    shell(\"__arg2=\" + __bx_quote(b))\n    shell(\"__arg3=\" + __bx_quote(c))\n    shell(\"__arg4=\" + __bx_quote(d))\n    shell(\"__arg5=\" + __bx_quote(e))\n    shell(\"__arg6=\" + __bx_quote(f))\n    shell(\"__arg7=\" + __bx_quote(g))\n    shell(\"__arg8=\" + __bx_quote(h))\n    shell(\"__arg9=\" + __bx_quote(i))\n    shell(\"__bx_argc_shell=\" + str(__bx_argc(a, b, c, d, e, f, g, h, i)))\n}\n\n"
+            c"fn __bx_sync_args(a, b, c, d, e, f, g, h, i) {\n    std.shell(\"__arg1=\" + __bx_quote(a))\n    std.shell(\"__arg2=\" + __bx_quote(b))\n    std.shell(\"__arg3=\" + __bx_quote(c))\n    std.shell(\"__arg4=\" + __bx_quote(d))\n    std.shell(\"__arg5=\" + __bx_quote(e))\n    std.shell(\"__arg6=\" + __bx_quote(f))\n    std.shell(\"__arg7=\" + __bx_quote(g))\n    std.shell(\"__arg8=\" + __bx_quote(h))\n    std.shell(\"__arg9=\" + __bx_quote(i))\n    std.shell(\"__bx_argc_shell=\" + std.str(__bx_argc(a, b, c, d, e, f, g, h, i)))\n}\n\n"
         )
         u.map_put(t.helpers, c"__bx_quote", 1)
         u.map_put(t.helpers, c"__bx_argc", 1)
@@ -3010,7 +3010,7 @@ fn finish(t: mut ref Tr) ref u8 = trust {
             val name: ref u8 = u.vec_p(t.seeds, i) as ref u8
             u.buf_add(b, c"var ")
             u.buf_add(b, name)
-            u.buf_add(b, c" = __bx_s(env(")
+            u.buf_add(b, c" = __bx_s(std.env(")
             u.buf_add(b, quote_sq(name))
             u.buf_add(b, c"))\n")
             i++

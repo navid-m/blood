@@ -17,12 +17,12 @@ test "translator rewrites variables, tests, loops and functions" {
         val src: ref u8 = c"#!/bin/bash\nGREETING=\"hello\"\nname=world\necho \"$GREETING $name\"\nif [ -f /etc/passwd ]; then\n  echo yes\nelse\n  echo no\nfi\nfor f in *.txt; do\n  echo \"file: $f\"\ndone\ncount=0\nwhile [ $count -lt 2 ]; do\n  count=$((count + 1))\ndone\ngreet() {\n  local who=$1\n  echo \"hi $who\"\n}\ngreet alice\n"
         val out: ref u8 = tr.translate_text(src)
         assert has(out, c"#!/usr/bin/env blood")
-        assert has(out, c"var GREETING = __bx_s(env(")
+        assert has(out, c"var GREETING = __bx_s(std.env(")
         assert has(out, c"GREETING = \"hello\"")
         assert has(out, c"say \"{__bx_s(GREETING)} {__bx_s(name)}\"")
         assert has(out, c"test -f")
-        assert has(out, c"for f in glob(\"*.txt\")")
-        assert has(out, c"while int(count) < int(2)")
+        assert has(out, c"for f in std.glob(\"*.txt\")")
+        assert has(out, c"while std.int(count) < std.int(2)")
         assert has(out, c"fn greet(")
         assert has(out, c"greet(\"alice\")")
         assert parses(out)
@@ -38,8 +38,8 @@ test "translator handles case, until, c-style for, arrays and read" {
         assert has(out, c"while not (")
         assert has(out, c"while i < 3")
         assert has(out, c"i += 1")
-        assert has(out, c"answer = input(\"\")")
-        assert has(out, c"len(arr)")
+        assert has(out, c"answer = std.input(\"\")")
+        assert has(out, c"std.len(arr)")
         assert parses(out)
     }
 }
@@ -50,8 +50,8 @@ test "translator keeps unsupported constructs as comments or shell statements" {
         val out: ref u8 = tr.translate_text(src)
         assert has(out, c"bash option not translated")
         assert has(out, c"bash trap not translated")
-        assert has(out, c"status = shell(\"cat /tmp/example\").status")
-        assert has(out, c"shell(\"export \" + \"PATH\"")
+        assert has(out, c"status = std.shell(\"cat /tmp/example\").status")
+        assert has(out, c"std.shell(\"export \" + \"PATH\"")
         assert parses(out)
     }
 }
