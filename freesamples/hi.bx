@@ -1,0 +1,9 @@
+#!/usr/bin/env blood
+
+var (
+    files  = std.glob("logs/*.log")
+    failed = files.filter(|f| not run(["gzip", "-k", f]).ok)
+)
+
+say("{files.len() - failed.len()} archived, {failed.len()} failed")
+exit(if failed.len() > 0 { 1 } else { 0 })
