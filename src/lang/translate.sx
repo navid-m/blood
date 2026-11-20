@@ -3164,9 +3164,9 @@ fn scan_assigned(t: mut ref Tr, lines: ref u.Vec) void = trust {
                 continue
             }
             if next < n && ch_at(line, next) == 43 && next + 1 < n && (ch_at(
-                line,
-                next + 1
-            ) == 61 || ch_at(line, next + 1) == 43) {
+                    line,
+                    next + 1
+                ) == 61 || ch_at(line, next + 1) == 43) {
                 if allow {
                     seed_name(t, name)
                 }
@@ -3175,9 +3175,9 @@ fn scan_assigned(t: mut ref Tr, lines: ref u.Vec) void = trust {
                 continue
             }
             if next < n && ch_at(line, next) == 45 && next + 1 < n && (ch_at(
-                line,
-                next + 1
-            ) == 61 || ch_at(line, next + 1) == 45) {
+                    line,
+                    next + 1
+                ) == 61 || ch_at(line, next + 1) == 45) {
                 if allow {
                     seed_name(t, name)
                 }
@@ -3191,7 +3191,10 @@ fn scan_assigned(t: mut ref Tr, lines: ref u.Vec) void = trust {
             ) || u.s_eq(
                 name,
                 c"local"
-            ) || u.s_eq(name, c"declare") || u.s_eq(name, c"typeset") || u.s_eq(name, c"readonly") || u.s_eq(
+            ) || u.s_eq(
+                name,
+                c"declare"
+            ) || u.s_eq(name, c"typeset") || u.s_eq(name, c"readonly") || u.s_eq(
                 name,
                 c"let"
             ) {

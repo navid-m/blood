@@ -1187,9 +1187,9 @@ fn parse_var(p: mut ref Parser) ref Node = trust {
                 break
             }
             if cur(p).kind == TokenKind.Op && (text_is(
-                cur(p),
-                c","
-            ) || text_is(cur(p), c";")) {
+                    cur(p),
+                    c","
+                ) || text_is(cur(p), c";")) {
                 advance(p)
                 continue
             }
@@ -1199,9 +1199,9 @@ fn parse_var(p: mut ref Parser) ref Node = trust {
                 break
             }
             if cur(p).kind == TokenKind.Op && (text_is(
-                cur(p),
-                c","
-            ) || text_is(cur(p), c";")) {
+                    cur(p),
+                    c","
+                ) || text_is(cur(p), c";")) {
                 advance(p)
             }
         }
@@ -1574,9 +1574,9 @@ fn try_command_call(p: mut ref Parser) ref Node = trust {
     val call: ref Node = parse_unparen_call(p, t)
     g_no_unparen = saved_unparen
     val done: bool = cur(p).kind == TokenKind.Newline || cur(p).kind == TokenKind.Eof || cur(p).kind == TokenKind.Dedent || (cur(p).kind == TokenKind.Op && (text_is(
-            cur(p),
-            c";"
-        ) || text_is(cur(p), c"}")))
+                cur(p),
+                c";"
+            ) || text_is(cur(p), c"}")))
     if g_error != none || !done {
         p.i = save
         g_no_unparen = saved_unparen

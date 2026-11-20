@@ -1343,93 +1343,93 @@ fn run_pipeline(pipe: ref Pipeline, background: bool) i32 = trust {
         return run_pipeline_win(pipe, background)
     }
     otherwise {
-    if pipe.cmds.len == 0 {
-        return 0
-    }
-    if background {
-        val pid: i32 = ex.p_fork()
-        if pid == 0 {
-            ex.child_reset()
-            val st: i32 = run_pipeline(pipe, false)
-            ex.p_exit(st)
-        }
-        if pid > 0 {
-            u.vec_push(sh_jobs, pid as i64)
-            sh_last_pid = pid as i64
+        if pipe.cmds.len == 0 {
             return 0
         }
-        return 127
-    }
-    if pipe.cmds.len == 1 {
-        val cmd: ref Command = u.vec_p(pipe.cmds, 0) as ref Command
-        return run_single(cmd)
-    }
-    val n: i64 = pipe.cmds.len
-    val pipes: mut ref u.Vec = u.vec_new()
-    val k: mut i64 = 0
-    for {
-        if k >= n - 1 {
-            break
-        }
-        val pp: mut ref ex.Pipe = u.xalloc(@sizeof(ex.Pipe) as i64) as ref ex.Pipe
-        pp.read_fd = 0
-        pp.write_fd = 0
-        val made: ex.Pipe = ex.make_pipe()
-        pp.read_fd = made.read_fd
-        pp.write_fd = made.write_fd
-        u.vec_pushp(pipes, pp)
-        k++
-    }
-    val pids: mut ref u.Vec = u.vec_new()
-    val cidx: mut i64 = 0
-    for {
-        if cidx >= n {
-            break
-        }
-        val cmd: ref Command = u.vec_p(pipe.cmds, cidx) as ref Command
-        val pid: i32 = ex.p_fork()
-        if pid == 0 {
-            ex.child_reset()
-            if cidx > 0 {
-                val prev: ref ex.Pipe = u.vec_p(pipes, cidx - 1) as ref ex.Pipe
-                ex.fd_dup2(prev.read_fd, 0)
-            }
-            if cidx < n - 1 {
-                val next: ref ex.Pipe = u.vec_p(pipes, cidx) as ref ex.Pipe
-                ex.fd_dup2(next.write_fd, 1)
-            }
-            close_pipes(pipes)
-            if apply_redirs(cmd.redirs) != 0 {
-                ex.p_exit(1)
-            }
-            apply_assigns_child(cmd.assigns)
-            if cmd.argv.len == 0 {
-                ex.p_exit(0)
-            }
-            val name: ref u8 = u.vec_p(cmd.argv, 0) as ref u8
-            if is_builtin(name) {
-                val st: i32 = run_builtin(cmd)
+        if background {
+            val pid: i32 = ex.p_fork()
+            if pid == 0 {
+                ex.child_reset()
+                val st: i32 = run_pipeline(pipe, false)
                 ex.p_exit(st)
             }
-            ex.child_exec(cmd.argv)
-            ex.p_exit(127)
+            if pid > 0 {
+                u.vec_push(sh_jobs, pid as i64)
+                sh_last_pid = pid as i64
+                return 0
+            }
+            return 127
         }
-        if pid > 0 {
-            u.vec_push(pids, pid as i64)
+        if pipe.cmds.len == 1 {
+            val cmd: ref Command = u.vec_p(pipe.cmds, 0) as ref Command
+            return run_single(cmd)
         }
-        cidx++
-    }
-    close_pipes(pipes)
-    val last: mut i32 = 0
-    val w: mut i64 = 0
-    for {
-        if w >= pids.len {
-            break
+        val n: i64 = pipe.cmds.len
+        val pipes: mut ref u.Vec = u.vec_new()
+        val k: mut i64 = 0
+        for {
+            if k >= n - 1 {
+                break
+            }
+            val pp: mut ref ex.Pipe = u.xalloc(@sizeof(ex.Pipe) as i64) as ref ex.Pipe
+            pp.read_fd = 0
+            pp.write_fd = 0
+            val made: ex.Pipe = ex.make_pipe()
+            pp.read_fd = made.read_fd
+            pp.write_fd = made.write_fd
+            u.vec_pushp(pipes, pp)
+            k++
         }
-        last = ex.wait_pid(u.vec_gets(pids, w) as i32)
-        w++
-    }
-    return last
+        val pids: mut ref u.Vec = u.vec_new()
+        val cidx: mut i64 = 0
+        for {
+            if cidx >= n {
+                break
+            }
+            val cmd: ref Command = u.vec_p(pipe.cmds, cidx) as ref Command
+            val pid: i32 = ex.p_fork()
+            if pid == 0 {
+                ex.child_reset()
+                if cidx > 0 {
+                    val prev: ref ex.Pipe = u.vec_p(pipes, cidx - 1) as ref ex.Pipe
+                    ex.fd_dup2(prev.read_fd, 0)
+                }
+                if cidx < n - 1 {
+                    val next: ref ex.Pipe = u.vec_p(pipes, cidx) as ref ex.Pipe
+                    ex.fd_dup2(next.write_fd, 1)
+                }
+                close_pipes(pipes)
+                if apply_redirs(cmd.redirs) != 0 {
+                    ex.p_exit(1)
+                }
+                apply_assigns_child(cmd.assigns)
+                if cmd.argv.len == 0 {
+                    ex.p_exit(0)
+                }
+                val name: ref u8 = u.vec_p(cmd.argv, 0) as ref u8
+                if is_builtin(name) {
+                    val st: i32 = run_builtin(cmd)
+                    ex.p_exit(st)
+                }
+                ex.child_exec(cmd.argv)
+                ex.p_exit(127)
+            }
+            if pid > 0 {
+                u.vec_push(pids, pid as i64)
+            }
+            cidx++
+        }
+        close_pipes(pipes)
+        val last: mut i32 = 0
+        val w: mut i64 = 0
+        for {
+            if w >= pids.len {
+                break
+            }
+            last = ex.wait_pid(u.vec_gets(pids, w) as i32)
+            w++
+        }
+        return last
     }
 }
 

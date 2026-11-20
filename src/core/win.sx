@@ -65,7 +65,10 @@ when windows {
 
     extern (C, header) fn c_get_console_mode(h: ref void, mode: ref u32) i32 = "GetConsoleMode"
     extern (C, header) fn c_set_console_mode(h: ref void, mode: u32) i32 = "SetConsoleMode"
-    extern (C, header) fn c_get_console_info(h: ref void, info: ref void) i32 = "GetConsoleScreenBufferInfo"
+    extern (C, header) fn c_get_console_info(
+        h: ref void,
+        info: ref void
+    ) i32 = "GetConsoleScreenBufferInfo"
     extern (C, header) fn c_set_output_cp(cp: u32) i32 = "SetConsoleOutputCP"
     extern (C, header) fn c_set_input_cp(cp: u32) i32 = "SetConsoleCP"
 }
@@ -217,107 +220,125 @@ fn join_argv(argv: ref ref u8) ref u8 = trust {
 
 fn dup_handle(h: ref void) ref void = trust {
     when windows {
-    val out: mut ref void = none
-    if h == none {
+        val out: mut ref void = none
+        if h == none {
+            return none
+        }
+        if c_duplicate_handle(
+            c_get_current_process(),
+            h,
+            c_get_current_process(),
+            @addr(out),
+            0,
+            1,
+            2
+        ) == 0 {
+            return none
+        }
+        return out
+    }
+    otherwise {
         return none
     }
-    if c_duplicate_handle(
-        c_get_current_process(),
-        h,
-        c_get_current_process(),
-        @addr(out),
-        0,
-        1,
-        2
-    ) == 0 {
-        return none
-    }
-    return out
-    } otherwise { return none }
 }
 
 fn dup_std(fd: i32, which: u32) ref void = trust {
     when windows {
-    val h: mut ref void = none
-    if fd < 0 {
-        h = c_get_std_handle(which)
-    } else {
-        val raw: i64 = c_get_osfhandle(fd)
-        if raw == -1 {
+        val h: mut ref void = none
+        if fd < 0 {
             h = c_get_std_handle(which)
         } else {
-            h = @bitcast(raw, ref void)
+            val raw: i64 = c_get_osfhandle(fd)
+            if raw == -1 {
+                h = c_get_std_handle(which)
+            } else {
+                h = @bitcast(raw, ref void)
+            }
         }
+        return dup_handle(h)
     }
-    return dup_handle(h)
-    } otherwise { return none }
+    otherwise {
+        return none
+    }
 }
 
 fn proc_add(handle: ref void) i32 = trust {
     when windows {
-    val i: mut i64 = 0
-    for {
-        if i >= 256 {
-            break
+        val i: mut i64 = 0
+        for {
+            if i >= 256 {
+                break
+            }
+            val p: mut ref BxProc = @ptradd(
+                @addr(g_procs) as ref void,
+                i * @sizeof(BxProc)
+            ) as ref BxProc
+            if p.used == 0 {
+                p.handle = handle
+                p.used = 1
+                return (i + 1) as i32
+            }
+            i++
         }
-        val p: mut ref BxProc = @ptradd(
-            @addr(g_procs) as ref void,
-            i * @sizeof(BxProc)
-        ) as ref BxProc
-        if p.used == 0 {
-            p.handle = handle
-            p.used = 1
-            return (i + 1) as i32
-        }
-        i++
+        return -1
     }
-    return -1
-    } otherwise { return -1 }
+    otherwise {
+        return -1
+    }
 }
 
 fn proc_index(id: i32) i64 = trust {
     when windows {
-    if id <= 0 || id > 256 {
+        if id <= 0 || id > 256 {
+            return -1
+        }
+        val i: i64 = (id - 1) as i64
+        val p: ref BxProc = @ptradd(
+            @addr(g_procs) as ref void,
+            i * @sizeof(BxProc)
+        ) as ref BxProc
+        if p.used == 0 {
+            return -1
+        }
+        return i
+    }
+    otherwise {
         return -1
     }
-    val i: i64 = (id - 1) as i64
-    val p: ref BxProc = @ptradd(
-        @addr(g_procs) as ref void,
-        i * @sizeof(BxProc)
-    ) as ref BxProc
-    if p.used == 0 {
-        return -1
-    }
-    return i
-    } otherwise { return -1 }
 }
 
 pub fn read(fd: i32, buf: ref void, n: i64) i64 = trust {
     when windows {
-    if n <= 0 {
-        return 0
+        if n <= 0 {
+            return 0
+        }
+        return c_read(fd, buf, n as u32) as i64
     }
-    return c_read(fd, buf, n as u32) as i64
-    } otherwise { return -1 }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn write(fd: i32, buf: ref void, n: i64) i64 = trust {
     when windows {
-    val p: ref u8 = buf as ref u8
-    val done: mut i64 = 0
-    for {
-        if done >= n {
-            break
+        val p: ref u8 = buf as ref u8
+        val done: mut i64 = 0
+        for {
+            if done >= n {
+                break
+            }
+            val chunk: i64 = n - done
+            val w: i32 = c_write(fd, @ptradd(p, done) as ref void, chunk as u32)
+            if w <= 0 {
+                break
+            }
+            done = done + w as i64
         }
-        val chunk: i64 = n - done
-        val w: i32 = c_write(fd, @ptradd(p, done) as ref void, chunk as u32)
-        if w <= 0 {
-            break
-        }
-        done = done + w as i64
+        return done
     }
-    return done
-    } otherwise { return -1 }
+    otherwise {
+        return -1
+    }
 }
 
 fn nul_path(path: ref u8) ref u8 = trust {
@@ -329,68 +350,95 @@ fn nul_path(path: ref u8) ref u8 = trust {
 
 pub fn open_read(path: ref u8) i32 = trust {
     when windows {
-    return c_open(nul_path(path), 0, 0)
-    } otherwise { return -1 }
+        return c_open(nul_path(path), 0, 0)
+    }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn open_write(path: ref u8, append: bool) i32 = trust {
     when windows {
-    val flags: mut i32 = 1 | 256 | 32768 | 128
-    if append {
-        flags = flags | 8
-    } else {
-        flags = flags | 512
+        val flags: mut i32 = 1 | 256 | 32768 | 128
+        if append {
+            flags = flags | 8
+        } else {
+            flags = flags | 512
+        }
+        return c_open(nul_path(path), flags, 384)
     }
-    return c_open(nul_path(path), flags, 384)
-    } otherwise { return -1 }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn close(fd: i32) i32 = trust {
     when windows {
-    return c_close(fd)
-    } otherwise { return -1 }
+        return c_close(fd)
+    }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn dup(fd: i32) i32 = trust {
     when windows {
-    return c_dup(fd)
-    } otherwise { return -1 }
+        return c_dup(fd)
+    }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn dup2(oldfd: i32, newfd: i32) i32 = trust {
     when windows {
-    return c_dup2(oldfd, newfd)
-    } otherwise { return -1 }
+        return c_dup2(oldfd, newfd)
+    }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn pipe(fds: ref i32) i32 = trust {
     when windows {
-    return c_pipe(fds, 4096, 32768 | 128)
-    } otherwise { return -1 }
+        return c_pipe(fds, 4096, 32768 | 128)
+    }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn getpid() i32 = trust {
     when windows {
-    return c_getpid()
-    } otherwise { return -1 }
+        return c_getpid()
+    }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn setenv(name: ref u8, value: ref u8) i32 = trust {
     when windows {
-    if c_set_env(name, value) == 0 {
+        if c_set_env(name, value) == 0 {
+            return -1
+        }
+        return 0
+    }
+    otherwise {
         return -1
     }
-    return 0
-    } otherwise { return -1 }
 }
 
 pub fn unsetenv(name: ref u8) i32 = trust {
     when windows {
-    if c_set_env(name, none) == 0 {
+        if c_set_env(name, none) == 0 {
+            return -1
+        }
+        return 0
+    }
+    otherwise {
         return -1
     }
-    return 0
-    } otherwise { return -1 }
 }
 
 pub fn spawn_argv(
@@ -401,263 +449,293 @@ pub fn spawn_argv(
     cwd: ref u8
 ) i32 = trust {
     when windows {
-    val cmdline: ref u8 = join_argv(argv)
-    if cmdline == none {
-        return -1
-    }
+        val cmdline: ref u8 = join_argv(argv)
+        if cmdline == none {
+            return -1
+        }
 
-    // STARTUPINFOA and PROCESS_INFORMATION are laid out explicitly because
-    // Spectre does not add C struct padding between scalar and pointer fields.
-    val si: ref void = c_calloc(1, 104)
-    val pi: ref void = c_calloc(1, 24)
-    if si == none || pi == none {
+        // STARTUPINFOA and PROCESS_INFORMATION are laid out explicitly because
+        // Spectre does not add C struct padding between scalar and pointer fields.
+        val si: ref void = c_calloc(1, 104)
+        val pi: ref void = c_calloc(1, 24)
+        if si == none || pi == none {
+            @free(si)
+            @free(pi)
+            @free(cmdline)
+            return -1
+        }
+        @store32(si, 104)
+        @store32(@ptradd(si, 60), 256)
+
+        val hin: ref void = dup_std(in_fd, 4294967286)
+        val hout: ref void = dup_std(out_fd, 4294967285)
+        val herr: ref void = dup_std(err_fd, 4294967284)
+        @store64(@ptradd(si, 80), @bitcast(hin, i64))
+        @store64(@ptradd(si, 88), @bitcast(hout, i64))
+        @store64(@ptradd(si, 96), @bitcast(herr, i64))
+
+        val started: i32 = c_create_process(
+            none,
+            cmdline,
+            none,
+            none,
+            1,
+            0,
+            none,
+            cwd,
+            si,
+            pi
+        )
+
+        if hin != none {
+            c_close_handle(hin)
+        }
+        if hout != none {
+            c_close_handle(hout)
+        }
+        if herr != none {
+            c_close_handle(herr)
+        }
+
+        val process: ref void = @bitcast(@load64(pi), ref void)
+        val thread: ref void = @bitcast(@load64(@ptradd(pi, 8)), ref void)
         @free(si)
         @free(pi)
         @free(cmdline)
+
+        if started == 0 {
+            return -1
+        }
+        c_close_handle(thread)
+        val id: i32 = proc_add(process)
+        if id < 0 {
+            c_terminate_process(process, 1)
+            c_close_handle(process)
+            return -1
+        }
+        return id
+    }
+    otherwise {
         return -1
     }
-    @store32(si, 104)
-    @store32(@ptradd(si, 60), 256)
-
-    val hin: ref void = dup_std(in_fd, 4294967286)
-    val hout: ref void = dup_std(out_fd, 4294967285)
-    val herr: ref void = dup_std(err_fd, 4294967284)
-    @store64(@ptradd(si, 80), @bitcast(hin, i64))
-    @store64(@ptradd(si, 88), @bitcast(hout, i64))
-    @store64(@ptradd(si, 96), @bitcast(herr, i64))
-
-    val started: i32 = c_create_process(
-        none,
-        cmdline,
-        none,
-        none,
-        1,
-        0,
-        none,
-        cwd,
-        si,
-        pi
-    )
-
-    if hin != none {
-        c_close_handle(hin)
-    }
-    if hout != none {
-        c_close_handle(hout)
-    }
-    if herr != none {
-        c_close_handle(herr)
-    }
-
-    val process: ref void = @bitcast(@load64(pi), ref void)
-    val thread: ref void = @bitcast(@load64(@ptradd(pi, 8)), ref void)
-    @free(si)
-    @free(pi)
-    @free(cmdline)
-
-    if started == 0 {
-        return -1
-    }
-    c_close_handle(thread)
-    val id: i32 = proc_add(process)
-    if id < 0 {
-        c_terminate_process(process, 1)
-        c_close_handle(process)
-        return -1
-    }
-    return id
-    } otherwise { return -1 }
 }
 
 fn finish_proc(p: mut ref BxProc, code: u32) i32 = trust {
     when windows {
-    c_close_handle(p.handle)
-    p.used = 0
-    p.handle = none
-    return code as i32
-    } otherwise { return -1 }
+        c_close_handle(p.handle)
+        p.used = 0
+        p.handle = none
+        return code as i32
+    }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn wait_pid(id: i32, nohang: bool) i32 = trust {
     when windows {
-    val idx: i64 = proc_index(id)
-    if idx < 0 {
+        val idx: i64 = proc_index(id)
+        if idx < 0 {
+            return -1
+        }
+        val p: mut ref BxProc = @ptradd(
+            @addr(g_procs) as ref void,
+            idx * @sizeof(BxProc)
+        ) as ref BxProc
+        val ms: mut u32 = 4294967295
+        if nohang {
+            ms = 0
+        }
+        val wait: u32 = c_wait_single(p.handle, ms)
+        if wait == 258 {
+            return -1
+        }
+        if wait != 0 {
+            return finish_proc(p, 127)
+        }
+        val code: mut u32 = 127
+        if c_get_exit_code(p.handle, @addr(code)) == 0 {
+            code = 127
+        }
+        return finish_proc(p, code)
+    }
+    otherwise {
         return -1
     }
-    val p: mut ref BxProc = @ptradd(
-        @addr(g_procs) as ref void,
-        idx * @sizeof(BxProc)
-    ) as ref BxProc
-    val ms: mut u32 = 4294967295
-    if nohang {
-        ms = 0
-    }
-    val wait: u32 = c_wait_single(p.handle, ms)
-    if wait == 258 {
-        return -1
-    }
-    if wait != 0 {
-        return finish_proc(p, 127)
-    }
-    val code: mut u32 = 127
-    if c_get_exit_code(p.handle, @addr(code)) == 0 {
-        code = 127
-    }
-    return finish_proc(p, code)
-    } otherwise { return -1 }
 }
 
 pub fn wait_pid_timeout(id: i32, timeout_ms: i32) i32 = trust {
     when windows {
-    val idx: i64 = proc_index(id)
-    if idx < 0 {
-        return -1
-    }
-    val p: mut ref BxProc = @ptradd(
-        @addr(g_procs) as ref void,
-        idx * @sizeof(BxProc)
-    ) as ref BxProc
-    val ms: mut u32 = 4294967295
-    if timeout_ms >= 0 {
-        ms = timeout_ms as u32
-    }
-    val wait: u32 = c_wait_single(p.handle, ms)
-    if wait == 258 {
-        return -1
-    }
-    if wait != 0 {
-        return finish_proc(p, 127)
-    }
-    val code: mut u32 = 127
-    if c_get_exit_code(p.handle, @addr(code)) == 0 {
-        code = 127
-    }
-    return finish_proc(p, code)
-    } otherwise { return -1 }
-}
-
-pub fn kill(id: i32) i32 = trust {
-    when windows {
-    val idx: i64 = proc_index(id)
-    if idx < 0 {
-        return -1
-    }
-    val p: mut ref BxProc = @ptradd(
-        @addr(g_procs) as ref void,
-        idx * @sizeof(BxProc)
-    ) as ref BxProc
-    c_terminate_process(p.handle, 1)
-    return 0
-    } otherwise { return -1 }
-}
-
-pub fn poll_fd(fd: i32, timeout_ms: i32) i32 = trust {
-    when windows {
-    if fd < 0 {
-        return -1
-    }
-    val raw: i64 = c_get_osfhandle(fd)
-    if raw == -1 {
-        return -1
-    }
-    val h: ref void = @bitcast(raw, ref void)
-
-    if c_isatty(fd) != 0 {
+        val idx: i64 = proc_index(id)
+        if idx < 0 {
+            return -1
+        }
+        val p: mut ref BxProc = @ptradd(
+            @addr(g_procs) as ref void,
+            idx * @sizeof(BxProc)
+        ) as ref BxProc
         val ms: mut u32 = 4294967295
         if timeout_ms >= 0 {
             ms = timeout_ms as u32
         }
-        val wait: u32 = c_wait_single(h, ms)
-        if wait == 0 {
-            return 1
-        }
+        val wait: u32 = c_wait_single(p.handle, ms)
         if wait == 258 {
-            return 0
+            return -1
         }
+        if wait != 0 {
+            return finish_proc(p, 127)
+        }
+        val code: mut u32 = 127
+        if c_get_exit_code(p.handle, @addr(code)) == 0 {
+            code = 127
+        }
+        return finish_proc(p, code)
+    }
+    otherwise {
         return -1
     }
+}
 
-    val started: u32 = c_get_tick_count()
-    for {
-        val avail: mut u32 = 0
-        if c_peek_named_pipe(h, none, 0, none, @addr(avail), none) != 0 {
-            if avail > 0 {
+pub fn kill(id: i32) i32 = trust {
+    when windows {
+        val idx: i64 = proc_index(id)
+        if idx < 0 {
+            return -1
+        }
+        val p: mut ref BxProc = @ptradd(
+            @addr(g_procs) as ref void,
+            idx * @sizeof(BxProc)
+        ) as ref BxProc
+        c_terminate_process(p.handle, 1)
+        return 0
+    }
+    otherwise {
+        return -1
+    }
+}
+
+pub fn poll_fd(fd: i32, timeout_ms: i32) i32 = trust {
+    when windows {
+        if fd < 0 {
+            return -1
+        }
+        val raw: i64 = c_get_osfhandle(fd)
+        if raw == -1 {
+            return -1
+        }
+        val h: ref void = @bitcast(raw, ref void)
+
+        if c_isatty(fd) != 0 {
+            val ms: mut u32 = 4294967295
+            if timeout_ms >= 0 {
+                ms = timeout_ms as u32
+            }
+            val wait: u32 = c_wait_single(h, ms)
+            if wait == 0 {
                 return 1
             }
-        } else {
-            val wait: u32 = c_wait_single(h, 0)
             if wait == 258 {
                 return 0
             }
-            return 1
+            return -1
         }
-        if timeout_ms < 0 {
+
+        val started: u32 = c_get_tick_count()
+        for {
+            val avail: mut u32 = 0
+            if c_peek_named_pipe(h, none, 0, none, @addr(avail), none) != 0 {
+                if avail > 0 {
+                    return 1
+                }
+            } else {
+                val wait: u32 = c_wait_single(h, 0)
+                if wait == 258 {
+                    return 0
+                }
+                return 1
+            }
+            if timeout_ms < 0 {
+                c_sleep(10)
+                continue
+            }
+            if (c_get_tick_count() - started) >= timeout_ms as u32 {
+                return 0
+            }
             c_sleep(10)
-            continue
         }
-        if (c_get_tick_count() - started) >= timeout_ms as u32 {
-            return 0
-        }
-        c_sleep(10)
+        return 0
     }
-    return 0
-    } otherwise { return -1 }
+    otherwise {
+        return -1
+    }
 }
 
 pub fn term_init() i32 = trust {
     when windows {
-    c_set_output_cp(65001)
-    c_set_input_cp(65001)
-    g_conin = c_get_std_handle(4294967286)
-    g_conout = c_get_std_handle(4294967285)
-    g_have_console = 0
-    g_raw_active = 0
-    if g_conin != none && c_get_console_mode(g_conin, @addr(g_saved_in)) != 0 {
-        g_have_console = 1
+        c_set_output_cp(65001)
+        c_set_input_cp(65001)
+        g_conin = c_get_std_handle(4294967286)
+        g_conout = c_get_std_handle(4294967285)
+        g_have_console = 0
+        g_raw_active = 0
+        if g_conin != none && c_get_console_mode(g_conin, @addr(g_saved_in)) != 0 {
+            g_have_console = 1
+        }
+        if g_conout != none && c_get_console_mode(g_conout, @addr(g_saved_out)) != 0 {
+            c_set_console_mode(g_conout, g_saved_out | 4)
+            g_have_console = 1
+        }
+        return g_have_console as i32
     }
-    if g_conout != none && c_get_console_mode(g_conout, @addr(g_saved_out)) != 0 {
-        c_set_console_mode(g_conout, g_saved_out | 4)
-        g_have_console = 1
+    otherwise {
+        return -1
     }
-    return g_have_console as i32
-    } otherwise { return -1 }
 }
 
 pub fn term_raw() void = trust {
     when windows {
-    if g_have_console == 0 || g_raw_active != 0 {
+        if g_have_console == 0 || g_raw_active != 0 {
+            return
+        }
+        val mode: mut u32 = g_saved_in
+        mode = mode & ~(1 as u32 | 2 as u32 | 4 as u32 | 64 as u32)
+        mode = mode | 512 as u32
+        c_set_console_mode(g_conin, mode)
+        g_raw_active = 1
+    }
+    otherwise {
         return
     }
-    val mode: mut u32 = g_saved_in
-    mode = mode & ~(1 as u32 | 2 as u32 | 4 as u32 | 64 as u32)
-    mode = mode | 512 as u32
-    c_set_console_mode(g_conin, mode)
-    g_raw_active = 1
-    } otherwise { return }
 }
 
 pub fn term_cooked() void = trust {
     when windows {
-    if g_have_console == 0 || g_raw_active == 0 {
+        if g_have_console == 0 || g_raw_active == 0 {
+            return
+        }
+        c_set_console_mode(g_conin, g_saved_in)
+        g_raw_active = 0
+    }
+    otherwise {
         return
     }
-    c_set_console_mode(g_conin, g_saved_in)
-    g_raw_active = 0
-    } otherwise { return }
 }
 
 pub fn term_size(rows: ref i64, cols: ref i64) i32 = trust {
     when windows {
-    val info: mut WinConsoleInfo = @zeroed
-    if g_conout == none || c_get_console_info(g_conout, @addr(info) as ref void) == 0 {
+        val info: mut WinConsoleInfo = @zeroed
+        if g_conout == none || c_get_console_info(g_conout, @addr(info) as ref void) == 0 {
+            return -1
+        }
+        if rows != none {
+            @store64(rows as ref void, (info.window.bottom - info.window.top + 1) as i64)
+        }
+        if cols != none {
+            @store64(cols as ref void, (info.window.right - info.window.left + 1) as i64)
+        }
+        return 0
+    }
+    otherwise {
         return -1
     }
-    if rows != none {
-        @store64(rows as ref void, (info.window.bottom - info.window.top + 1) as i64)
-    }
-    if cols != none {
-        @store64(cols as ref void, (info.window.right - info.window.left + 1) as i64)
-    }
-    return 0
-    } otherwise { return -1 }
 }

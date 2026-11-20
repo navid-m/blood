@@ -360,60 +360,60 @@ pub fn spawn_redirected(
 }
 
 when windows {
-fn capture_argv_win(
-    argv: ref u.Vec,
-    quiet_err: bool,
-    timeout_ms: i32,
-    use_timeout: bool
-) ref u8 = trust {
-    val out_path: ref u8 = u.temp_path(c"blood-out")
-    val err_path: ref u8 = u.temp_path(c"blood-err")
-    val out_fd: i32 = open_write(out_path, false)
-    val err_fd: mut i32 = -1
-    if quiet_err {
-        err_fd = win.open_write(c"NUL", false)
-    } else {
-        err_fd = open_write(err_path, false)
-    }
+    fn capture_argv_win(
+        argv: ref u.Vec,
+        quiet_err: bool,
+        timeout_ms: i32,
+        use_timeout: bool
+    ) ref u8 = trust {
+        val out_path: ref u8 = u.temp_path(c"blood-out")
+        val err_path: ref u8 = u.temp_path(c"blood-err")
+        val out_fd: i32 = open_write(out_path, false)
+        val err_fd: mut i32 = -1
+        if quiet_err {
+            err_fd = win.open_write(c"NUL", false)
+        } else {
+            err_fd = open_write(err_path, false)
+        }
 
-    if out_fd < 0 {
-        return u.s_dup(c"")
-    }
+        if out_fd < 0 {
+            return u.s_dup(c"")
+        }
 
-    val av: ref ref u8 = build_argv(argv)
-    val pid: i32 = win.spawn_argv(av, -1, out_fd, err_fd, none)
-    fd_close(out_fd)
-    if err_fd >= 0 {
-        fd_close(err_fd)
-    }
-    if pid < 0 {
-        rt.unlink(out_path)
-        rt.unlink(err_path)
-        return u.s_dup(c"")
-    }
-
-    val done: mut i32 = 0
-    if use_timeout {
-        done = win.wait_pid_timeout(pid, timeout_ms)
-        if done == -1 {
-            win.kill(pid)
-            win.wait_pid(pid, false)
+        val av: ref ref u8 = build_argv(argv)
+        val pid: i32 = win.spawn_argv(av, -1, out_fd, err_fd, none)
+        fd_close(out_fd)
+        if err_fd >= 0 {
+            fd_close(err_fd)
+        }
+        if pid < 0 {
             rt.unlink(out_path)
             rt.unlink(err_path)
             return u.s_dup(c"")
         }
-    } else {
-        done = win.wait_pid(pid, false)
-    }
 
-    val out: mut ref u8 = u.read_file(out_path)
-    if out == none {
-        out = u.s_dup(c"")
+        val done: mut i32 = 0
+        if use_timeout {
+            done = win.wait_pid_timeout(pid, timeout_ms)
+            if done == -1 {
+                win.kill(pid)
+                win.wait_pid(pid, false)
+                rt.unlink(out_path)
+                rt.unlink(err_path)
+                return u.s_dup(c"")
+            }
+        } else {
+            done = win.wait_pid(pid, false)
+        }
+
+        val out: mut ref u8 = u.read_file(out_path)
+        if out == none {
+            out = u.s_dup(c"")
+        }
+        rt.unlink(out_path)
+        rt.unlink(err_path)
+        return out
     }
-    rt.unlink(out_path)
-    rt.unlink(err_path)
-    return out
-}
 }
 
 pub fn capture_argv(argv: ref u.Vec, quiet_err: bool) ref u8 = trust {

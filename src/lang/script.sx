@@ -807,7 +807,11 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         val v: ref Value = env_lookup(env, n.s)
         if v == none {
             if native_id(n.s) != 0 {
-                set_error(u.s_cat3(c"builtin '", n.s, c"' requires the 'std.' prefix"), n.line, n.col)
+                set_error(
+                    u.s_cat3(c"builtin '", n.s, c"' requires the 'std.' prefix"),
+                    n.line,
+                    n.col
+                )
             } else {
                 set_error(u.s_cat3(c"undefined variable '", n.s, c"'"), n.line, n.col)
             }
@@ -1519,99 +1523,99 @@ fn spawn_result(
         return spawn_result_win(argv, command, as_shell, merge, cwd)
     }
     otherwise {
-    val outp: ex.Pipe = ex.make_pipe()
-    val errp: mut ex.Pipe = @zeroed
-    val has_err: bool = !merge
-    if has_err {
-        errp = ex.make_pipe()
-    }
-    val pid: i32 = ex.p_fork()
-    if pid == 0 {
-        ex.child_reset()
-        ex.fd_close(outp.read_fd)
+        val outp: ex.Pipe = ex.make_pipe()
+        val errp: mut ex.Pipe = @zeroed
+        val has_err: bool = !merge
         if has_err {
-            ex.fd_close(errp.read_fd)
+            errp = ex.make_pipe()
         }
-        ex.fd_dup2(outp.write_fd, 1)
-        if has_err {
-            ex.fd_dup2(errp.write_fd, 2)
-            ex.fd_close(errp.write_fd)
-        } else {
-            ex.fd_dup2(outp.write_fd, 2)
-        }
-        ex.fd_close(outp.write_fd)
-        if cwd != none && u.s_len(cwd) > 0 && u.chdir(u.expand_tilde(cwd)) != 0 {
-            u.write_fd(2, u.s_cat3(c"blood: run: ", cwd, c": cannot change directory\n"))
+        val pid: i32 = ex.p_fork()
+        if pid == 0 {
+            ex.child_reset()
+            ex.fd_close(outp.read_fd)
+            if has_err {
+                ex.fd_close(errp.read_fd)
+            }
+            ex.fd_dup2(outp.write_fd, 1)
+            if has_err {
+                ex.fd_dup2(errp.write_fd, 2)
+                ex.fd_close(errp.write_fd)
+            } else {
+                ex.fd_dup2(outp.write_fd, 2)
+            }
+            ex.fd_close(outp.write_fd)
+            if cwd != none && u.s_len(cwd) > 0 && u.chdir(u.expand_tilde(cwd)) != 0 {
+                u.write_fd(2, u.s_cat3(c"blood: run: ", cwd, c": cannot change directory\n"))
+                ex.p_exit(127)
+            }
+            if as_shell {
+                val st: i32 = sh.run_line(command)
+                ex.p_exit(st)
+            }
+            ex.child_exec(argv)
             ex.p_exit(127)
         }
-        if as_shell {
-            val st: i32 = sh.run_line(command)
-            ex.p_exit(st)
-        }
-        ex.child_exec(argv)
-        ex.p_exit(127)
-    }
-    ex.fd_close(outp.write_fd)
-    if has_err {
-        ex.fd_close(errp.write_fd)
-    }
-    if pid < 0 {
-        ex.fd_close(outp.read_fd)
+        ex.fd_close(outp.write_fd)
         if has_err {
-            ex.fd_close(errp.read_fd)
+            ex.fd_close(errp.write_fd)
         }
-        return v_result(127, c"", c"blood: fork failed\n")
-    }
-    val outb: mut ref u.Buf = u.buf_new()
-    val errb: mut ref u.Buf = u.buf_new()
-    val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
-    val out_open: mut i64 = 1
-    val err_open: mut i64 = 0
-    if has_err {
-        err_open = 1
-    }
-    for {
-        if out_open == 0 && err_open == 0 {
-            break
-        }
-        val did: mut i64 = 0
-        if out_open != 0 {
-            val r: i64 = drain_fd(outp.read_fd, outb, chunk, 0)
-            if r == 1 {
-                did = 1
-            } elif r < 0 {
-                out_open = 0
+        if pid < 0 {
+            ex.fd_close(outp.read_fd)
+            if has_err {
+                ex.fd_close(errp.read_fd)
             }
+            return v_result(127, c"", c"blood: fork failed\n")
         }
-        if err_open != 0 {
-            val r: i64 = drain_fd(errp.read_fd, errb, chunk, 0)
-            if r == 1 {
-                did = 1
-            } elif r < 0 {
-                err_open = 0
+        val outb: mut ref u.Buf = u.buf_new()
+        val errb: mut ref u.Buf = u.buf_new()
+        val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
+        val out_open: mut i64 = 1
+        val err_open: mut i64 = 0
+        if has_err {
+            err_open = 1
+        }
+        for {
+            if out_open == 0 && err_open == 0 {
+                break
             }
-        }
-        if did == 0 {
+            val did: mut i64 = 0
             if out_open != 0 {
-                val r: i64 = drain_fd(outp.read_fd, outb, chunk, 50)
-                if r < 0 {
+                val r: i64 = drain_fd(outp.read_fd, outb, chunk, 0)
+                if r == 1 {
+                    did = 1
+                } elif r < 0 {
                     out_open = 0
                 }
-            } elif err_open != 0 {
-                val r: i64 = drain_fd(errp.read_fd, errb, chunk, 50)
-                if r < 0 {
+            }
+            if err_open != 0 {
+                val r: i64 = drain_fd(errp.read_fd, errb, chunk, 0)
+                if r == 1 {
+                    did = 1
+                } elif r < 0 {
                     err_open = 0
                 }
             }
+            if did == 0 {
+                if out_open != 0 {
+                    val r: i64 = drain_fd(outp.read_fd, outb, chunk, 50)
+                    if r < 0 {
+                        out_open = 0
+                    }
+                } elif err_open != 0 {
+                    val r: i64 = drain_fd(errp.read_fd, errb, chunk, 50)
+                    if r < 0 {
+                        err_open = 0
+                    }
+                }
+            }
         }
-    }
-    u.xfree(chunk)
-    ex.fd_close(outp.read_fd)
-    if has_err {
-        ex.fd_close(errp.read_fd)
-    }
-    val status: i64 = ex.wait_pid(pid) as i64
-    return v_result(status, u.buf_take(outb), u.buf_take(errb))
+        u.xfree(chunk)
+        ex.fd_close(outp.read_fd)
+        if has_err {
+            ex.fd_close(errp.read_fd)
+        }
+        val status: i64 = ex.wait_pid(pid) as i64
+        return v_result(status, u.buf_take(outb), u.buf_take(errb))
     }
 }
 
@@ -2354,7 +2358,12 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     return v_nil()
 }
 
-fn call_namespace(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
+fn call_namespace(
+    obj: ref Value,
+    name: ref u8,
+    args: ref u.Vec,
+    n: ref lang.Node
+) ref Value = trust {
     val m: ref u.Map = obj.p as ref u.Map
     val raw: i64 = u.map_get(m, name)
     if raw == 0 {
@@ -4080,7 +4089,10 @@ pub fn looks_like_script(line: ref u8) bool = trust {
     ) || u.s_starts(
         t,
         c"catch"
-    ) || u.s_starts(t, c"except") || u.s_starts(t, c"raise ") || u.s_starts(t, c"throw ") || u.s_starts(
+    ) || u.s_starts(
+        t,
+        c"except"
+    ) || u.s_starts(t, c"raise ") || u.s_starts(t, c"throw ") || u.s_starts(
         t,
         c"var "
     ) || u.s_starts(t, c"var\t") || u.s_eq(t, c"var") {
