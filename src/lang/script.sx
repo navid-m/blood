@@ -1356,6 +1356,9 @@ fn native_id(name: ref u8) i64 = trust {
     if u.s_eq(name, c"say") {
         return 50
     }
+    if u.s_eq(name, c"mkdir_p") {
+        return 51
+    }
     return 0
 }
 
@@ -2247,6 +2250,9 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         }
         return v_str(u.buf_take(b))
     }
+    if id == 51 {
+        return v_bool(u.mkdir_p(u.expand_tilde(v_to_str(arg(args, 0)))))
+    }
     if id == 99 {
         return v_nil()
     }
@@ -2504,6 +2510,9 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
         }
         if u.s_eq(name, c"len") {
             return v_int(u.s_len(s))
+        }
+        if u.s_eq(name, c"abs") {
+            return v_str(u.absolute_path(s))
         }
         if u.s_eq(name, c"parent") {
             return call_native(44, args_for(obj), n)
@@ -3393,6 +3402,7 @@ pub fn script_init() void = trust {
     define_std_native(stdm, c"is_executable")
     define_std_native(stdm, c"which")
     define_std_native(stdm, c"mktemp_dir")
+    define_std_native(stdm, c"mkdir_p")
     define_std_native(stdm, c"remove_file")
     define_std_native(stdm, c"remove_all")
     define_std_native(stdm, c"parent")

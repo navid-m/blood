@@ -3400,6 +3400,8 @@ combines stderr into `stdout`; `cwd` sets the child working directory.
 |`std.is_executable(path)` |1 |Whether a path is executable.
 |`std.which(name)` |1 |Search `PATH` and return the executable path, or null.
 |`std.mktemp_dir(prefix)` |1 |Create and return a unique temporary directory.
+|`std.mkdir_p(path)` |1 |Create a directory and any missing parent directories.
+Returns a boolean.
 |`std.remove_file(path)` |1 |Remove one file. Returns a boolean.
 |`std.remove_all(path_or_list)` |1 |Recursively remove paths. Returns a boolean.
 |`std.parent(path)` |1 |Directory component of a path.
@@ -3517,6 +3519,8 @@ final element; `\r\n` is accepted.
 |`parent()` |0 |Directory component of a path.
 |`basename()` |0 |Final component of a path.
 |`stem()` |0 |Final component of a path with its last extension removed.
+|`abs()` |0 |Absolute, cleaned path. Expands `~` and resolves relative paths
+against the current directory.
 |`exists()` |0 |Whether the path exists.
 |`is_file()` |0 |Whether the path exists and is not a directory.
 |`is_dir()` |0 |Whether the path is a directory.
