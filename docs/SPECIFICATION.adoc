@@ -618,10 +618,9 @@ searches from newest to oldest.
 
 The interactive shell collects input in three situations:
 
-* A script line that begins a block, recognised by a trailing `{` (or by the
-  deprecated trailing `:`) on a line that has the shape of a scripting
-  statement. Subsequent lines are collected until the block is balanced or,
-  for the colon style, until an empty line.
+* A script line that begins a block, recognised by a trailing `{` on a line
+  that has the shape of a scripting statement. Subsequent lines are collected
+  until the block is balanced.
 * A line with unbalanced parentheses, brackets, braces, or quotes. Lines are
   collected until balance is restored.
 * A line ending in a backslash. The backslash-newline sequence is removed by
@@ -1210,10 +1209,8 @@ and call arguments.
 A semicolon `;` may separate simple statements on one line. A single-line
 suite may also follow the opening brace.
 
-The older Python-like style, which introduced blocks with a trailing colon
-and indentation, is deprecated. It remains accepted for compatibility, but
-new scripts should use braces. A single source file must use one style
-consistently.
+A trailing colon does not introduce a block. Python-like suites are rejected
+with a syntax error.
 
 ==== Keywords
 
@@ -1564,6 +1561,7 @@ function. For example:
 ----
 var lines = sh("test-suite").stdout.lines()
 var passes = lines.count(|l| l.starts_with("[pass]"))
+----
 
 
 ==== Exceptions
@@ -1899,8 +1897,8 @@ Integers and floats provide `abs()`, returning a float.
 === Script grammar
 
 The following grammar describes the scripting language accepted by the
-implementation. Indentation terminals `INDENT`, `DEDENT`, `NEWLINE`, and `EOF`
-are produced by the lexer as described above. `SHELL` is a statement produced
+implementation. `NEWLINE` and `EOF` are produced by the lexer as described
+above. `SHELL` is a statement produced
 by the heuristic described in <<shell-command-statements>>. `STRING` is a
 string literal, including interpolation text. `CMDSUB` is a command
 substitution token.
@@ -1922,15 +1920,14 @@ CMDSUB       = "`" { any-byte } "`"
              | "$(" { any-byte } ")" ;
 ....
 
-The lexer emits `NEWLINE`, `INDENT`, and `DEDENT` according to the indentation
-rules. In the deprecated colon style it ignores newlines and indentation while
-the delimiter depth is greater than zero. In the brace style it emits no
-`INDENT` or `DEDENT` tokens and newlines separate statements inside braces.
+The lexer emits `NEWLINE` and `EOF`. Indentation carries no meaning. Newlines
+are ignored while the delimiter depth of parentheses or brackets is greater
+than zero, and newlines separate statements inside braces.
 
 ==== Syntactic grammar
 
 ....
-program      = { NEWLINE | INDENT | DEDENT | statement } EOF ;
+program      = { NEWLINE | statement } EOF ;
 
 statement    = say-stmt
              | return-stmt
@@ -1951,9 +1948,7 @@ statement    = say-stmt
              | expression-stmt
              | SHELL ;
 
-suite        = "{" { NEWLINE | INDENT | DEDENT | ";" | statement } "}"
-             | ":" ( NEWLINE INDENT { statement } DEDENT
-                   | inline-stmt { ";" inline-stmt } [ NEWLINE ] ) ;
+suite        = "{" { NEWLINE | ";" | statement } "}" ;
 
 inline-stmt  = say-stmt | return-stmt | break-stmt | continue-stmt
              | pass-stmt | raise-stmt | var-stmt | assignment | export-stmt

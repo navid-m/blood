@@ -1,4 +1,4 @@
-val u = use("../src/core/util.sx")
+val u   = use("../src/core/util.sx")
 val cfg = use("../src/core/config.sx")
 
 fn has_item(v: ref u.Vec, value: ref u8) bool = trust {
@@ -197,7 +197,10 @@ test "persist_value replaces keys and creates sections" {
     trust {
         val path: ref u8 = c"/tmp/blood-unit-config/persist.ini"
         assert u.mkdir_p(u.path_dir(path))
-        assert u.write_file(path, c"# keep this comment\n[prompt]\ntheme = default\nshow_git = true\n")
+        assert u.write_file(
+            path,
+            c"# keep this comment\n[prompt]\ntheme = default\nshow_git = true\n"
+        )
 
         assert cfg.persist_value(path, c"prompt", c"theme", c"hacker")
         assert cfg.persist_value(path, c"prompt", c"show_git", c"false")

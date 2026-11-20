@@ -1,8 +1,8 @@
 val script = use("../src/lang/script.sx")
-val u = use("../src/core/util.sx")
-val cfg = use("../src/core/config.sx")
-val hist = use("../src/core/history.sx")
-val sh = use("../src/shell/shell.sx")
+val u      = use("../src/core/util.sx")
+val cfg    = use("../src/core/config.sx")
+val hist   = use("../src/core/history.sx")
+val sh     = use("../src/shell/shell.sx")
 
 val g_shell_runs: mut i64 = 0
 
@@ -101,7 +101,11 @@ test "source shares the current script environment" {
         val lib_path: ref u8 = u.path_join(dir, c"lib.bx")
         assert u.write_file(lib_path, c"var y = 7\nfn bump() {\n    return y + 1\n}\n")
         val main_path: ref u8 = u.path_join(dir, c"main.bx")
-        val code: ref u8 = u.s_cat3(c"std.source(\"", lib_path, c"\")\nif y != 7 or bump() != 8 {\n    raise \"source env\"\n}\n")
+        val code: ref u8 = u.s_cat3(
+            c"std.source(\"",
+            lib_path,
+            c"\")\nif y != 7 or bump() != 8 {\n    raise \"source env\"\n}\n"
+        )
         assert u.write_file(main_path, code)
         assert script.run_file(main_path) == 0
     }
@@ -356,6 +360,7 @@ test "script detects lines that need continuation" {
         assert !script.needs_continuation(c"x = 1")
         assert !script.needs_continuation(c"[1, 2]")
         assert !script.needs_continuation(c"say \"closed\"")
+        assert !script.needs_continuation(c"if true:")
     }
 }
 

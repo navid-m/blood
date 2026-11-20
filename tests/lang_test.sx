@@ -1,5 +1,5 @@
 val lang = use("../src/lang/lang.sx")
-val u = use("../src/core/util.sx")
+val u    = use("../src/core/util.sx")
 
 fn token_at(toks: ref u.Vec, i: i64) ref lang.Token = trust {
     return u.vec_p(toks, i) as ref lang.Token
@@ -333,6 +333,17 @@ test "parser accepts brace blocks" {
         assert kid(f, 0).kind == lang.NodeKind.Block
         assert kid(kid(f, 0), 0).kind == lang.NodeKind.Say
         assert lang.last_error() == none
+    }
+}
+
+test "parser rejects colon blocks" {
+    trust {
+        lang.parse(c"if true:\n    say \"x\"\n")
+        assert lang.last_error() != none
+        assert u.s_eq(lang.last_error(), c"colon blocks are not supported; use braces")
+
+        lang.parse(c"fn main():\n    say \"x\"\n")
+        assert lang.last_error() != none
     }
 }
 

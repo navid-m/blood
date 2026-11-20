@@ -1,5 +1,5 @@
 val format = use("../src/lang/format.sx")
-val u = use("../src/core/util.sx")
+val u      = use("../src/core/util.sx")
 
 test "formatter normalizes braces, indentation and assignments" {
     trust {

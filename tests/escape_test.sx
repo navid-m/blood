@@ -1,9 +1,9 @@
-val u = use("../src/core/util.sx")
-val cfg = use("../src/core/config.sx")
-val hist = use("../src/core/history.sx")
-val sh = use("../src/shell/shell.sx")
+val u      = use("../src/core/util.sx")
+val cfg    = use("../src/core/config.sx")
+val hist   = use("../src/core/history.sx")
+val sh     = use("../src/shell/shell.sx")
 val script = use("../src/lang/script.sx")
-val esc = use("../src/shell/escape.sx")
+val esc    = use("../src/shell/escape.sx")
 
 fn setup(path: ref u8) ref cfg.Config = trust {
     val c: mut ref cfg.Config = cfg.load_config_from(path)
@@ -46,7 +46,10 @@ test ":cfg updates running config and saves blood.ini" {
     trust {
         val path: ref u8 = c"/tmp/blood-unit-escape/cfg.ini"
         assert u.mkdir_p(u.path_dir(path))
-        assert u.write_file(path, c"# keep this comment\n[prompt]\ntheme = default\nshow_git = true\n")
+        assert u.write_file(
+            path,
+            c"# keep this comment\n[prompt]\ntheme = default\nshow_git = true\n"
+        )
         val c: mut ref cfg.Config = setup(path)
         val h: mut ref hist.History = new_history(c)
 
@@ -110,7 +113,10 @@ test ":rla reloads config, aliases and .bloodrc" {
         val h: mut ref hist.History = new_history(c)
 
         val rc: ref u8 = u.path_join(dir, c".bloodrc")
-        assert u.write_file(rc, c"alias ll='echo reloaded'\nval user_paths = [\"bin\"]\nfn prelude() {\n    std.write_file(\"/tmp/blood-unit-escape/reload/prelude.txt\", \"ran\")\n}\nprelude()\n")
+        assert u.write_file(
+            rc,
+            c"alias ll='echo reloaded'\nval user_paths = [\"bin\"]\nfn prelude() {\n    std.write_file(\"/tmp/blood-unit-escape/reload/prelude.txt\", \"ran\")\n}\nprelude()\n"
+        )
         val marker: ref u8 = u.path_join(dir, c"prelude.txt")
 
         assert esc.handle(c":rla", c, h) == 0

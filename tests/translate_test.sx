@@ -1,6 +1,6 @@
-val tr = use("../src/lang/translate.sx")
+val tr   = use("../src/lang/translate.sx")
 val lang = use("../src/lang/lang.sx")
-val u = use("../src/core/util.sx")
+val u    = use("../src/core/util.sx")
 
 fn parses(src: ref u8) bool = trust {
     lang.clear_error()

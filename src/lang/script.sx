@@ -4158,9 +4158,6 @@ pub fn needs_continuation(line: ref u8) bool = trust {
     if n > 0 && @load8(@ptradd(t, n - 1)) == 92 {
         return true
     }
-    if n > 0 && @load8(@ptradd(t, n - 1)) == 58 && looks_like_script(t) {
-        return true
-    }
     // Unbalanced quotes or brackets.
     val quote: mut u8 = 0
     val depth: mut i64 = 0

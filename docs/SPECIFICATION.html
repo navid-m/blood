@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="generator" content="Asciidoctor 2.0.26">
+<meta name="generator" content="Asciidoctor 2.0.20">
 <title>Blood Shell Specification</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700">
 <style>
@@ -116,6 +116,7 @@ h1 strong,h2 strong,h3 strong,#toctitle strong,.sidebarblock>.content>.title str
 :not(pre):not([class^=L])>code{font-size:.9375em;font-style:normal!important;letter-spacing:0;padding:.1em .5ex;word-spacing:-.15em;background:#f7f7f8;border-radius:4px;line-height:1.45;text-rendering:optimizeSpeed}
 pre{color:rgba(0,0,0,.9);font-family:"Droid Sans Mono","DejaVu Sans Mono",monospace;line-height:1.45;text-rendering:optimizeSpeed}
 pre code,pre pre{color:inherit;font-size:inherit;line-height:inherit}
+pre>code{display:block}
 pre.nowrap,pre.nowrap pre{white-space:pre;word-wrap:normal}
 em em{font-style:normal}
 strong strong{font-weight:400}
@@ -139,7 +140,7 @@ p a>code:hover{color:rgba(0,0,0,.9)}
 #content::before{content:none}
 #header>h1:first-child{color:rgba(0,0,0,.85);margin-top:2.25rem;margin-bottom:0}
 #header>h1:first-child+#toc{margin-top:8px;border-top:1px solid #dddddf}
-#header>h1:only-child{border-bottom:1px solid #dddddf;padding-bottom:8px}
+#header>h1:only-child,body.toc2 #header>h1:nth-last-child(2){border-bottom:1px solid #dddddf;padding-bottom:8px}
 #header .details{border-bottom:1px solid #dddddf;line-height:1.45;padding-top:.25em;padding-bottom:.25em;padding-left:.25em;color:rgba(0,0,0,.6);display:flex;flex-flow:row wrap}
 #header .details span:first-child{margin-left:-.125em}
 #header .details span.email a{color:rgba(0,0,0,.85)}
@@ -161,7 +162,6 @@ p a>code:hover{color:rgba(0,0,0,.9)}
 #toctitle{color:#7a2518;font-size:1.2em}
 @media screen and (min-width:768px){#toctitle{font-size:1.375em}
 body.toc2{padding-left:15em;padding-right:0}
-body.toc2 #header>h1:nth-last-child(2){border-bottom:1px solid #dddddf;padding-bottom:8px}
 #toc.toc2{margin-top:0!important;background:#f8f8f7;position:fixed;width:15em;left:0;top:0;border-right:1px solid #e7e7e9;border-top-width:0!important;border-bottom-width:0!important;z-index:1000;padding:1.25em 1em;height:100%;overflow:auto}
 #toc.toc2 #toctitle{margin-top:0;margin-bottom:.8rem;font-size:1.2em}
 #toc.toc2>ul{font-size:.9em;margin-bottom:0}
@@ -218,7 +218,6 @@ table.tableblock.fit-content>caption.title{white-space:nowrap;width:0}
 .literalblock pre,.listingblock>.content>pre:not(.highlight),.listingblock>.content>pre[class=highlight],.listingblock>.content>pre[class^="highlight "]{background:#f7f7f8}
 .literalblock.output pre{color:#f7f7f8;background:rgba(0,0,0,.9)}
 .listingblock>.content{position:relative}
-.listingblock pre>code{display:block}
 .listingblock code[data-lang]::before{display:none;content:attr(data-lang);position:absolute;font-size:.75em;top:.425rem;right:.5rem;line-height:1;text-transform:uppercase;color:inherit;opacity:.5}
 .listingblock:hover code[data-lang]::before{display:block}
 .listingblock.terminal pre .command::before{content:attr(data-prompt);padding-right:.5em;color:inherit;opacity:.5}
@@ -328,7 +327,7 @@ a.image{text-decoration:none;display:inline-block}
 a.image object{pointer-events:none}
 sup.footnote,sup.footnoteref{font-size:.875em;position:static;vertical-align:super}
 sup.footnote a,sup.footnoteref a{text-decoration:none}
-sup.footnote a:active,sup.footnoteref a:active,#footnotes .footnote a:first-of-type:active{text-decoration:underline}
+sup.footnote a:active,sup.footnoteref a:active{text-decoration:underline}
 #footnotes{padding-top:.75em;padding-bottom:.75em;margin-bottom:.625em}
 #footnotes hr{width:20%;min-width:6.25em;margin:-.25em 0 .75em;border-width:1px 0 0}
 #footnotes .footnote{padding:0 .375em 0 .225em;line-height:1.3334;font-size:.875em;margin-left:1.2em;margin-bottom:.2em}
@@ -1608,10 +1607,9 @@ searches from newest to oldest.</p>
 <div class="ulist">
 <ul>
 <li>
-<p>A script line that begins a block, recognised by a trailing <code>{</code> (or by the
-deprecated trailing <code>:</code>) on a line that has the shape of a scripting
-statement. Subsequent lines are collected until the block is balanced or,
-for the colon style, until an empty line.</p>
+<p>A script line that begins a block, recognised by a trailing <code>{</code> on a line
+that has the shape of a scripting statement. Subsequent lines are collected
+until the block is balanced.</p>
 </li>
 <li>
 <p>A line with unbalanced parentheses, brackets, braces, or quotes. Lines are
@@ -2641,10 +2639,8 @@ and call arguments.</p>
 suite may also follow the opening brace.</p>
 </div>
 <div class="paragraph">
-<p>The older Python-like style, which introduced blocks with a trailing colon
-and indentation, is deprecated. It remains accepted for compatibility, but
-new scripts should use braces. A single source file must use one style
-consistently.</p>
+<p>A trailing colon does not introduce a block. Python-like suites are rejected
+with a syntax error.</p>
 </div>
 </div>
 <div class="sect3">
@@ -3183,367 +3179,885 @@ function. For example:</p>
 <div class="listingblock">
 <div class="content">
 <pre class="highlight"><code>var lines = sh("test-suite").stdout.lines()
-var passes = lines.count(|l| l.starts_with("[pass]"))
-
-
-==== Exceptions
-
-[source]</code></pre>
+var passes = lines.count(|l| l.starts_with("[pass]"))</code></pre>
 </div>
 </div>
-<div class="paragraph">
-<p>try {
+</div>
+<div class="sect3">
+<h4 id="_exceptions">Exceptions</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>try {
     BLOCK
 } catch NAME {
     BLOCK
-}</p>
+}</code></pre>
 </div>
-<div class="listingblock">
-<div class="content">
-<pre>`except` may be used in place of `catch`. The catch variable is optional and
+</div>
+<div class="paragraph">
+<p><code>except</code> may be used in place of <code>catch</code>. The catch variable is optional and
 receives the error message as a string. A caught error clears the error state
-and execution continues after the `try` statement.
-
-[source]</pre>
-</div>
-</div>
-<div class="paragraph">
-<p>raise EXPRESSION
-throw EXPRESSION</p>
+and execution continues after the <code>try</code> statement.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre>Both spellings raise a runtime error whose message is the string
+<pre class="highlight"><code>raise EXPRESSION
+throw EXPRESSION</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Both spellings raise a runtime error whose message is the string
 representation of the expression. If the expression is omitted, the message is
-the string representation of null, namely `null`.
-
-==== `defer`
-
-[source]</pre>
+the string representation of null, namely <code>null</code>.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_defer"><code>defer</code></h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>defer EXPRESSION
+defer {
+    ...
+}</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>defer EXPRESSION
-defer {
-    &#8230;&#8203;
-}</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre>Deferred statements run in last-in-first-out order when the enclosing function
-returns, when the script finishes, or when `exit()` is called. Pending defers
+<p>Deferred statements run in last-in-first-out order when the enclosing function
+returns, when the script finishes, or when <code>exit()</code> is called. Pending defers
 also run while an uncaught runtime error unwinds. A deferred block runs in the
-environment where it was registered.
-
-A single-expression defer is evaluated when it runs, not when it is
+environment where it was registered.</p>
+</div>
+<div class="paragraph">
+<p>A single-expression defer is evaluated when it runs, not when it is
 registered. Function arguments are therefore read at defer time, and variables
-changed after the `defer` statement are seen in their final state. Use a block
-form when the timing of side effects matters.
-
-==== Other statements
-
-* `pass` does nothing.
-* `break` exits the innermost loop.
-* `continue` begins the next iteration of the innermost loop.
-* Shell command statements execute the command line in the shell and assign
-  the resulting status to `status`.
-
-==== Shell command statements
-
-A statement that does not match a scripting statement is treated as a shell
+changed after the <code>defer</code> statement are seen in their final state. Use a block
+form when the timing of side effects matters.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_other_statements">Other statements</h4>
+<div class="ulist">
+<ul>
+<li>
+<p><code>pass</code> does nothing.</p>
+</li>
+<li>
+<p><code>break</code> exits the innermost loop.</p>
+</li>
+<li>
+<p><code>continue</code> begins the next iteration of the innermost loop.</p>
+</li>
+<li>
+<p>Shell command statements execute the command line in the shell and assign
+the resulting status to <code>status</code>.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_shell_command_statements">Shell command statements</h4>
+<div class="paragraph">
+<p>A statement that does not match a scripting statement is treated as a shell
 command when it has a command-like shape. The current implementation uses a
-lookahead heuristic:
-
-* A leading identifier followed by an opening parenthesis, bracket, dot, or an
-  assignment operator is an expression or assignment.
-* A leading identifier followed by another identifier, literal, or most
-  operators is a shell command.
-* A statement beginning with `/`, `.`, or `~` is a shell command.
-* Lines beginning with `if`, `while`, `for`, `fn`, `try`, `catch`, `except`,
-  `raise`, `throw`, `say`, `return`, `break`, `continue`, `pass`, `defer`, or
-  `export` are scripting statements.
-
-The entire remaining source line is passed to the shell command interpreter.
+lookahead heuristic:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>A leading identifier followed by an opening parenthesis, bracket, dot, or an
+assignment operator is an expression or assignment.</p>
+</li>
+<li>
+<p>A leading identifier followed by another identifier, literal, or most
+operators is a shell command.</p>
+</li>
+<li>
+<p>A statement beginning with <code>/</code>, <code>.</code>, or <code>~</code> is a shell command.</p>
+</li>
+<li>
+<p>Lines beginning with <code>if</code>, <code>while</code>, <code>for</code>, <code>fn</code>, <code>try</code>, <code>catch</code>, <code>except</code>,
+<code>raise</code>, <code>throw</code>, <code>say</code>, <code>return</code>, <code>break</code>, <code>continue</code>, <code>pass</code>, <code>defer</code>, or
+<code>export</code> are scripting statements.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The entire remaining source line is passed to the shell command interpreter.
 This permits pipelines, redirections, and command substitution without a
-wrapper.
-
-=== Scoping and environment
-
-Each function call creates a new environment. The global environment is the
+wrapper.</p>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_scoping_and_environment">Scoping and environment</h3>
+<div class="paragraph">
+<p>Each function call creates a new environment. The global environment is the
 shared script state. A name lookup proceeds from the current environment
 through parent environments. Because function environments have the global
 environment as their parent, a function can read and update global variables
-but cannot capture local variables of a caller.
-
-A binding created by `for` is assigned in the current environment and is
-visible after the loop.
-
-Executing a script file as a command runs it in a fresh top-level environment.
-Its `var` and `fn` declarations do not leak into the interactive session, so
-the same script can be run repeatedly. `source` and startup files execute in
-the current environment instead, so their declarations remain visible.
-
-The working directory is process-global, not scoped. `cd(path)` calls `chdir`
-in the interpreter process, updates `PWD`, and affects all later shell
-commands, `run` calls, and file operations. There is no automatic restoration
-on function return.
-
-=== Error handling and diagnostics
-
-Syntax errors are detected before execution. A syntax error prints:
-
-[source]</pre>
-</div>
+but cannot capture local variables of a caller.</p>
 </div>
 <div class="paragraph">
-<p>blood: LABEL:LINE:COL: MESSAGE</p>
+<p>A binding created by <code>for</code> is assigned in the current environment and is
+visible after the loop.</p>
+</div>
+<div class="paragraph">
+<p>Executing a script file as a command runs it in a fresh top-level environment.
+Its <code>var</code> and <code>fn</code> declarations do not leak into the interactive session, so
+the same script can be run repeatedly. <code>source</code> and startup files execute in
+the current environment instead, so their declarations remain visible.</p>
+</div>
+<div class="paragraph">
+<p>The working directory is process-global, not scoped. <code>cd(path)</code> calls <code>chdir</code>
+in the interpreter process, updates <code>PWD</code>, and affects all later shell
+commands, <code>run</code> calls, and file operations. There is no automatic restoration
+on function return.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_error_handling_and_diagnostics">Error handling and diagnostics</h3>
+<div class="paragraph">
+<p>Syntax errors are detected before execution. A syntax error prints:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre>where `LABEL` is the script path, `stdin`, or `-c`, and execution of the script
-aborts with status 2.
-
-Runtime errors print the same form and abort the script with status 1 unless
-caught by `try`. An interactive script interrupted by SIGINT is reported as
-status 130 without printing the message `interrupted`.
-
-Runtime error messages include, among others:
-
-* `undefined variable 'NAME'`
-* `attempt to call a non-function value`
-* `list index out of range`
-* `string index out of range`
-* `value is not indexable`
-* `value does not support attribute assignment`
-* `division by zero`
-* `unknown method 'NAME'`
-* `recursion limit exceeded`
-* `interrupted`
-
-=== Standard variables
-
-[cols="1,3",options="header"]
-|===
-|Name |Meaning
-|`status` |Status of the most recent shell command, command substitution, or
-shell-valued operation in the script. Initialised to 0.
-|`args` |List of command-line arguments passed after the script name.
-|`__file__` |Path of the currently executing script, set by script file
-execution.
-|`null` |The null value.
-|`true`, `false` |Boolean values.
-|===
-
-`status` is also updated after a command substitution and after a shell
+<pre class="highlight"><code>blood: LABEL:LINE:COL: MESSAGE</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>where <code>LABEL</code> is the script path, <code>stdin</code>, or <code>-c</code>, and execution of the script
+aborts with status 2.</p>
+</div>
+<div class="paragraph">
+<p>Runtime errors print the same form and abort the script with status 1 unless
+caught by <code>try</code>. An interactive script interrupted by SIGINT is reported as
+status 130 without printing the message <code>interrupted</code>.</p>
+</div>
+<div class="paragraph">
+<p>Runtime error messages include, among others:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>undefined variable 'NAME'</code></p>
+</li>
+<li>
+<p><code>attempt to call a non-function value</code></p>
+</li>
+<li>
+<p><code>list index out of range</code></p>
+</li>
+<li>
+<p><code>string index out of range</code></p>
+</li>
+<li>
+<p><code>value is not indexable</code></p>
+</li>
+<li>
+<p><code>value does not support attribute assignment</code></p>
+</li>
+<li>
+<p><code>division by zero</code></p>
+</li>
+<li>
+<p><code>unknown method 'NAME'</code></p>
+</li>
+<li>
+<p><code>recursion limit exceeded</code></p>
+</li>
+<li>
+<p><code>interrupted</code></p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_standard_variables">Standard variables</h3>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 75%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Name</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>status</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Status of the most recent shell command, command substitution, or
+shell-valued operation in the script. Initialised to 0.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>args</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List of command-line arguments passed after the script name.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code><em>file</em></code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Path of the currently executing script, set by script file
+execution.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>null</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">The null value.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code>, <code>false</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Boolean values.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p><code>status</code> is also updated after a command substitution and after a shell
 command statement. A failed shell command does not raise a script error; it
-sets `status`.
-
-`status` is deprecated for new scripts. `sh` and `run` return a result
-dictionary with `status`, `stdout`, `stderr`, and `ok` fields; use those
-fields instead. `status` remains available while existing scripts are
-migrated.
-
-=== Builtin functions
-
-Builtins are grouped in the `std` namespace. They are ordinary function values
-and can be called as `std.len(x)`, `std.read_file(path)`, and so on.
-
-A small bare-name prelude is also available: the `say` statement and the
-functions `print`, `eprint`, `exit`, `cd`, `run`, `len`, `str`, `range`, and
-`sh`. These names may be shadowed by user definitions; a warning is written to
-standard error when that happens. The `std.` forms are always available and
-never shadowed, so `std.print(...)`, `std.len(...)`, and `std.sh(...)` are the
-unambiguous spellings.
-
-The `std.os` value is the host platform name, either `darwin` or `linux`:
-
-[source]</pre>
-</div>
+sets <code>status</code>.</p>
 </div>
 <div class="paragraph">
-<p>if std.os == "darwin" {
-    say "hi macos"
-}</p>
+<p><code>status</code> is deprecated for new scripts. <code>sh</code> and <code>run</code> return a result
+dictionary with <code>status</code>, <code>stdout</code>, <code>stderr</code>, and <code>ok</code> fields; use those
+fields instead. <code>status</code> remains available while existing scripts are
+migrated.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_builtin_functions">Builtin functions</h3>
+<div class="paragraph">
+<p>Builtins are grouped in the <code>std</code> namespace. They are ordinary function values
+and can be called as <code>std.len(x)</code>, <code>std.read_file(path)</code>, and so on.</p>
+</div>
+<div class="paragraph">
+<p>A small bare-name prelude is also available: the <code>say</code> statement and the
+functions <code>print</code>, <code>eprint</code>, <code>exit</code>, <code>cd</code>, <code>run</code>, <code>len</code>, <code>str</code>, <code>range</code>, and
+<code>sh</code>. These names may be shadowed by user definitions; a warning is written to
+standard error when that happens. The <code>std.</code> forms are always available and
+never shadowed, so <code>std.print(&#8230;&#8203;)</code>, <code>std.len(&#8230;&#8203;)</code>, and <code>std.sh(&#8230;&#8203;)</code> are the
+unambiguous spellings.</p>
+</div>
+<div class="paragraph">
+<p>The <code>std.os</code> value is the host platform name, either <code>darwin</code> or <code>linux</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre>[cols="1,1,3",options="header"]
-|===
-|Function |Arity |Behaviour
-|`std.say(...)` |variadic |Join arguments with spaces, append newline, write to
-standard output. Equivalent to the `say` statement. Returns null.
-|`std.len(x)` |1 |Length of a list, dictionary, or string. String length is bytes.
-For other values, length of the string representation.
-|`std.str(x)` |1 |String representation.
-|`std.int(x)` |1 |Convert to integer.
-|`std.float(x)` |1 |Convert to float.
-|`std.bool(x)` |1 |Truthiness as a boolean.
-|`std.range(a)` / `std.range(a,b)` |1 or 2 |List of integers from `a` (inclusive) to
-`b` (exclusive). With one argument, starts at 0.
-|`std.print(...)` |variadic |Join arguments with spaces, append newline, write to
-standard output. Returns null.
-|`std.input([prompt])` |0 or 1 |Write prompt if supplied, read one line from
-standard input. Returns a string, or null on end of input.
-|`std.sleep(ms)` |1 |Sleep for the given number of milliseconds.
-|`std.exit([code])` |0 or 1 |Request shell exit with the given status. Default 0.
-|`sh(command, check: bool)` |1 |Execute a command line and return a result
-dictionary with `status`, `stdout`, `stderr`, and `ok`. Both output streams are
-captured. With `check: true`, a non-zero status raises a runtime error.
-|`std.run(argv, merge_stderr: bool, cwd: string)` |1 |Execute a list of arguments
-directly without a shell and return a result dictionary. `merge_stderr`
-combines stderr into `stdout`; `cwd` sets the child working directory.
-|`std.eprint(...)` |variadic |Like `print`, but writes to standard error.
-|`std.indent(text, n)` |2 |Prefix every line in `text` with `n` spaces.
-|`std.exists(path)` |1 |Whether a path exists.
-|`std.is_file(path)` |1 |Whether a path exists and is not a directory.
-|`std.is_dir(path)` |1 |Whether a path is a directory.
-|`std.is_executable(path)` |1 |Whether a path is executable.
-|`std.which(name)` |1 |Search `PATH` and return the executable path, or null.
-|`std.mktemp_dir(prefix)` |1 |Create and return a unique temporary directory.
-|`std.mkdir_p(path)` |1 |Create a directory and any missing parent directories.
-Returns a boolean.
-|`std.remove_file(path)` |1 |Remove one file. Returns a boolean.
-|`std.remove_all(path_or_list)` |1 |Recursively remove paths. Returns a boolean.
-|`std.parent(path)` |1 |Directory component of a path.
-|`std.basename(path)` |1 |Final component of a path.
-|`std.stem(path)` |1 |Final component with its last extension removed.
-|`std.join(a, b)` |2 |Join two path components.
-|`std.cd(path)` |1 |Change the interpreter working directory. Affects later shell
-and `run` calls and file operations.
-|`std.unified_diff(expected, actual)` |2 |Line-oriented diagnostic diff for test
-harnesses.
-|`std.source(path)` |1 |Execute a Blood script file and return its status.
-|`std.this()` |0 |Name and absolute path of the executing script as a dictionary
-with keys `name` (the final path component) and `path` (absolute). Returns null
-when no script file is executing.
-|`std.this_dir()` |0 |Absolute path of the directory containing the executing
-script. Returns null when no script file is executing.
-|`std.abs(x)` |1 |Absolute numeric value, returned as a float.
-|`std.min(x)` / `std.min(a,b)` |1 or 2 |Minimum of a list, or of two values. With a
-list, returns the smallest element.
-|`std.max(x)` / `std.max(a,b)` |1 or 2 |Maximum of a list, or of two values.
-|`std.sum(list)` |1 |Sum of numeric elements, returned as a float.
-|`std.type(x)` |1 |Type name: `null`, `bool`, `int`, `float`, `string`, `list`,
-`dict`, `function`, or `namespace`.
-|`std.keys(dict)` |1 |List of dictionary keys.
-|`std.values(dict)` |1 |List of dictionary values.
-|`std.items(dict)` |1 |List of `[key, value]` pairs.
-|`std.glob(pattern)` |1 |Expand a pathname pattern and return a sorted list of
-matching paths. An unmatched pattern yields an empty list. A leading `~` is
-expanded.
-|`std.rename(from, to)` |2 |Rename or move a path. Returns a boolean. A leading `~` is expanded in both paths.
-|`std.read_file(path, default: x)` |1 |Read a file. Returns a string, or `x` when
-`default:` is given and the file cannot be read. Without a default, returns
-null.
-|`std.write_file(path, data)` |2 |Write a file. Returns a boolean.
-|`std.append_file(path, data)` |2 |Append to a file. Returns a boolean.
-|`std.env(name, default: x)` |1 |Read an environment variable. Returns `x` when
-`default:` is given and the variable is unset or empty; otherwise returns a
-string or null.
-|`std.clock()` |0 |Milliseconds since the Unix epoch.
-|`std.chr(n)` |1 |One-byte string containing the low byte of `n`.
-|`std.ord(s)` |1 |Integer value of the first byte of `s`, or 0 for the empty
-string.
-|===
-
-`std.keys`, `std.values`, and `std.items` return empty lists when applied to a
-non-dict value. `std.read_file` and `std.write_file` expand a leading `~` in
-the path.
-
-=== Methods
-
-Method calls use the attribute syntax `value.name(arguments)`.
-
-==== List methods
-
-[cols="1,1,2",options="header"]
-|===
-|Method |Arity |Behaviour
-|`append(x)` |1 |Append x. Returns null.
-|`pop()` |0 |Remove and return the last element, or null when empty.
-|`last()` |0 |Return the last element, or null when empty.
-|`len()` |0 |Number of elements.
-|`insert(i,x)` |2 |Insert x at index i.
-|`remove(i)` |1 |Remove the element at index i.
-|`contains(x)` |1 |Membership by equality.
-|`join(sep)` |1 |Join string representations with separator `sep`.
-|`sort()` |0 |Sort in place by string representation.
-|`map(fn)` |1 |New list containing `fn(x)` for each element `x`.
-|`filter(fn)` |1 |New list of elements for which `fn(x)` is truthy.
-|`count([fn])` |0 or 1 |Number of elements. With `fn`, the number of elements
-for which `fn(x)` is truthy.
-|===
-
-==== Dictionary methods
-
-[cols="1,1,2",options="header"]
-|===
-|Method |Arity |Behaviour
-|`get(key[, default: x])` |1 or 2 |Value for key, or the supplied default/null.
-|`set(key, value)` |2 |Set a key.
-|`contains(key)` |1 |Key membership.
-|`keys()` |0 |List of keys.
-|`sorted()` / `sorted_keys()` |0 |New list of keys sorted by string value.
-|`values()` |0 |List of values.
-|`items()` |0 |List of `[key, value]` pairs.
-|`len()` |0 |Number of keys.
-|`remove(key)` |1 |Remove a key.
-|===
-
-Any other method call on a dictionary inserts the first argument as the value
+<pre class="highlight"><code>if std.os == "darwin" {
+    say "hi macos"
+}</code></pre>
+</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 20%;">
+<col style="width: 60%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Function</th>
+<th class="tableblock halign-left valign-top">Arity</th>
+<th class="tableblock halign-left valign-top">Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.say(&#8230;&#8203;)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">variadic</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Join arguments with spaces, append newline, write to
+standard output. Equivalent to the <code>say</code> statement. Returns null.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.len(x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Length of a list, dictionary, or string. String length is bytes.
+For other values, length of the string representation.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.str(x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">String representation.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.int(x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Convert to integer.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.float(x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Convert to float.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.bool(x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Truthiness as a boolean.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.range(a)</code> / <code>std.range(a,b)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1 or 2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List of integers from <code>a</code> (inclusive) to
+<code>b</code> (exclusive). With one argument, starts at 0.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.print(&#8230;&#8203;)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">variadic</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Join arguments with spaces, append newline, write to
+standard output. Returns null.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.input([prompt])</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0 or 1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Write prompt if supplied, read one line from
+standard input. Returns a string, or null on end of input.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.sleep(ms)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Sleep for the given number of milliseconds.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.exit([code])</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0 or 1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Request shell exit with the given status. Default 0.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sh(command, check: bool)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Execute a command line and return a result
+dictionary with <code>status</code>, <code>stdout</code>, <code>stderr</code>, and <code>ok</code>. Both output streams are
+captured. With <code>check: true</code>, a non-zero status raises a runtime error.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.run(argv, merge_stderr: bool, cwd: string)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Execute a list of arguments
+directly without a shell and return a result dictionary. <code>merge_stderr</code>
+combines stderr into <code>stdout</code>; <code>cwd</code> sets the child working directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.eprint(&#8230;&#8203;)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">variadic</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Like <code>print</code>, but writes to standard error.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.indent(text, n)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Prefix every line in <code>text</code> with <code>n</code> spaces.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.exists(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether a path exists.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.is_file(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether a path exists and is not a directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.is_dir(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether a path is a directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.is_executable(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether a path is executable.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.which(name)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Search <code>PATH</code> and return the executable path, or null.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.mktemp_dir(prefix)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Create and return a unique temporary directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.mkdir_p(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Create a directory and any missing parent directories.
+Returns a boolean.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.remove_file(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Remove one file. Returns a boolean.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.remove_all(path_or_list)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Recursively remove paths. Returns a boolean.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.parent(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Directory component of a path.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.basename(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Final component of a path.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.stem(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Final component with its last extension removed.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.join(a, b)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Join two path components.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.cd(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Change the interpreter working directory. Affects later shell
+and <code>run</code> calls and file operations.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.unified_diff(expected, actual)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Line-oriented diagnostic diff for test
+harnesses.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.source(path)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Execute a Blood script file and return its status.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.this()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Name and absolute path of the executing script as a dictionary
+with keys <code>name</code> (the final path component) and <code>path</code> (absolute). Returns null
+when no script file is executing.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.this_dir()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Absolute path of the directory containing the executing
+script. Returns null when no script file is executing.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.abs(x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Absolute numeric value, returned as a float.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.min(x)</code> / <code>std.min(a,b)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1 or 2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Minimum of a list, or of two values. With a
+list, returns the smallest element.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.max(x)</code> / <code>std.max(a,b)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1 or 2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Maximum of a list, or of two values.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.sum(list)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Sum of numeric elements, returned as a float.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.type(x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Type name: <code>null</code>, <code>bool</code>, <code>int</code>, <code>float</code>, <code>string</code>, <code>list</code>,
+<code>dict</code>, <code>function</code>, or <code>namespace</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.keys(dict)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List of dictionary keys.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.values(dict)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List of dictionary values.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.items(dict)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List of <code>[key, value]</code> pairs.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.glob(pattern)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Expand a pathname pattern and return a sorted list of
+matching paths. An unmatched pattern yields an empty list. A leading <code>~</code> is
+expanded.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.rename(from, to)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Rename or move a path. Returns a boolean. A leading <code>~</code> is expanded in both paths.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.read_file(path, default: x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Read a file. Returns a string, or <code>x</code> when
+<code>default:</code> is given and the file cannot be read. Without a default, returns
+null.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.write_file(path, data)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Write a file. Returns a boolean.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.append_file(path, data)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Append to a file. Returns a boolean.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.env(name, default: x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Read an environment variable. Returns <code>x</code> when
+<code>default:</code> is given and the variable is unset or empty; otherwise returns a
+string or null.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.clock()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Milliseconds since the Unix epoch.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.chr(n)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">One-byte string containing the low byte of <code>n</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.ord(s)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Integer value of the first byte of <code>s</code>, or 0 for the empty
+string.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p><code>std.keys</code>, <code>std.values</code>, and <code>std.items</code> return empty lists when applied to a
+non-dict value. <code>std.read_file</code> and <code>std.write_file</code> expand a leading <code>~</code> in
+the path.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_methods">Methods</h3>
+<div class="paragraph">
+<p>Method calls use the attribute syntax <code>value.name(arguments)</code>.</p>
+</div>
+<div class="sect3">
+<h4 id="_list_methods">List methods</h4>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Method</th>
+<th class="tableblock halign-left valign-top">Arity</th>
+<th class="tableblock halign-left valign-top">Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>append(x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Append x. Returns null.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>pop()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Remove and return the last element, or null when empty.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>last()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Return the last element, or null when empty.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>len()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of elements.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>insert(i,x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Insert x at index i.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>remove(i)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Remove the element at index i.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>contains(x)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Membership by equality.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>join(sep)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Join string representations with separator <code>sep</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sort()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Sort in place by string representation.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>map(fn)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">New list containing <code>fn(x)</code> for each element <code>x</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>filter(fn)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">New list of elements for which <code>fn(x)</code> is truthy.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>count([fn])</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0 or 1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of elements. With <code>fn</code>, the number of elements
+for which <code>fn(x)</code> is truthy.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect3">
+<h4 id="_dictionary_methods">Dictionary methods</h4>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Method</th>
+<th class="tableblock halign-left valign-top">Arity</th>
+<th class="tableblock halign-left valign-top">Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>get(key[, default: x])</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1 or 2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Value for key, or the supplied default/null.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>set(key, value)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Set a key.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>contains(key)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Key membership.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>keys()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List of keys.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sorted()</code> / <code>sorted_keys()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">New list of keys sorted by string value.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>values()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List of values.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>items()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List of <code>[key, value]</code> pairs.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>len()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of keys.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>remove(key)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Remove a key.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Any other method call on a dictionary inserts the first argument as the value
 for the method name and returns null. This is an implementation quirk; named
-keys should normally be accessed with indexing or assignment.
-
-==== String methods
-
-[cols="1,1,2",options="header"]
-|===
-|Method |Arity |Behaviour
-|`upper()` |0 |ASCII uppercase.
-|`lower()` |0 |ASCII lowercase.
-|`strip()` |0 |Remove leading and trailing ASCII whitespace.
-|`split(sep)` |1 |Split on `sep`. An empty separator splits UTF-8 code points.
-|`lines()` |0 |Split into lines. A trailing newline does not add an empty
-final element; `\r\n` is accepted.
-|`split_words()` |0 |Split on whitespace, honouring single and double quotes.
-|`startswith(prefix)` / `starts_with(prefix)` |1 |Prefix test.
-|`endswith(suffix)` / `ends_with(suffix)` |1 |Suffix test.
-|`strip_suffix(suffix)` |1 |Remove one trailing suffix when present.
-|`contains(needle)` |1 |Substring test.
-|`matches(pattern)` |1 |Regular-expression search.
-|`replace(from,to)` |2 |Replace all occurrences.
-|`last()` |0 |Return the last UTF-8 code point, or null when empty.
-|`len()` |0 |Byte length.
-|`chars()` |0 |List of UTF-8 code points as strings.
-|`join(list)` |1 |Join a list with the receiver as separator.
-|`parent()` |0 |Directory component of a path.
-|`basename()` |0 |Final component of a path.
-|`stem()` |0 |Final component of a path with its last extension removed.
-|`abs()` |0 |Absolute, cleaned path. Expands `~` and resolves relative paths
-against the current directory.
-|`exists()` |0 |Whether the path exists.
-|`is_file()` |0 |Whether the path exists and is not a directory.
-|`is_dir()` |0 |Whether the path is a directory.
-|`is_executable()` |0 |Whether the path is executable.
-|===
-
-==== Numeric methods
-
-Integers and floats provide `abs()`, returning a float.
-
-=== Script grammar
-
-The following grammar describes the scripting language accepted by the
-implementation. Indentation terminals `INDENT`, `DEDENT`, `NEWLINE`, and `EOF`
-are produced by the lexer as described above. `SHELL` is a statement produced
-by the heuristic described in &lt;&lt;shell-command-statements&gt;&gt;. `STRING` is a
-string literal, including interpolation text. `CMDSUB` is a command
-substitution token.
-
-==== Lexical grammar
-
-....
-letter       = "A".."Z" | "a".."z" ;
+keys should normally be accessed with indexing or assignment.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_string_methods">String methods</h4>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Method</th>
+<th class="tableblock halign-left valign-top">Arity</th>
+<th class="tableblock halign-left valign-top">Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>upper()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ASCII uppercase.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>lower()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ASCII lowercase.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>strip()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Remove leading and trailing ASCII whitespace.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>split(sep)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Split on <code>sep</code>. An empty separator splits UTF-8 code points.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>lines()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Split into lines. A trailing newline does not add an empty
+final element; <code>\r\n</code> is accepted.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>split_words()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Split on whitespace, honouring single and double quotes.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>startswith(prefix)</code> / <code>starts_with(prefix)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Prefix test.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>endswith(suffix)</code> / <code>ends_with(suffix)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Suffix test.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>strip_suffix(suffix)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Remove one trailing suffix when present.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>contains(needle)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Substring test.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>matches(pattern)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Regular-expression search.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>replace(from,to)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Replace all occurrences.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>last()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Return the last UTF-8 code point, or null when empty.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>len()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Byte length.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>chars()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List of UTF-8 code points as strings.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>join(list)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Join a list with the receiver as separator.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>parent()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Directory component of a path.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>basename()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Final component of a path.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stem()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Final component of a path with its last extension removed.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>abs()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Absolute, cleaned path. Expands <code>~</code> and resolves relative paths
+against the current directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>exists()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the path exists.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>is_file()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the path exists and is not a directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>is_dir()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the path is a directory.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>is_executable()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Whether the path is executable.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect3">
+<h4 id="_numeric_methods">Numeric methods</h4>
+<div class="paragraph">
+<p>Integers and floats provide <code>abs()</code>, returning a float.</p>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_script_grammar">Script grammar</h3>
+<div class="paragraph">
+<p>The following grammar describes the scripting language accepted by the
+implementation. <code>NEWLINE</code> and <code>EOF</code> are produced by the lexer as described
+above. <code>SHELL</code> is a statement produced
+by the heuristic described in <a href="#shell-command-statements">[shell-command-statements]</a>. <code>STRING</code> is a
+string literal, including interpolation text. <code>CMDSUB</code> is a command
+substitution token.</p>
+</div>
+<div class="sect3">
+<h4 id="_lexical_grammar">Lexical grammar</h4>
+<div class="literalblock">
+<div class="content">
+<pre>letter       = "A".."Z" | "a".."z" ;
 digit        = "0".."9" ;
 IDENT        = ( letter | "_" ) { letter | digit | "_" } ;
 INT          = digit { digit } ;
@@ -3554,18 +4068,20 @@ STRING       = "'" { string-byte } "'"
              | '"' { string-byte } '"' ;
 RAWSTRING    = ( "r'" { any-byte } "'" | 'r"' { any-byte } '"' ) ;
 CMDSUB       = "`" { any-byte } "`"
-             | "$(" { any-byte } ")" ;
-....
-
-The lexer emits `NEWLINE`, `INDENT`, and `DEDENT` according to the indentation
-rules. In the deprecated colon style it ignores newlines and indentation while
-the delimiter depth is greater than zero. In the brace style it emits no
-`INDENT` or `DEDENT` tokens and newlines separate statements inside braces.
-
-==== Syntactic grammar
-
-....
-program      = { NEWLINE | INDENT | DEDENT | statement } EOF ;
+             | "$(" { any-byte } ")" ;</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The lexer emits <code>NEWLINE</code> and <code>EOF</code>. Indentation carries no meaning. Newlines
+are ignored while the delimiter depth of parentheses or brackets is greater
+than zero, and newlines separate statements inside braces.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_syntactic_grammar">Syntactic grammar</h4>
+<div class="literalblock">
+<div class="content">
+<pre>program      = { NEWLINE | statement } EOF ;
 
 statement    = say-stmt
              | return-stmt
@@ -3586,9 +4102,7 @@ statement    = say-stmt
              | expression-stmt
              | SHELL ;
 
-suite        = "{" { NEWLINE | INDENT | DEDENT | ";" | statement } "}"
-             | ":" ( NEWLINE INDENT { statement } DEDENT
-                   | inline-stmt { ";" inline-stmt } [ NEWLINE ] ) ;
+suite        = "{" { NEWLINE | ";" | statement } "}" ;
 
 inline-stmt  = say-stmt | return-stmt | break-stmt | continue-stmt
              | pass-stmt | raise-stmt | var-stmt | assignment | export-stmt
@@ -3668,165 +4182,254 @@ list-item    = [ "..." ] expression ;
 dict-literal = "{" [ expression ":" expression
                      { "," expression ":" expression } [ "," ] ] "}" ;
 lambda       = "|" [ IDENT { "," IDENT } ] "|"
-               ( expression | "{" { statement } "}" ) ;
-....
-
-`type-text` is accepted and skipped by the parser; type annotations have no
-runtime effect. Any other expression after a parameter's `:` is a default
-value. A `SHELL` statement is recognised by the statement-start heuristic and
-consumes the remainder of the source line.
-
-=== Evaluation order
-
-Expressions are evaluated left to right except where short-circuit operators
-skip the right operand. Function arguments are evaluated left to right.
-Dictionary literal entries are evaluated in source order; iteration order after
-construction is unspecified.
-
-A runtime error sets the error state and stops normal evaluation. `try` catches
-the error at the nearest enclosing `try` statement. A `return`, `break`,
-`continue`, or `exit` is not an error and is not caught by `try`.
-
-=== Limits
-
-* Maximum user-function recursion depth: 200.
-* Maximum displayed completion candidates: 200.
-* History maximum: controlled by configuration.
-* Integer arithmetic is signed 64-bit and is not overflow checked.
-* Floating-point arithmetic follows the platform double implementation.
-* Strings are byte strings; UTF-8 is handled specially only by code-point
-  iteration, string indexing boundaries, and the line editor.
-
-== Diagnostics
-
-=== Configuration diagnostics
-
-Configuration diagnostics are written to standard error and do not stop the
-shell:
-
-[source]</pre>
+               ( expression | "{" { statement } "}" ) ;</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>blood: config: /path/to/blood.ini
-  line N: expected key = value
-blood: config: invalid boolean 'VALUE'
-blood: config: invalid integer for KEY</p>
+<p><code>type-text</code> is accepted and skipped by the parser; type annotations have no
+runtime effect. Any other expression after a parameter&#8217;s <code>:</code> is a default
+value. A <code>SHELL</code> statement is recognised by the statement-start heuristic and
+consumes the remainder of the source line.</p>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_evaluation_order">Evaluation order</h3>
+<div class="paragraph">
+<p>Expressions are evaluated left to right except where short-circuit operators
+skip the right operand. Function arguments are evaluated left to right.
+Dictionary literal entries are evaluated in source order; iteration order after
+construction is unspecified.</p>
+</div>
+<div class="paragraph">
+<p>A runtime error sets the error state and stops normal evaluation. <code>try</code> catches
+the error at the nearest enclosing <code>try</code> statement. A <code>return</code>, <code>break</code>,
+<code>continue</code>, or <code>exit</code> is not an error and is not caught by <code>try</code>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_limits">Limits</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Maximum user-function recursion depth: 200.</p>
+</li>
+<li>
+<p>Maximum displayed completion candidates: 200.</p>
+</li>
+<li>
+<p>History maximum: controlled by configuration.</p>
+</li>
+<li>
+<p>Integer arithmetic is signed 64-bit and is not overflow checked.</p>
+</li>
+<li>
+<p>Floating-point arithmetic follows the platform double implementation.</p>
+</li>
+<li>
+<p>Strings are byte strings; UTF-8 is handled specially only by code-point
+iteration, string indexing boundaries, and the line editor.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_diagnostics">Diagnostics</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_configuration_diagnostics">Configuration diagnostics</h3>
+<div class="paragraph">
+<p>Configuration diagnostics are written to standard error and do not stop the
+shell:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre>=== Shell diagnostics
-
-Shell diagnostics are written to standard error:
-
-[source]</pre>
+<pre class="highlight"><code>blood: config: /path/to/blood.ini
+  line N: expected key = value
+blood: config: invalid boolean 'VALUE'
+blood: config: invalid integer for KEY</code></pre>
 </div>
 </div>
+</div>
+<div class="sect2">
+<h3 id="_shell_diagnostics">Shell diagnostics</h3>
 <div class="paragraph">
-<p>blood: NAME: command not found
+<p>Shell diagnostics are written to standard error:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>blood: NAME: command not found
 blood: PATH: cannot open for reading
 blood: PATH: cannot open for writing
 blood: cd: PATH: no such directory
 blood: source: PATH: no such file
 blood: alias: NAME: not found
-blood: fork failed</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre>Syntax errors in the command language produce status 2. Unknown commands
-produce status 127. Failed redirections and failed builtins produce status 1.
-
-=== Script diagnostics
-
-Script syntax and runtime diagnostics have the form:
-
-[source]</pre>
+blood: fork failed</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>blood: LABEL:LINE:COL: MESSAGE</p>
+<p>Syntax errors in the command language produce status 2. Unknown commands
+produce status 127. Failed redirections and failed builtins produce status 1.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_script_diagnostics">Script diagnostics</h3>
+<div class="paragraph">
+<p>Script syntax and runtime diagnostics have the form:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre>For interactive submissions the label is empty, yielding:
-
-[source]</pre>
+<pre class="highlight"><code>blood: LABEL:LINE:COL: MESSAGE</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>blood: LINE:COL: MESSAGE</p>
+<p>For interactive submissions the label is empty, yielding:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre>=== Interactive messages
-
-Ctrl-C while editing prints `^C` and returns to a new prompt. Ctrl-D on an
+<pre class="highlight"><code>blood: LINE:COL: MESSAGE</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_interactive_messages">Interactive messages</h3>
+<div class="paragraph">
+<p>Ctrl-C while editing prints <code>^C</code> and returns to a new prompt. Ctrl-D on an
 empty line ends the session. A cancelled completion menu or search does not
-execute a command.
-
-== Performance characteristics
-
-The implementation is designed to avoid unnecessary process creation:
-
-* Builtins execute in the shell process outside pipelines.
-* Simple external commands fork and exec directly; `/bin/sh` is not used as
-  an intermediary.
-* Pipelines fork only the stages that are required.
-* Command substitution uses the Blood parser in a child process.
-* Prompt Git information is cached for 1500 milliseconds.
-* The `PATH` executable index used by completion is built lazily and cached.
-* Prompt text is rendered once per command, not once per keystroke.
-* The line editor is byte-oriented and redraws only the prompt line and menu.
-* History appends one entry per command and rewrites the file on exit.
-
-The implementation does not use an arena for shell command parsing. Temporary
+execute a command.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_performance_characteristics">Performance characteristics</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The implementation is designed to avoid unnecessary process creation:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Builtins execute in the shell process outside pipelines.</p>
+</li>
+<li>
+<p>Simple external commands fork and exec directly; <code>/bin/sh</code> is not used as
+an intermediary.</p>
+</li>
+<li>
+<p>Pipelines fork only the stages that are required.</p>
+</li>
+<li>
+<p>Command substitution uses the Blood parser in a child process.</p>
+</li>
+<li>
+<p>Prompt Git information is cached for 1500 milliseconds.</p>
+</li>
+<li>
+<p>The <code>PATH</code> executable index used by completion is built lazily and cached.</p>
+</li>
+<li>
+<p>Prompt text is rendered once per command, not once per keystroke.</p>
+</li>
+<li>
+<p>The line editor is byte-oriented and redraws only the prompt line and menu.</p>
+</li>
+<li>
+<p>History appends one entry per command and rewrites the file on exit.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The implementation does not use an arena for shell command parsing. Temporary
 command structures and script values are allocated from the C heap and are not
 generally reclaimed during the lifetime of the process. This is a known
-limitation of version 0.1.0.
-
-== Known limitations and deviations
-
-The following behaviours are intentional or currently unimplemented and are
-part of the implemented contract:
-
-* The build targets Linux with a POSIX-style C library. The directory-entry
-  layout and terminal handling are Linux-oriented.
-* The prompt has two effective layouts: the default box layout and the `plain`
-  layout. Other `theme` values are treated as default.
-* `show_mode`, `separator`, `color_success`, and `default_editor` are parsed and
-  stored but have no current rendering or builtin effect.
-* `$@`, `$*`, positional parameters beyond `$0`, arrays, and associative shell
-  arrays are not implemented.
-* `~user` is not resolved.
-* Glob expansion does not support brace expansion, recursive `**`, or extglob.
-* Aliases are expanded for single-command input and not as stages of a
-  multi-command pipeline.
-* There are no heredocs, here-strings, process substitution, `|&amp;`, or
-  arbitrary descriptor redirections beyond `2&gt;&amp;N`.
-* The scripting language has no classes, modules, imports, comprehensions,
-  generators, decorators, slicing, varargs, `with`, `assert`, `del`, `global`,
-  or `is`.
-* Type annotations on function parameters are syntactically accepted but
-  ignored.
-* Single-quoted and double-quoted strings both interpolate.
-* Integer division truncates toward zero. There is no floor-division operator.
-* Dictionaries are unordered. Dictionary and function equality is identity
-  equality.
-* List and dictionary assignment aliases the object; there is no copy-on-write
-  or deep copy.
-* String length and `ord`/`chr` are byte-oriented. String indexing advances by
-  UTF-8 code points only at index boundaries.
-* The line editor counts display width in code points, not terminal cells.
-
-== Examples
-
-=== Interactive shell
-
-[source]</pre>
+limitation of version 0.1.0.</p>
 </div>
 </div>
+</div>
+<div class="sect1">
+<h2 id="_known_limitations_and_deviations">Known limitations and deviations</h2>
+<div class="sectionbody">
 <div class="paragraph">
-<p>$ blood
+<p>The following behaviours are intentional or currently unimplemented and are
+part of the implemented contract:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>The build targets Linux with a POSIX-style C library. The directory-entry
+layout and terminal handling are Linux-oriented.</p>
+</li>
+<li>
+<p>The prompt has two effective layouts: the default box layout and the <code>plain</code>
+layout. Other <code>theme</code> values are treated as default.</p>
+</li>
+<li>
+<p><code>show_mode</code>, <code>separator</code>, <code>color_success</code>, and <code>default_editor</code> are parsed and
+stored but have no current rendering or builtin effect.</p>
+</li>
+<li>
+<p><code>$@</code>, <code>$*</code>, positional parameters beyond <code>$0</code>, arrays, and associative shell
+arrays are not implemented.</p>
+</li>
+<li>
+<p><code>~user</code> is not resolved.</p>
+</li>
+<li>
+<p>Glob expansion does not support brace expansion, recursive <code>**</code>, or extglob.</p>
+</li>
+<li>
+<p>Aliases are expanded for single-command input and not as stages of a
+multi-command pipeline.</p>
+</li>
+<li>
+<p>There are no heredocs, here-strings, process substitution, <code>|&amp;</code>, or
+arbitrary descriptor redirections beyond <code>2&gt;&amp;N</code>.</p>
+</li>
+<li>
+<p>The scripting language has no classes, modules, imports, comprehensions,
+generators, decorators, slicing, varargs, <code>with</code>, <code>assert</code>, <code>del</code>, <code>global</code>,
+or <code>is</code>.</p>
+</li>
+<li>
+<p>Type annotations on function parameters are syntactically accepted but
+ignored.</p>
+</li>
+<li>
+<p>Single-quoted and double-quoted strings both interpolate.</p>
+</li>
+<li>
+<p>Integer division truncates toward zero. There is no floor-division operator.</p>
+</li>
+<li>
+<p>Dictionaries are unordered. Dictionary and function equality is identity
+equality.</p>
+</li>
+<li>
+<p>List and dictionary assignment aliases the object; there is no copy-on-write
+or deep copy.</p>
+</li>
+<li>
+<p>String length and <code>ord</code>/<code>chr</code> are byte-oriented. String indexing advances by
+UTF-8 code points only at index boundaries.</p>
+</li>
+<li>
+<p>The line editor counts display width in code points, not terminal cells.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_examples">Examples</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_interactive_shell">Interactive shell</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>$ blood
 ╭─ blood 0.1.0 — type help for commands, help script for the language.
 ┌─ user@host ~/src (main *)
 └─ ❯ echo hello | tr a-z A-Z
@@ -3834,163 +4437,274 @@ HELLO
 ┌─ user@host ~/src (main *)
 └─ ❯ for item in ["one", "two"] {
   …     say item
-  … }</p>
+  … }</code></pre>
 </div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_command_language_2">Command language</h3>
 <div class="listingblock">
 <div class="content">
-<pre>=== Command language
+<pre class="highlight"><code># Pipelines
+ls -l | grep '\.sx$'
 
-[source]</pre>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-<h1 id="_pipelines" class="sect0">Pipelines</h1>
-<div class="openblock partintro">
-<div class="content">
-<div class="paragraph">
-<p>ls -l | grep '\.sx$'</p>
-</div>
-</div>
-</div>
-<h1 id="_redirection" class="sect0">Redirection</h1>
-<div class="openblock partintro">
-<div class="content">
-<div class="paragraph">
-<p>echo hello &gt; out.txt
+# Redirection
+echo hello &gt; out.txt
 cat out.txt &gt;&gt; all.txt
-command 2&gt; errors.txt</p>
-</div>
-</div>
-</div>
-<h1 id="_command_substitution_2" class="sect0">Command substitution</h1>
-<div class="openblock partintro">
-<div class="content">
-<div class="paragraph">
-<p>echo "time is $(date +%H:%M)"</p>
-</div>
-</div>
-</div>
-<h1 id="_background_execution" class="sect0">Background execution</h1>
-<div class="openblock partintro">
-<div class="content">
-<div class="paragraph">
-<p>sleep 5 &amp;
-jobs</p>
-</div>
-</div>
-</div>
-<h1 id="_environment_assignment" class="sect0">Environment assignment</h1>
-<div class="openblock partintro">
-<div class="content">
-<div class="paragraph">
-<p>EDITOR=vim command
+command 2&gt; errors.txt
+
+# Command substitution
+echo "time is $(date +%H:%M)"
+
+# Background execution
+sleep 5 &amp;
+jobs
+
+# Environment assignment
+EDITOR=vim command
 export EDITOR=vim
-unset EDITOR</p>
+unset EDITOR</code></pre>
 </div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_scripting_language_2">Scripting language</h3>
 <div class="listingblock">
 <div class="content">
-<pre>=== Scripting language
+<pre class="highlight"><code>var name = "Blood"
+var version = 1
 
-[source]</pre>
-</div>
-</div>
-<div class="paragraph">
-<p>var name = "Blood"
-var version = 1</p>
-</div>
-<div class="paragraph">
-<p>say "Welcome to {name} {version}"</p>
-</div>
-<div class="paragraph">
-<p>for item in ["one", "two", "three"] {
+say "Welcome to {name} {version}"
+
+for item in ["one", "two", "three"] {
     say item
-}</p>
-</div>
-<div class="paragraph">
-<p>fn greet(person) {
+}
+
+fn greet(person) {
     return "Hello, " + person
-}</p>
-</div>
-<div class="paragraph">
-<p>say greet("world")</p>
-</div>
-<div class="paragraph">
-<p>if version &gt; 0 {
+}
+
+say greet("world")
+
+if version &gt; 0 {
     say "positive"
 } elif version == 0 {
     say "zero"
 } else {
     say "negative"
-}</p>
-</div>
-<div class="paragraph">
-<p>try {
+}
+
+try {
     raise "example failure"
 } catch message {
     say "caught: {message}"
-}</p>
-</div>
-<div class="paragraph">
-<p>var output = <code>printf "a\nb\n"</code>
-say output
-say "status is {status}"</p>
-</div>
-<div class="paragraph">
-<p>sh("true")</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre>== Appendix: default settings
+}
 
-[cols="1,1,1",options="header"]
-|===
-|Section |Key |Default
-|prompt |theme |`default`
-|prompt |show_username |`true`
-|prompt |show_hostname |`true`
-|prompt |show_directory |`true`
-|prompt |show_git |`true`
-|prompt |show_time |`false`
-|prompt |show_exit_status |`true`
-|prompt |show_duration |`true`
-|prompt |show_jobs |`true`
-|prompt |show_mode |`false`
-|prompt |two_line |`true`
-|prompt |directory_style |`full`
-|prompt |prompt_symbol |`❯`
-|prompt |prompt_char |`❯`
-|prompt |separator |`─`
-|colors |primary |`cyan`
-|colors |secondary |`magenta`
-|colors |success |`green`
-|colors |error |`red`
-|colors |directory |`blue`
-|colors |git_clean |`green`
-|colors |git_dirty |`yellow`
-|colors |muted |`bright_black`
-|colors |warning |`yellow`
-|colors |accent |`bright_cyan`
-|history |enabled |`true`
-|history |file |`~/.local/share/blood/history`
-|history |max_entries |`10000`
-|history |ignore_duplicates |`true`
-|completion |enabled |`true`
-|completion |case_sensitive |`false`
-|shell |default_editor |`nano`
-|shell |login_message |`true`
-|shell |startup_file |empty
-|===</pre>
+var output = `printf "a\nb\n"`
+say output
+say "status is {status}"
+
+sh("true")</code></pre>
 </div>
 </div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_appendix_default_settings">Appendix: default settings</h2>
+<div class="sectionbody">
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 33.3333%;">
+<col style="width: 33.3334%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Section</th>
+<th class="tableblock halign-left valign-top">Key</th>
+<th class="tableblock halign-left valign-top">Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">theme</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>default</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">show_username</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">show_hostname</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">show_directory</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">show_git</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">show_time</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">show_exit_status</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">show_duration</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">show_jobs</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">show_mode</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">two_line</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">directory_style</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>full</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt_symbol</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>❯</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt_char</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>❯</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">prompt</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">separator</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>─</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">primary</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>cyan</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">secondary</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>magenta</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">success</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>green</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">error</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>red</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">directory</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>blue</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">git_clean</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>green</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">git_dirty</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>yellow</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">muted</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>bright_black</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">warning</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>yellow</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">colors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">accent</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>bright_cyan</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">history</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">enabled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">history</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">file</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>~/.local/share/blood/history</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">history</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">max_entries</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>10000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">history</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ignore_duplicates</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">completion</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">enabled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">completion</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">case_sensitive</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>false</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">shell</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">default_editor</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>nano</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">shell</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">login_message</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>true</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">shell</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">startup_file</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">empty</p></td>
+</tr>
+</tbody>
+</table>
 </div>
 </div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-20 14:03:14 UTC
+Last updated 2026-11-20 23:45:03 UTC
 </div>
 </div>
 </body>
