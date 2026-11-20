@@ -28,11 +28,6 @@ git clone https://github.com/navid-m/blood.git && cd blood
 ./fw/build.sh && sudo mv blood /usr/local/bin/blood
 ```
 
-Builtins live under the `std` namespace, such as `std.read_file` and
-`std.glob`. Only `say`, `print`, `eprint`, `exit`, `cd`, `run`, `len`, `str`,
-`range`, and `sh` are available as short bare-name prelude calls; their `std.`
-forms always work too.
-
 ## Resources
 
 - [Site](https://bloodshell.pages.dev)
