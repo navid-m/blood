@@ -1620,10 +1620,70 @@ fn menu_next(e: mut ref Editor, delta: i64) void = trust {
     apply_menu_item(e)
 }
 
+/// Apply a cursor/navigation key from a CSI (`ESC [ A`) or SS3 (`ESC O A`)
+/// sequence. Returns false when `final` is not a navigation key.
+fn escape_nav(e: mut ref Editor, final: i32, params: ref u8) bool = trust {
+    if final == 65 {
+        if e.menu_active == 1 {
+            menu_next(e, -1)
+        } else {
+            history_recall(e, true)
+        }
+        return true
+    }
+    if final == 66 {
+        if e.menu_active == 1 {
+            menu_next(e, 1)
+        } else {
+            history_recall(e, false)
+        }
+        return true
+    }
+    if final == 67 {
+        if e.menu_active == 1 {
+            menu_next(e, 1)
+        } elif e.pos < e.len {
+            e.pos = u.utf8_next(e.line, e.pos, e.len)
+        } else {
+            accept_suggestion(e)
+        }
+        return true
+    }
+    if final == 68 {
+        if e.menu_active == 1 {
+            menu_next(e, -1)
+        } elif e.pos > 0 {
+            e.pos = u.utf8_prev(e.line, e.pos)
+        }
+        return true
+    }
+    if final == 72 || u.s_eq(params, c"1") || u.s_eq(params, c"7") {
+        e.menu_active = 0
+        e.pos = 0
+        return true
+    }
+    if final == 70 || u.s_eq(params, c"4") || u.s_eq(params, c"8") {
+        e.menu_active = 0
+        if !accept_suggestion(e) {
+            e.pos = e.len
+        }
+        return true
+    }
+    return false
+}
+
 fn read_escape(e: mut ref Editor) i64 = trust {
     val c1: i32 = read_key_timeout(25)
     if c1 < 0 {
         return -1
+    }
+    if c1 == 79 {
+        val k: i32 = read_key_timeout(25)
+        if k < 0 {
+            return 1
+        }
+        escape_nav(e, k, c"")
+        return 1
     }
     if c1 == 91 {
         val params: mut ref u8 = u.s_dup(c"")
@@ -1642,50 +1702,7 @@ fn read_escape(e: mut ref Editor) i64 = trust {
             final = k
             break
         }
-        if final == 65 {
-            if e.menu_active == 1 {
-                menu_next(e, -1)
-            } else {
-                history_recall(e, true)
-            }
-            return 1
-        }
-        if final == 66 {
-            if e.menu_active == 1 {
-                menu_next(e, 1)
-            } else {
-                history_recall(e, false)
-            }
-            return 1
-        }
-        if final == 67 {
-            if e.menu_active == 1 {
-                menu_next(e, 1)
-            } elif e.pos < e.len {
-                e.pos = u.utf8_next(e.line, e.pos, e.len)
-            } else {
-                accept_suggestion(e)
-            }
-            return 1
-        }
-        if final == 68 {
-            if e.menu_active == 1 {
-                menu_next(e, -1)
-            } elif e.pos > 0 {
-                e.pos = u.utf8_prev(e.line, e.pos)
-            }
-            return 1
-        }
-        if final == 72 || u.s_eq(params, c"1") || u.s_eq(params, c"7") {
-            e.menu_active = 0
-            e.pos = 0
-            return 1
-        }
-        if final == 70 || u.s_eq(params, c"4") || u.s_eq(params, c"8") {
-            e.menu_active = 0
-            if !accept_suggestion(e) {
-                e.pos = e.len
-            }
+        if escape_nav(e, final, params) {
             return 1
         }
         if final == 90 {
