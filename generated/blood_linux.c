@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE 1
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,7 @@ static char* sx__rt_rewrite_fmt(const char* s){if(!s)return(char*)"";size_t n=st
 #include <sched.h>
 #include <signal.h>
 #include <sys/time.h>
+#include <sys/times.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
