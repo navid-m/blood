@@ -411,6 +411,34 @@ test "run_line changes directories and reports exit" {
     }
 }
 
+test "run_line cds into a directory when the line is just a path" {
+    trust {
+        init_shell()
+        val old: ref u8 = u.cwd()
+        val parent: mut ref u8 = c"/tmp/blood-unit-shell/autocd"
+        when darwin {
+            parent = c"/private/tmp/blood-unit-shell/autocd"
+        }
+        val target: ref u8 = u.path_join(parent, c"child")
+        assert u.mkdir_p(target)
+
+        assert sh.run_line(u.s_cat(target, c"/")) == 0
+        assert u.s_eq(u.cwd(), target)
+        assert u.s_eq(sh.get_var(c"PWD"), target)
+
+        assert sh.run_line(c"..") == 0
+        assert u.s_eq(u.cwd(), parent)
+
+        assert sh.run_line(target) == 0
+        assert u.s_eq(u.cwd(), target)
+
+        assert sh.run_line(u.s_cat(c"true ", target)) == 0
+        assert u.s_eq(u.cwd(), target)
+
+        assert u.chdir(old) == 0
+    }
+}
+
 test "run_line honours &&, || and sequencing gates" {
     trust {
         init_shell()

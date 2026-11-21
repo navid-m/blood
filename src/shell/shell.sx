@@ -1755,6 +1755,10 @@ fn run_single(cmd: ref Command) i32 = trust {
     if is_builtin(name) {
         return run_builtin_with_redirs(cmd)
     }
+    val cd_status: i32 = maybe_cd_path(cmd)
+    if cd_status >= 0 {
+        return cd_status
+    }
     if (u.s_ends_with(
             name,
             c".blood"
@@ -1763,6 +1767,43 @@ fn run_single(cmd: ref Command) i32 = trust {
         return hook(name)
     }
     return run_external(cmd)
+}
+
+fn looks_like_path(s: ref u8) bool = trust {
+    val n: i64 = u.s_len(s)
+    if n == 0 {
+        return false
+    }
+    val first: u8 = @load8(s)
+    if first == 47 || first == 46 || first == 126 {
+        return true
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        if u.path_sep(@load8(@ptradd(s, i))) {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn maybe_cd_path(cmd: ref Command) i32 = trust {
+    if cmd.argv.len != 1 || cmd.redirs.len != 0 || cmd.assigns.len != 0 {
+        return -1
+    }
+    val name: ref u8 = u.vec_p(cmd.argv, 0) as ref u8
+    if !looks_like_path(name) {
+        return -1
+    }
+    val path: ref u8 = u.expand_tilde(name)
+    if !u.is_dir(path) {
+        return -1
+    }
+    return change_dir(path)
 }
 
 fn alias_from_tokens(alias: ref u8, argv: ref u.Vec) ref u8 = trust {
@@ -2251,6 +2292,10 @@ fn bi_cd(cmd: ref Command) i32 = trust {
             target = u.expand_tilde(arg)
         }
     }
+    return change_dir(target)
+}
+
+fn change_dir(target: ref u8) i32 = trust {
     val old: ref u8 = u.cwd()
     if u.chdir(target) != 0 {
         u.write_fd(2, u.s_cat3(c"blood: cd: ", target, c": no such directory\n"))
