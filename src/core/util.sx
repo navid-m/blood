@@ -386,8 +386,11 @@ pub fn s_len(s: ref u8) i64 = trust {
 }
 
 pub fn s_eq(a: ref u8, b: ref u8) bool = trust {
+    if a == b {
+        return true
+    }
     if a == none || b == none {
-        return a == b
+        return false
     }
     return rt.strcmp(a, b) == 0
 }
@@ -1019,7 +1022,7 @@ pub fn vec_free(v: mut ref Vec) void = trust {
     v.perm = 0
 }
 
-fn map_hash(s: ref u8) u64 = trust {
+pub fn map_hash(s: ref u8) u64 = trust {
     val h: mut u64 = 1469598103934665603 as u64
     val n: i64 = s_len(s)
     val i: mut i64 = 0
@@ -1041,17 +1044,21 @@ fn map_new_mode(perm: bool) ref Map = trust {
     } else {
         m = xalloc(@sizeof(Map) as i64) as ref Map
     }
-    m.cap = 32
+    val cap: mut i64 = 32
+    if !perm {
+        cap = 4
+    }
+    m.cap = cap
     m.len = 0
     m.occupied = 0
     m.perm = 0
     if perm {
         m.perm = 1
-        m.slots = xalloc_perm(32 * @sizeof(MapEntry) as i64) as ref MapEntry
+        m.slots = xalloc_perm(cap * @sizeof(MapEntry) as i64) as ref MapEntry
     } else {
-        m.slots = xalloc(32 * @sizeof(MapEntry) as i64) as ref MapEntry
+        m.slots = xalloc(cap * @sizeof(MapEntry) as i64) as ref MapEntry
     }
-    rt.memset(m.slots as ref void, 0, (32 * @sizeof(MapEntry)) as usize)
+    rt.memset(m.slots as ref void, 0, (cap * @sizeof(MapEntry)) as usize)
     return m
 }
 
@@ -1064,8 +1071,12 @@ pub fn map_new_perm() ref Map = trust {
 }
 
 fn map_slot(m: ref Map, key: ref u8) i64 = trust {
+    return map_slot_h(m, key, map_hash(key) as i64)
+}
+
+fn map_slot_h(m: ref Map, key: ref u8, hash: i64) i64 = trust {
     val mask: i64 = m.cap - 1
-    val h: i64 = (map_hash(key) as i64) & mask
+    val h: i64 = hash & mask
     val start: i64 = h
     val i: mut i64 = h
     val first_tomb: mut i64 = -1
@@ -1132,6 +1143,16 @@ fn map_grow(m: mut ref Map) void = trust {
 }
 
 pub fn map_put(m: mut ref Map, key: ref u8, value: i64) void = trust {
+    map_put_mode(m, key, value, false)
+}
+
+/// Like `map_put`, but stores the key pointer without copying it. The caller
+/// must ensure the key outlives the map.
+pub fn map_put_ref(m: mut ref Map, key: ref u8, value: i64) void = trust {
+    map_put_mode(m, key, value, true)
+}
+
+fn map_put_mode(m: mut ref Map, key: ref u8, value: i64, borrow: bool) void = trust {
     if key == none {
         return
     }
@@ -1153,7 +1174,9 @@ pub fn map_put(m: mut ref Map, key: ref u8, value: i64) void = trust {
     if e.used == 0 {
         m.occupied++
     }
-    if m.perm != 0 {
+    if borrow {
+        e.key = key
+    } elif m.perm != 0 {
         e.key = s_dup_perm(key)
     } else {
         e.key = s_dup(key)
@@ -1167,7 +1190,14 @@ pub fn map_get(m: ref Map, key: ref u8) i64 = trust {
     if key == none {
         return 0
     }
-    val slot: i64 = map_slot(m, key)
+    return map_get_h(m, key, map_hash(key) as i64)
+}
+
+pub fn map_get_h(m: ref Map, key: ref u8, hash: i64) i64 = trust {
+    if key == none {
+        return 0
+    }
+    val slot: i64 = map_slot_h(m, key, hash)
     if slot < 0 {
         return 0
     }
@@ -1185,7 +1215,14 @@ pub fn map_has(m: ref Map, key: ref u8) bool = trust {
     if key == none {
         return false
     }
-    val slot: i64 = map_slot(m, key)
+    return map_has_h(m, key, map_hash(key) as i64)
+}
+
+pub fn map_has_h(m: ref Map, key: ref u8, hash: i64) bool = trust {
+    if key == none {
+        return false
+    }
+    val slot: i64 = map_slot_h(m, key, hash)
     if slot < 0 {
         return false
     }
@@ -1214,6 +1251,46 @@ pub fn map_del(m: mut ref Map, key: ref u8) void = trust {
         e.key = none
         m.len--
     }
+}
+
+/// Remove a borrowed key without freeing it.
+pub fn map_del_ref(m: mut ref Map, key: ref u8) void = trust {
+    if key == none {
+        return
+    }
+    val slot: i64 = map_slot(m, key)
+    if slot < 0 {
+        return
+    }
+    val e: mut ref MapEntry = @ptradd(
+        m.slots as ref void,
+        slot * @sizeof(MapEntry) as i64
+    ) as ref MapEntry
+    if e.used == 1 {
+        e.used = 2
+        e.key = none
+        m.len--
+    }
+}
+
+val g_intern: mut ref Map = none
+
+/// Return the canonical copy of `s`. Interned strings are allocated in
+/// permanent memory and can be compared by pointer.
+pub fn s_intern(s: ref u8) ref u8 = trust {
+    if s == none {
+        return none
+    }
+    if g_intern == none {
+        g_intern = map_new_perm()
+    }
+    val raw: i64 = map_get(g_intern, s)
+    if raw != 0 {
+        return @bitcast(raw, ref u8)
+    }
+    val copy: ref u8 = s_dup_perm(s)
+    map_put_ref(g_intern, copy, @bitcast(copy, i64))
+    return copy
 }
 
 pub fn map_entry_at(m: ref Map, i: i64) ref MapEntry = trust {

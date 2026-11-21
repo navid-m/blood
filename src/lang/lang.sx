@@ -636,6 +636,12 @@ fn node_new(kind: NodeKind, line: i64, col: i64) ref Node = trust {
     return n
 }
 
+fn node_set_name(n: mut ref Node, text: ref u8) void = trust {
+    n.s = u.s_intern(text)
+    n.a = @bitcast(n.s, i64)
+    n.b = @bitcast(u.map_hash(n.s), i64)
+}
+
 fn cur(p: ref Parser) ref Token = trust {
     return u.vec_p(p.toks, p.i) as ref Token
 }
@@ -826,7 +832,7 @@ fn parse_var_item(p: mut ref Parser) ref Node = trust {
     }
     advance(p)
     val n: mut ref Node = node_new(NodeKind.VarDecl, name.line, name.col)
-    n.s = u.s_dup(name.text)
+    node_set_name(n, name.text)
     if !expect_op(p, c"=") {
         return n
     }
@@ -903,7 +909,7 @@ fn parse_export(p: mut ref Parser) ref Node = trust {
     advance(p)
     val rhs: ref Node = parse_expr(p)
     val lhs: mut ref Node = node_new(NodeKind.Var, name.line, name.col)
-    lhs.s = name.text
+    node_set_name(lhs, name.text)
     val n: mut ref Node = node_new(NodeKind.Assign, t.line, t.col)
     n.a = op
     n.b = 1
@@ -986,7 +992,7 @@ fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = tr
         set_error(var.line, var.col, c"expected a loop variable")
         return n
     }
-    n.s = u.s_dup(var.text)
+    n.s = u.s_intern(var.text)
     advance(p)
     if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
         advance(p)
@@ -995,7 +1001,7 @@ fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = tr
             set_error(value_var.line, value_var.col, c"expected a loop variable")
             return n
         }
-        u.vec_pushp(n.params, u.s_dup(value_var.text) as ref void)
+        u.vec_pushp(n.params, u.s_intern(value_var.text) as ref void)
         advance(p)
     }
     if keyword(cur(p), c"in") {
@@ -1043,7 +1049,7 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
         set_error(name.line, name.col, c"expected a function name")
         return n
     }
-    n.s = u.s_dup(name.text)
+    n.s = u.s_intern(name.text)
     advance(p)
     if cur(p).kind == TokenKind.Op && text_is(cur(p), c"(") {
         advance(p)
@@ -1056,7 +1062,7 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
                 set_error(pt.line, pt.col, c"expected a parameter name")
                 break
             }
-            u.vec_pushp(n.params, u.s_dup(pt.text) as ref void)
+            u.vec_pushp(n.params, u.s_intern(pt.text) as ref void)
             advance(p)
             val def: mut ref Node = none
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c":") {
@@ -1212,7 +1218,7 @@ fn parse_unparen_args(p: mut ref Parser, call: mut ref Node) void = trust {
 
 fn parse_unparen_call(p: mut ref Parser, t: ref Token) ref Node = trust {
     val callee: mut ref Node = node_new(NodeKind.Var, t.line, t.col)
-    callee.s = u.s_dup(t.text)
+    node_set_name(callee, t.text)
     callee.start = t.start
     callee.end = t.end
     val call: mut ref Node = node_new(NodeKind.Call, t.line, t.col)
@@ -1844,7 +1850,7 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
         }
         advance(p)
         val n: mut ref Node = node_new(NodeKind.Var, t.line, t.col)
-        n.s = u.s_dup(t.text)
+        node_set_name(n, t.text)
         n.start = t.start
         n.end = t.end
         return n
@@ -1934,7 +1940,7 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
                 set_error(pt.line, pt.col, c"expected a parameter name")
                 break
             }
-            u.vec_pushp(n.params, u.s_dup(pt.text) as ref void)
+            u.vec_pushp(n.params, u.s_intern(pt.text) as ref void)
             advance(p)
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
                 advance(p)

@@ -26,6 +26,7 @@ pub type Func = {
     native: mut i64
     closure: mut ref Env
     defaults: mut ref u.Vec
+    has_defer: mut i64
 }
 
 type Defer = {
@@ -48,6 +49,15 @@ val g_script_path: mut ref u8 = none
 val g_defers: mut ref u.Vec = none
 val g_temp_seq: mut i64 = 0
 val g_prelude: mut ref u.Map = none
+val g_nil_cache: mut ref Value = none
+val g_true_cache: mut ref Value = none
+val g_false_cache: mut ref Value = none
+
+fn reset_value_cache() void = trust {
+    g_nil_cache = none
+    g_true_cache = none
+    g_false_cache = none
+}
 
 fn v_new(tag: i64) ref Value = trust {
     val v: mut ref Value = u.xalloc(@sizeof(Value) as i64) as ref Value
@@ -58,15 +68,25 @@ fn v_new(tag: i64) ref Value = trust {
 }
 
 pub fn v_nil() ref Value = trust {
-    return v_new(0)
+    if g_nil_cache == none {
+        g_nil_cache = v_new(0)
+    }
+    return g_nil_cache
 }
 
 pub fn v_bool(b: bool) ref Value = trust {
-    val v: mut ref Value = v_new(1)
     if b {
-        v.i = 1
+        if g_true_cache == none {
+            val v: mut ref Value = v_new(1)
+            v.i = 1
+            g_true_cache = v
+        }
+        return g_true_cache
     }
-    return v
+    if g_false_cache == none {
+        g_false_cache = v_new(1)
+    }
+    return g_false_cache
 }
 
 pub fn v_int(n: i64) ref Value = trust {
@@ -348,7 +368,11 @@ fn env_new(parent: ref Env) ref Env = trust {
 }
 
 fn env_define(e: mut ref Env, name: ref u8, v: ref Value) void = trust {
-    u.map_put(e.vars, name, @bitcast(v, i64))
+    u.map_put_ref(e.vars, u.s_intern(name), @bitcast(v, i64))
+}
+
+fn env_define_interned(e: mut ref Env, name: ref u8, v: ref Value) void = trust {
+    u.map_put_ref(e.vars, name, @bitcast(v, i64))
 }
 
 fn env_lookup(e: ref Env, name: ref u8) ref Value = trust {
@@ -358,6 +382,27 @@ fn env_lookup(e: ref Env, name: ref u8) ref Value = trust {
             break
         }
         val raw: i64 = u.map_get(chain.vars, name)
+        if raw != 0 {
+            return @bitcast(raw, ref Value)
+        }
+        chain = chain.parent
+    }
+    if g_prelude != none {
+        val raw: i64 = u.map_get(g_prelude, name)
+        if raw != 0 {
+            return @bitcast(raw, ref Value)
+        }
+    }
+    return none
+}
+
+fn env_lookup_h(e: ref Env, name: ref u8, hash: i64) ref Value = trust {
+    val chain: mut ref Env = e
+    for {
+        if chain == none {
+            break
+        }
+        val raw: i64 = u.map_get_h(chain.vars, name, hash)
         if raw != 0 {
             return @bitcast(raw, ref Value)
         }
@@ -417,12 +462,36 @@ fn env_assign(e: mut ref Env, name: ref u8, v: ref Value) void = trust {
             break
         }
         if u.map_has(chain.vars, name) {
-            u.map_put(chain.vars, name, @bitcast(v, i64))
+            u.map_put_ref(chain.vars, name, @bitcast(v, i64))
             return
         }
         chain = chain.parent
     }
     env_define(e, name, v)
+}
+
+/// Return a node's name. Parser-created variable nodes store an interned string.
+fn intern_node_name(n: ref lang.Node) ref u8 = trust {
+    return n.s
+}
+
+/// Return a node's precomputed name hash, or compute it on demand.
+fn node_name_hash(n: ref lang.Node, name: ref u8) i64 = trust {
+    if n.b != 0 {
+        return n.b
+    }
+    return @bitcast(u.map_hash(name), i64)
+}
+
+fn intern_params(f: mut ref Func) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= f.params.len {
+            break
+        }
+        u.vec_setp(f.params, i, u.s_intern(u.vec_p(f.params, i) as ref u8) as ref void)
+        i++
+    }
 }
 
 fn set_status(status: i64) void = trust {
@@ -804,16 +873,18 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         return v_nil()
     }
     if n.kind == lang.NodeKind.Var {
-        val v: ref Value = env_lookup(env, n.s)
+        val name: ref u8 = intern_node_name(n)
+        val h: i64 = node_name_hash(n, name)
+        val v: ref Value = env_lookup_h(env, name, h)
         if v == none {
-            if native_id(n.s) != 0 {
+            if native_id(name) != 0 {
                 set_error(
-                    u.s_cat3(c"builtin '", n.s, c"' requires the 'std.' prefix"),
+                    u.s_cat3(c"builtin '", name, c"' requires the 'std.' prefix"),
                     n.line,
                     n.col
                 )
             } else {
-                set_error(u.s_cat3(c"undefined variable '", n.s, c"'"), n.line, n.col)
+                set_error(u.s_cat3(c"undefined variable '", name, c"'"), n.line, n.col)
             }
             return v_nil()
         }
@@ -945,10 +1016,15 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
         f.name = c""
         f.params = n.params
+        intern_params(f)
         f.body = u.vec_p(n.kids, 0) as ref lang.Node
         f.native = 0
         f.closure = env
         f.defaults = n.defaults
+        f.has_defer = 0
+        if node_has_defer(f.body) {
+            f.has_defer = 1
+        }
         return v_func(f)
     }
     if n.kind == lang.NodeKind.CmdSubst {
@@ -1125,14 +1201,20 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         parent = f.closure
     }
     val callenv: mut ref Env = env_new(parent)
-    val supplied: mut ref u.Vec = u.vec_new()
+    val has_defaults: bool = f.defaults != none
+    val supplied: mut ref u.Vec = none
+    if has_defaults {
+        supplied = u.vec_new()
+    }
     val i: mut i64 = 0
     for {
         if i >= f.params.len {
             break
         }
-        env_define(callenv, u.vec_p(f.params, i) as ref u8, v_nil())
-        u.vec_push(supplied, 0)
+        env_define_interned(callenv, u.vec_p(f.params, i) as ref u8, v_nil())
+        if has_defaults {
+            u.vec_push(supplied, 0)
+        }
         i++
     }
     val pos: mut i64 = 0
@@ -1145,8 +1227,10 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         val name: ref u8 = arg_name(n, ai)
         if u.s_len(name) == 0 {
             if pos < f.params.len {
-                env_define(callenv, u.vec_p(f.params, pos) as ref u8, arg)
-                u.vec_sets(supplied, pos, 1)
+                env_define_interned(callenv, u.vec_p(f.params, pos) as ref u8, arg)
+                if has_defaults {
+                    u.vec_sets(supplied, pos, 1)
+                }
                 pos++
             }
         } else {
@@ -1158,7 +1242,9 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
                 }
                 if u.s_eq(u.vec_p(f.params, j) as ref u8, name) {
                     env_define(callenv, name, arg)
-                    u.vec_sets(supplied, j, 1)
+                    if has_defaults {
+                        u.vec_sets(supplied, j, 1)
+                    }
                     found = true
                     break
                 }
@@ -1172,7 +1258,7 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         }
         ai++
     }
-    if f.defaults != none {
+    if has_defaults {
         val di: mut i64 = 0
         for {
             if di >= f.params.len || di >= f.defaults.len {
@@ -1186,13 +1272,15 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
                         g_depth--
                         return v_nil()
                     }
-                    env_define(callenv, u.vec_p(f.params, di) as ref u8, defval)
+                    env_define_interned(callenv, u.vec_p(f.params, di) as ref u8, defval)
                 }
             }
             di++
         }
     }
-    defer_push_frame()
+    if f.has_defer != 0 {
+        defer_push_frame()
+    }
     val saved_flow: i64 = g_flow
     val saved_return: ref Value = g_return
     g_flow = 0
@@ -1204,7 +1292,9 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
             result = g_return
         }
     }
-    defer_run_frame()
+    if f.has_defer != 0 {
+        defer_run_frame()
+    }
     if g_flow == 4 || g_flow == 5 {
         // propagate error/exit
     } else {
@@ -2771,10 +2861,12 @@ fn do_replace(s: ref u8, from: ref u8, to: ref u8) ref u8 = trust {
 
 fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: i64) void = trust {
     if target.kind == lang.NodeKind.Var {
-        val cur: ref Value = env_lookup(env, target.s)
+        val tname: ref u8 = intern_node_name(target)
+        val th: i64 = node_name_hash(target, tname)
+        val cur: ref Value = env_lookup_h(env, tname, th)
         if cur == none {
             set_error(
-                u.s_cat3(c"undefined variable '", target.s, c"'"),
+                u.s_cat3(c"undefined variable '", tname, c"'"),
                 target.line,
                 target.col
             )
@@ -2784,10 +2876,10 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
         if op > 1 {
             final = bin_op(op - 2, cur, value)
         }
-        if is_prelude(target.s) && !env_has(env, target.s) {
-            warn_shadow(target.s, target.line, target.col)
+        if is_prelude(tname) && !env_has(env, tname) {
+            warn_shadow(tname, target.line, target.col)
         }
-        env_assign(env, target.s, final)
+        env_assign(env, tname, final)
         return
     }
     if target.kind == lang.NodeKind.Attr {
@@ -3090,9 +3182,11 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         return
     }
     if n.kind == lang.NodeKind.VarDecl {
-        if u.map_has(env.vars, n.s) {
+        val dname: ref u8 = intern_node_name(n)
+        val dh: i64 = node_name_hash(n, dname)
+        if u.map_has_h(env.vars, dname, dh) {
             set_error(
-                u.s_cat3(c"variable '", n.s, c"' is already declared"),
+                u.s_cat3(c"variable '", dname, c"' is already declared"),
                 n.line,
                 n.col
             )
@@ -3102,14 +3196,14 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
             set_error(c"variable declaration needs a value", n.line, n.col)
             return
         }
-        if is_prelude(n.s) {
-            warn_shadow(n.s, n.line, n.col)
+        if is_prelude(dname) {
+            warn_shadow(dname, n.line, n.col)
         }
         val value: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
         if g_flow != 0 {
             return
         }
-        env_define(env, n.s, value)
+        env_define_interned(env, dname, value)
         return
     }
     if n.kind == lang.NodeKind.Assign {
@@ -3154,7 +3248,10 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         val body: ref lang.Node = u.vec_p(n.kids, 1) as ref lang.Node
         val decls: mut ref u.Vec = u.vec_new()
         collect_var_decls(body, decls)
-        val loop_env: mut ref Env = env_new(env)
+        val loop_env: mut ref Env = env
+        if decls.len > 0 {
+            loop_env = env_new(env)
+        }
         for {
             if u.interrupt_flag != 0 {
                 u.interrupt_flag = 0
@@ -3202,7 +3299,19 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         val body: ref lang.Node = u.vec_p(n.kids, 1) as ref lang.Node
         val decls: mut ref u.Vec = u.vec_new()
         collect_var_decls(body, decls)
-        val loop_env: mut ref Env = env_new(env)
+        val loop_env: mut ref Env = env
+        if decls.len > 0 {
+            loop_env = env_new(env)
+        }
+        val lname: ref u8 = intern_node_name(n)
+        val vi: mut i64 = 0
+        for {
+            if vi >= n.params.len {
+                break
+            }
+            u.vec_setp(n.params, vi, u.s_intern(u.vec_p(n.params, vi) as ref u8) as ref void)
+            vi++
+        }
         if iterable.tag == 5 {
             val vec: ref u.Vec = iterable.p as ref u.Vec
             val i: mut i64 = 0
@@ -3215,7 +3324,7 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                 if i >= vec.len {
                     break
                 }
-                env_assign(env, n.s, u.vec_p(vec, i) as ref Value)
+                env_assign(env, lname, u.vec_p(vec, i) as ref Value)
                 clear_var_decls(loop_env, decls)
                 exec_block(body, loop_env, false)
                 if g_flow == 1 {
@@ -3246,7 +3355,7 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                     break
                 }
                 val j: i64 = u.utf8_next(s, i, len)
-                env_assign(env, n.s, v_str_own(u.s_substr(s, i, j)))
+                env_assign(env, lname, v_str_own(u.s_substr(s, i, j)))
                 clear_var_decls(loop_env, decls)
                 exec_block(body, loop_env, false)
                 if g_flow == 1 {
@@ -3276,7 +3385,7 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
                     break
                 }
                 if u.map_used_at(m, i) {
-                    env_assign(env, n.s, v_str_own(u.s_dup(u.map_key_at(m, i))))
+                    env_assign(env, lname, v_str_own(u.s_dup(u.map_key_at(m, i))))
                     if n.params.len > 0 {
                         env_assign(
                             env,
@@ -3302,17 +3411,23 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         return
     }
     if n.kind == lang.NodeKind.FnDef {
+        val fname: ref u8 = intern_node_name(n)
         val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
-        f.name = n.s
+        f.name = fname
         f.params = n.params
+        intern_params(f)
         f.body = u.vec_p(n.kids, 0) as ref lang.Node
         f.native = 0
         f.closure = none
         f.defaults = n.defaults
-        if is_prelude(n.s) {
-            warn_shadow(n.s, n.line, n.col)
+        f.has_defer = 0
+        if node_has_defer(f.body) {
+            f.has_defer = 1
         }
-        env_define(env, n.s, v_func(f))
+        if is_prelude(fname) {
+            warn_shadow(fname, n.line, n.col)
+        }
+        env_define_interned(env, fname, v_func(f))
         return
     }
     if n.kind == lang.NodeKind.Return {
@@ -3375,7 +3490,9 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         val call: ref lang.Node = u.vec_p(n.kids, 0) as ref lang.Node
         val callee: ref lang.Node = u.vec_p(call.kids, 0) as ref lang.Node
         if callee.kind == lang.NodeKind.Var {
-            val fnval: ref Value = env_lookup(env, callee.s)
+            val cname: ref u8 = intern_node_name(callee)
+            val ch: i64 = node_name_hash(callee, cname)
+            val fnval: ref Value = env_lookup_h(env, cname, ch)
             if fnval != none && fnval.tag == 7 {
                 val args: ref u.Vec = eval_args(call, 1, env)
                 if g_flow != 0 {
@@ -3417,12 +3534,31 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
     }
 }
 
-fn collect_var_decls(n: ref lang.Node, out: mut ref u.Vec) void = trust {
+fn node_has_defer(n: ref lang.Node) bool = trust {
     if n == none {
+        return false
+    }
+    if n.kind == lang.NodeKind.Defer {
+        return true
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= n.kids.len {
+            break
+        }
+        if node_has_defer(u.vec_p(n.kids, i) as ref lang.Node) {
+            return true
+        }
+        i++
+    }
+    return false
+}
+
+fn collect_var_decls(n: ref lang.Node, out: mut ref u.Vec) void = trust {    if n == none {
         return
     }
     if n.kind == lang.NodeKind.VarDecl && n.s != none {
-        u.vec_pushp(out, n.s as ref void)
+        u.vec_pushp(out, u.s_intern(n.s) as ref void)
     }
     val i: mut i64 = 0
     for {
@@ -3440,7 +3576,7 @@ fn clear_var_decls(env: mut ref Env, names: ref u.Vec) void = trust {
         if i >= names.len {
             break
         }
-        u.map_del(env.vars, u.vec_p(names, i) as ref u8)
+        u.map_del_ref(env.vars, u.vec_p(names, i) as ref u8)
         i++
     }
 }
@@ -3469,20 +3605,21 @@ fn exec_block(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
 fn native_value(name: ref u8) ref Value = trust {
     val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
     f.name = u.s_dup(name)
-    f.params = u.vec_new()
+    f.params = none
     f.body = none
     f.native = native_id(name)
     f.closure = none
-    f.defaults = u.vec_new()
+    f.defaults = none
+    f.has_defer = 0
     return v_func(f)
 }
 
 fn define_std_native(stdm: mut ref u.Map, name: ref u8) void = trust {
-    u.map_put(stdm, name, @bitcast(native_value(name), i64))
+    u.map_put_ref(stdm, name, @bitcast(native_value(name), i64))
 }
 
 fn define_prelude(name: ref u8) void = trust {
-    u.map_put(g_prelude, name, @bitcast(native_value(name), i64))
+    u.map_put_ref(g_prelude, name, @bitcast(native_value(name), i64))
 }
 
 fn new_top_env(perm: bool) ref Env = trust {
@@ -3786,6 +3923,7 @@ fn promote_all(jobs: mut ref u.Vec, memo: mut ref u.Vec) void = trust {
             nf.native = of.native
             nf.closure = of.closure
             nf.defaults = of.defaults
+            nf.has_defer = of.has_defer
             memo_put(memo, old, nf as ref void)
             store_slot(slot, nf as ref void)
             queue_func_children(nf, jobs)
@@ -3917,6 +4055,7 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
     defer_run_frame()
     if g_run_depth == 1 {
         promote_roots()
+        reset_value_cache()
     }
     if g_flow == 5 {
         g_flow = 0

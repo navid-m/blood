@@ -486,21 +486,23 @@ pub fn main() i32 = trust {
         loginmod.init(c.login != 0)
         u.scratch_end()
     }
-    u.scratch_begin()
-    ensure_config_dirs(c)
-    u.scratch_end()
     ex.signal_ignore(3)
     ex.signal_handler(2, on_interrupt)
     ex.signal_ignore(15)
     ex.signal_ignore(ex.sig_tstp())
     val h: mut ref histmod.History = histmod.history_new(c)
-    u.scratch_begin()
-    histmod.history_load(h)
-    u.scratch_end()
+    val interactive: mut bool = false
+    if command == none && first == none {
+        u.scratch_begin()
+        ensure_config_dirs(c)
+        histmod.history_load(h)
+        u.scratch_end()
+        term.init_terminal()
+        interactive = term.have_tty()
+    }
     shell.shell_init(c, h, false)
     script.script_init()
     install_hooks()
-    term.init_terminal()
     if command != none {
         val rest: ref u.Vec = vec_slice(all_args, 0)
         script.set_args(rest)
@@ -524,8 +526,7 @@ pub fn main() i32 = trust {
         val rest: ref u.Vec = vec_slice(all_args, 1)
         script.set_args(rest)
         u.scratch_begin()
-        val src: ref u8 = u.read_file(first)
-        if src == none {
+        if !u.file_exists(first) {
             u.write_fd(2, u.s_cat3(c"blood: ", first, c": no such script\n"))
             u.scratch_end()
             return 1
@@ -539,7 +540,6 @@ pub fn main() i32 = trust {
         u.scratch_end()
         return st
     }
-    val interactive: bool = term.have_tty()
     if !interactive {
         u.scratch_begin()
         val src: ref u8 = read_all_stdin()
