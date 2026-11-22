@@ -544,7 +544,7 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
         }
         if lx.pos + 1 < lx.len {
             val d: u8 = @load8(@ptradd(lx.src, lx.pos + 1))
-            if (c == 61 && d == 61) || (c == 33 && d == 61) || (c == 60 && d == 61) || (c == 62 && d == 61) || (c == 43 && d == 61) || (c == 45 && d == 61) || (c == 45 && d == 62) || (c == 42 && d == 61) || (c == 47 && d == 61) || (c == 37 && d == 61) || (c == 42 && d == 42) || (c == 46 && d == 46) || (c == 63 && d == 63) {
+            if (c == 61 && d == 61) || (c == 33 && d == 61) || (c == 60 && d == 61) || (c == 62 && d == 61) || (c == 43 && d == 61) || (c == 45 && d == 61) || (c == 61 && d == 62) || (c == 42 && d == 61) || (c == 47 && d == 61) || (c == 37 && d == 61) || (c == 42 && d == 42) || (c == 46 && d == 46) || (c == 63 && d == 63) {
                 two = u.s_ndup(@ptradd(lx.src, lx.pos), 2)
                 lx.pos += 2
                 lx.col += 2
@@ -1281,6 +1281,16 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
         if !expect_op(p, c")") {
             return n
         }
+    }
+    val arrow: bool = cur(p).kind == TokenKind.Op && text_is(cur(p), c"=>")
+    if arrow {
+        advance(p)
+        val body: mut ref Node = node_new(NodeKind.Block, t.line, t.col)
+        val ret: mut ref Node = node_new(NodeKind.Return, t.line, t.col)
+        u.vec_pushp(ret.kids, parse_expr(p) as ref void)
+        u.vec_pushp(body.kids, ret as ref void)
+        u.vec_pushp(n.kids, body as ref void)
+        return n
     }
     val body: ref Node = parse_suite(p, t.line, t.col)
     u.vec_pushp(n.kids, body)
@@ -2135,7 +2145,7 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
         if !expect_op(p, c"|") {
             return n
         }
-        val arrow: bool = cur(p).kind == TokenKind.Op && text_is(cur(p), c"->")
+        val arrow: bool = cur(p).kind == TokenKind.Op && text_is(cur(p), c"=>")
         if arrow {
             advance(p)
         }

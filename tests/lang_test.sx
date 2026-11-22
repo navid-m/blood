@@ -454,7 +454,7 @@ test "parser rejects method chains continued on a new line" {
 
 test "parser builds arrow lambdas with expression bodies" {
     trust {
-        val prog: ref lang.Node = lang.parse(c"var f = |x| -> {\"n\": x}\n")
+        val prog: ref lang.Node = lang.parse(c"var f = |x| => {\"n\": x}\n")
         assert lang.last_error() == none
         val fn_node: ref lang.Node = kid(kid(prog, 0), 0)
         assert fn_node.kind == lang.NodeKind.FnLit
@@ -464,12 +464,35 @@ test "parser builds arrow lambdas with expression bodies" {
         assert ret.kind == lang.NodeKind.Return
         assert kid(ret, 0).kind == lang.NodeKind.DictLit
 
-        val expr: ref lang.Node = lang.parse(c"var g = |x| -> x + 1\n")
+        val expr: ref lang.Node = lang.parse(c"var g = |x| => x + 1\n")
         assert lang.last_error() == none
         val gfn: ref lang.Node = kid(kid(expr, 0), 0)
         val gbody: ref lang.Node = kid(gfn, 0)
         val gret: ref lang.Node = kid(gbody, 0)
         assert gret.kind == lang.NodeKind.Return
         assert kid(gret, 0).kind == lang.NodeKind.Binary
+    }
+}
+
+test "parser builds functions with arrow bodies" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"fn one() => 1 + 1\nfn two => 2\n")
+        assert lang.last_error() == none
+        assert prog.kids.len == 2
+
+        val one: ref lang.Node = kid(prog, 0)
+        assert one.kind == lang.NodeKind.FnDef
+        assert u.s_eq(one.s, c"one")
+        val one_body: ref lang.Node = kid(one, 0)
+        val one_ret: ref lang.Node = kid(one_body, 0)
+        assert one_ret.kind == lang.NodeKind.Return
+        assert kid(one_ret, 0).kind == lang.NodeKind.Binary
+
+        val two: ref lang.Node = kid(prog, 1)
+        assert two.kind == lang.NodeKind.FnDef
+        assert u.s_eq(two.s, c"two")
+        val two_ret: ref lang.Node = kid(kid(two, 0), 0)
+        assert two_ret.kind == lang.NodeKind.Return
+        assert kid(two_ret, 0).kind == lang.NodeKind.IntLit
     }
 }

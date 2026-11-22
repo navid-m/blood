@@ -16,7 +16,7 @@ And another example:
 
 ```h
 cd("./src/lang")
-say(std.glob("*.sx").map(|f| -> {"file": f.basename(), "mod": f.modified()}).dump().jtable())
+say(std.glob("*.sx").map(|f| => {"file": f.basename(), "mod": f.modified()}).dump().jtable())
 ```
 
 Output:
