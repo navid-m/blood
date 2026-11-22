@@ -1906,6 +1906,8 @@ Method calls use the attribute syntax `value.name(arguments)`.
 |`sort()` |0 |Sort in place by string representation.
 |`sort_by(fn)` |1 |Sort in place by the key returned by `fn(x)`. Numeric keys compare numerically. Returns the list.
 |`reverse()` |0 |Reverse the list in place. Returns the list.
+|`dump()` |0 |Pretty-printed JSON representation.
+|`dump_compact()` |0 |Compact JSON representation.
 |`map(fn)` |1 |New list containing `fn(x)` for each element `x`.
 |`pmap(fn)` |1 |Like `map(fn)`, but calls run concurrently in child processes.
 Results keep the original input order.
@@ -1926,6 +1928,8 @@ for which `fn(x)` is truthy.
 |`sorted()` / `sorted_keys()` |0 |New list of keys sorted by string value.
 |`values()` |0 |List of values.
 |`items()` |0 |List of `[key, value]` pairs.
+|`dump()` |0 |Pretty-printed JSON representation.
+|`dump_compact()` |0 |Compact JSON representation.
 |`len()` |0 |Number of keys.
 |`remove(key)` |1 |Remove a key.
 |===
@@ -1952,6 +1956,7 @@ final element; `\r\n` is accepted.
 |`contains(needle)` |1 |Substring test.
 |`matches(pattern)` |1 |Regular-expression search.
 |`like(pattern, ignore_case: BOOL)` |1 |Glob match. `*` matches any sequence and `?` matches one byte. `ignore_case` is an optional named argument.
+|`jtable()` |0 |Parse the receiver as JSON and render an array of objects (or one object) as a Unicode table.
 |`replace(from,to)` |2 |Replace all occurrences.
 |`last()` |0 |Return the last UTF-8 code point, or null when empty.
 |`len()` |0 |Byte length.
@@ -1968,6 +1973,10 @@ against the current directory.
 |`is_dir()` |0 |Whether the path is a directory.
 |`is_executable()` |0 |Whether the path is executable.
 |===
+
+`jtable()` accepts a JSON array of objects and returns a Unicode table whose
+columns are the sorted object keys. A single JSON object becomes a one-row
+table. Nested arrays and objects are shown as `[...]` and `{...}`.
 
 ==== Numeric methods
 

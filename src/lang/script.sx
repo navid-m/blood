@@ -10,6 +10,8 @@ val re   = use("std/regex")
 val rt   = use("std/runtime")
 val tcol = use("std/terminal")
 val sstr = use("std/string")
+val js   = use("std/json")
+val alc  = use("std/allocators")
 
 pub type Value = {
     tag: mut i64
@@ -2156,6 +2158,370 @@ fn like_match(s: ref u8, pattern: ref u8, ignore_case: bool) bool = trust {
     return pi == pl
 }
 
+fn json_build(builder: js.JsonBuilder, v: ref Value) js.JsonValue = trust {
+    if is_nil(v) {
+        return js.build_null(builder)
+    }
+    if v.tag == 1 {
+        return js.build_bool(builder, v.i != 0)
+    }
+    if v.tag == 2 {
+        return js.build_int(builder, v.i)
+    }
+    if v.tag == 3 {
+        return js.build_float(builder, @bitcast(v.i, f64))
+    }
+    if v.tag == 4 {
+        return js.build_string(builder, sstr.from_cstr(v.p as ref u8))
+    }
+    if v.tag == 5 {
+        val vec: ref u.Vec = v.p as ref u.Vec
+        val arr: js.JsonValue = js.build_array(builder)
+        val i: mut i64 = 0
+        for {
+            if i >= vec.len {
+                break
+            }
+            js.array_append(arr, json_build(builder, u.vec_p(vec, i) as ref Value))
+            i++
+        }
+        return arr
+    }
+    if v.tag == 6 {
+        val m: ref u.Map = v.p as ref u.Map
+        val obj: js.JsonValue = js.build_object(builder)
+        val i: mut i64 = 0
+        for {
+            if i >= m.cap {
+                break
+            }
+            if u.map_used_at(m, i) {
+                val key: ref u8 = u.map_key_at(m, i)
+                val item: ref Value = @bitcast(u.map_val_at(m, i), ref Value)
+                js.object_add(builder, obj, sstr.from_cstr(key), json_build(builder, item))
+            }
+            i++
+        }
+        return obj
+    }
+    if v.tag == 9 {
+        return json_build(builder, v.p as ref Value)
+    }
+    return js.build_string(builder, sstr.from_cstr(v_to_str(v)))
+}
+
+fn json_dump(v: ref Value, pretty: bool) ref u8 = trust {
+    match js.builder_new() {
+        ok builder => {
+            val root: js.JsonValue = json_build(builder, v)
+            js.builder_set_root(builder, root)
+            val ac: alc.HeapAllocator = @zeroed
+            if pretty {
+                val out = js.builder_to_string_pretty[alc.HeapAllocator](ac, builder)
+                val text: mut ref u8 = c""
+                if out != none {
+                    if out.len > 0 {
+                        text = u.s_ndup(out.ptr, out.len)
+                    }
+                    js.free_string[alc.HeapAllocator](ac, out)
+                }
+                js.builder_free(builder)
+                return text
+            }
+            val out = js.builder_to_string[alc.HeapAllocator](ac, builder)
+            val text: mut ref u8 = c""
+            if out != none {
+                if out.len > 0 {
+                    text = u.s_ndup(out.ptr, out.len)
+                }
+                js.free_string[alc.HeapAllocator](ac, out)
+            }
+            js.builder_free(builder)
+            return text
+        }
+        err _ => {
+            return c""
+        }
+    }
+}
+
+fn json_view_text(view: sstr.StringView) ref u8 = trust {
+    if view.len <= 0 || view.ptr == none {
+        return c""
+    }
+    return u.s_ndup(view.ptr, view.len)
+}
+
+fn json_cell(v: js.JsonValue) ref u8 = trust {
+    if js.is_null(v) {
+        return u.s_dup(c"")
+    }
+    if js.is_bool(v) {
+        if js.as_bool(v) {
+            return u.s_dup(c"true")
+        }
+        return u.s_dup(c"false")
+    }
+    if js.is_int(v) {
+        return u.s_int(js.as_int(v))
+    }
+    if js.is_uint(v) {
+        return u.s_uint(js.as_uint(v) as i64)
+    }
+    if js.is_float(v) {
+        return u.s_float(js.as_float(v))
+    }
+    if js.is_string(v) {
+        return json_view_text(js.as_string(v))
+    }
+    if js.is_array(v) {
+        return u.s_dup(c"[...]")
+    }
+    if js.is_object(v) {
+        return u.s_dup(c"{...}")
+    }
+    return u.s_dup(c"")
+}
+
+fn json_table_headers(obj: js.JsonValue, headers: mut ref u.Vec) void = trust {
+    val n: i64 = js.len(obj)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        match js.object_key_at(obj, i) {
+            some key => {
+                u.vec_pushp(headers, json_view_text(key) as ref void)
+            }
+            none => {
+                break
+            }
+        }
+        i++
+    }
+    val k: mut i64 = 1
+    for {
+        if k >= headers.len {
+            break
+        }
+        val key: ref u8 = u.vec_p(headers, k) as ref u8
+        val j: mut i64 = k - 1
+        for {
+            if j < 0 {
+                break
+            }
+            val cur: ref u8 = u.vec_p(headers, j) as ref u8
+            if u.s_cmp(cur, key) <= 0 {
+                break
+            }
+            u.vec_setp(headers, j + 1, cur)
+            j--
+        }
+        u.vec_setp(headers, j + 1, key)
+        k++
+    }
+}
+
+fn json_table_row(
+    obj: js.JsonValue,
+    headers: ref u.Vec,
+    row: mut ref u.Vec
+) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= headers.len {
+            break
+        }
+        val key: ref u8 = u.vec_p(headers, i) as ref u8
+        match js.object_get(obj, sstr.from_cstr(key)) {
+            some value => {
+                u.vec_pushp(row, json_cell(value) as ref void)
+            }
+            none => {
+                u.vec_pushp(row, u.s_dup(c"") as ref void)
+            }
+        }
+        i++
+    }
+}
+
+fn json_table_spaces(b: mut ref u.Buf, n: i64) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        u.buf_ch(b, 32)
+        i++
+    }
+}
+
+fn json_table_bar(b: mut ref u.Buf, n: i64) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        u.buf_add(b, c"─")
+        i++
+    }
+}
+
+fn json_table_rule(
+    b: mut ref u.Buf,
+    widths: ref u.Vec,
+    left: ref u8,
+    mid: ref u8,
+    right: ref u8
+) void = trust {
+    u.buf_add(b, left)
+    val i: mut i64 = 0
+    for {
+        if i >= widths.len {
+            break
+        }
+        if i > 0 {
+            u.buf_add(b, mid)
+        }
+        json_table_bar(b, u.vec_gets(widths, i) + 2)
+        i++
+    }
+    u.buf_add(b, right)
+    u.buf_ch(b, 10)
+}
+
+fn json_table_line(
+    b: mut ref u.Buf,
+    cells: ref u.Vec,
+    widths: ref u.Vec
+) void = trust {
+    u.buf_add(b, c"│")
+    val i: mut i64 = 0
+    for {
+        if i >= cells.len {
+            break
+        }
+        val cell: ref u8 = u.vec_p(cells, i) as ref u8
+        u.buf_ch(b, 32)
+        u.buf_add(b, cell)
+        json_table_spaces(b, u.vec_gets(widths, i) - u.visible_width(cell))
+        u.buf_ch(b, 32)
+        u.buf_add(b, c"│")
+        i++
+    }
+    u.buf_ch(b, 10)
+}
+
+fn json_table_doc(root: js.JsonValue) ref u8 = trust {
+    val headers: mut ref u.Vec = u.vec_new()
+    val rows: mut ref u.Vec = u.vec_new()
+    if js.is_array(root) {
+        val n: i64 = js.len(root)
+        if n == 0 {
+            return u.s_dup(c"(empty)")
+        }
+        match js.array_get(root, 0) {
+            some first => {
+                if !js.is_object(first) {
+                    return json_cell(root)
+                }
+                json_table_headers(first, headers)
+            }
+            none => {
+                return u.s_dup(c"(empty)")
+            }
+        }
+        val r: mut i64 = 0
+        for {
+            if r >= n {
+                break
+            }
+            match js.array_get(root, r) {
+                some row => {
+                    if js.is_object(row) {
+                        val cells: mut ref u.Vec = u.vec_new()
+                        json_table_row(row, headers, cells)
+                        u.vec_pushp(rows, cells as ref void)
+                    }
+                }
+                none => {
+                    break
+                }
+            }
+            r++
+        }
+    } elif js.is_object(root) {
+        json_table_headers(root, headers)
+        val cells: mut ref u.Vec = u.vec_new()
+        json_table_row(root, headers, cells)
+        u.vec_pushp(rows, cells as ref void)
+    } else {
+        return json_cell(root)
+    }
+    if headers.len == 0 {
+        return u.s_dup(c"(empty)")
+    }
+
+    val widths: mut ref u.Vec = u.vec_new()
+    val h: mut i64 = 0
+    for {
+        if h >= headers.len {
+            break
+        }
+        u.vec_push(widths, u.visible_width(u.vec_p(headers, h) as ref u8))
+        h++
+    }
+    val r: mut i64 = 0
+    for {
+        if r >= rows.len {
+            break
+        }
+        val cells: ref u.Vec = u.vec_p(rows, r) as ref u.Vec
+        val c: mut i64 = 0
+        for {
+            if c >= cells.len {
+                break
+            }
+            val width: i64 = u.visible_width(u.vec_p(cells, c) as ref u8)
+            if width > u.vec_gets(widths, c) {
+                u.vec_sets(widths, c, width)
+            }
+            c++
+        }
+        r++
+    }
+
+    val b: mut ref u.Buf = u.buf_new()
+    json_table_rule(b, widths, c"┌", c"┬", c"┐")
+    json_table_line(b, headers, widths)
+    json_table_rule(b, widths, c"├", c"┼", c"┤")
+    r = 0
+    for {
+        if r >= rows.len {
+            break
+        }
+        json_table_line(b, u.vec_p(rows, r) as ref u.Vec, widths)
+        r++
+    }
+    json_table_rule(b, widths, c"└", c"┴", c"┘")
+    return u.s_trim(u.buf_take(b))
+}
+
+fn json_table(text: ref u8, n: ref lang.Node) ref u8 = trust {
+    match js.parse(sstr.from_cstr(text)) {
+        ok doc => {
+            val out: ref u8 = json_table_doc(js.root(doc))
+            js.doc_free(doc)
+            return out
+        }
+        err _ => {
+            set_error(c"jtable: invalid JSON", n.line, n.col)
+            return c""
+        }
+    }
+}
+
 fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     if id == 1 {
         val v: ref Value = arg(args, 0)
@@ -2826,6 +3192,12 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
             reverse_values(vec)
             return obj
         }
+        if u.s_eq(name, c"dump") {
+            return v_str_own(json_dump(obj, true))
+        }
+        if u.s_eq(name, c"dump_compact") {
+            return v_str_own(json_dump(obj, false))
+        }
         if u.s_eq(name, c"map") || u.s_eq(name, c"filter") || u.s_eq(name, c"pmap") {
             val fnv: ref Value = arg(args, 0)
             if fnv == none || fnv.tag != 7 {
@@ -2918,6 +3290,12 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
         if u.s_eq(name, c"items") {
             return call_native(27, args_for(obj), n)
         }
+        if u.s_eq(name, c"dump") {
+            return v_str_own(json_dump(obj, true))
+        }
+        if u.s_eq(name, c"dump_compact") {
+            return v_str_own(json_dump(obj, false))
+        }
         if u.s_eq(name, c"len") {
             return v_int(m.len)
         }
@@ -2990,6 +3368,13 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
             val pattern: ref u8 = v_to_str(arg(args, 0))
             val ignore_case: bool = truthy(arg_named(n, args, c"ignore_case"))
             return v_bool(like_match(s, pattern, ignore_case))
+        }
+        if u.s_eq(name, c"jtable") {
+            val out: ref u8 = json_table(s, n)
+            if g_flow != 0 {
+                return v_nil()
+            }
+            return v_str_own(out)
         }
         if u.s_eq(name, c"last") {
             val len: i64 = u.s_len(s)

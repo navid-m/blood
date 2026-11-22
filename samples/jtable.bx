@@ -1,0 +1,12 @@
+# Blood sample: list files, dump them as JSON, then render a table.
+
+var listing = std.glob("./*").map(|path| {
+    return {
+        "file": path.basename(),
+        "type": if path.is_dir() { "dir" } else { "file" },
+        "modified": path.modified()
+    }
+})
+
+say(listing.dump())
+say(listing.dump().jtable())

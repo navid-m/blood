@@ -593,6 +593,14 @@ test "script reports missing shell commands as script errors" {
     }
 }
 
+test "script dumps JSON and renders JSON tables" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var data = [{\"name\": \"a\"}, {\"name\": \"longer\"}]\nvar q = std.chr(34)\nvar expected = \"[\" + \"{\" + q + \"name\" + q + \":\" + q + \"a\" + q + \"},\" + \"{\" + q + \"name\" + q + \":\" + q + \"longer\" + q + \"}]\"\nif data.dump_compact() != expected {\n    raise \"compact\"\n}\nvar pretty = data.dump()\nif \"\\n\" not in pretty or q + \"name\" + q not in pretty {\n    raise \"pretty\"\n}\nvar table = data.dump().jtable()\nif \"name\" not in table or \"longer\" not in table or \"│\" not in table {\n    raise \"jtable\"\n}\nif {\"x\": 1}.dump_compact() != \"{\" + q + \"x\" + q + \":1}\" {\n    raise \"dict dump\"\n}\ntry {\n    \"{\".jtable()\n} catch err {\n    if \"invalid JSON\" not in err {\n        raise \"bad json\"\n    }\n}\n"
+        assert run(src) == 0
+    }
+}
+
 test "script lists sort by key and reverse" {
     trust {
         fresh()
