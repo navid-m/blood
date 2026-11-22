@@ -1582,6 +1582,18 @@ fn result_status(v: ref Value) i64 = trust {
     return num_i(@bitcast(raw, ref Value))
 }
 
+fn result_text(v: ref Value, field: ref u8) ref u8 = trust {
+    if v == none || v.tag != 6 {
+        return c""
+    }
+    val m: ref u.Map = v.p as ref u.Map
+    val raw: i64 = u.map_get(m, field)
+    if raw == 0 {
+        return c""
+    }
+    return v_to_str(@bitcast(raw, ref Value))
+}
+
 fn drain_fd(fd: i32, b: mut ref u.Buf, chunk: ref u8, timeout: i32) i64 = trust {
     val ready: i32 = ex.fd_poll(fd, timeout)
     if ready <= 0 {
@@ -1766,6 +1778,39 @@ fn spawn_result(
         }
         val status: i64 = ex.wait_pid(pid) as i64
         return v_result(status, u.buf_take(outb), u.buf_take(errb))
+    }
+}
+
+fn file_modified(path: ref u8) i64 = trust {
+    when windows {
+        return 0
+    }
+    otherwise {
+        val full: ref u8 = u.expand_tilde(path)
+        val av: mut ref u.Vec = u.vec_new()
+        u.vec_pushp(av, c"stat" as ref void)
+        when darwin {
+            u.vec_pushp(av, c"-f" as ref void)
+            u.vec_pushp(av, c"%m" as ref void)
+        }
+        otherwise {
+            u.vec_pushp(av, c"-c" as ref void)
+            u.vec_pushp(av, c"%Y" as ref void)
+        }
+        u.vec_pushp(av, full as ref void)
+        val res: ref Value = spawn_result(av, c"", false, false, none)
+        if result_status(res) != 0 {
+            return 0
+        }
+        match u.parse_int(u.s_trim(result_text(res, c"stdout"))) {
+            some t => {
+                return t
+            }
+            none => {
+                return 0
+            }
+        }
+        return 0
     }
 }
 
@@ -2677,6 +2722,21 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
             sort_values(vec)
             return v_nil()
         }
+        if u.s_eq(name, c"sort_by") {
+            val fnv: ref Value = arg(args, 0)
+            if fnv == none || fnv.tag != 7 {
+                set_error(c"sort_by expects a function", n.line, n.col)
+                return v_nil()
+            }
+            if !sort_by_values(vec, fnv, n) {
+                return v_nil()
+            }
+            return obj
+        }
+        if u.s_eq(name, c"reverse") {
+            reverse_values(vec)
+            return obj
+        }
         if u.s_eq(name, c"map") || u.s_eq(name, c"filter") || u.s_eq(name, c"pmap") {
             val fnv: ref Value = arg(args, 0)
             if fnv == none || fnv.tag != 7 {
@@ -2871,6 +2931,9 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
         if u.s_eq(name, c"stem") {
             return call_native(46, args_for(obj), n)
         }
+        if u.s_eq(name, c"modified") {
+            return v_int(file_modified(s))
+        }
         if u.s_eq(name, c"exists") {
             return call_native(36, args_for(obj), n)
         }
@@ -2954,6 +3017,90 @@ fn sort_values(vec: mut ref u.Vec) void = trust {
         }
         u.vec_setp(vec, j + 1, key)
         i++
+    }
+}
+
+fn compare_values(a: ref Value, b: ref Value) i64 = trust {
+    if is_nil(a) && is_nil(b) {
+        return 0
+    }
+    if is_nil(a) {
+        return -1
+    }
+    if is_nil(b) {
+        return 1
+    }
+    val a_num: bool = a.tag == 1 || a.tag == 2 || a.tag == 3
+    val b_num: bool = b.tag == 1 || b.tag == 2 || b.tag == 3
+    if a_num && b_num {
+        val af: f64 = num_f(a)
+        val bf: f64 = num_f(b)
+        if af < bf {
+            return -1
+        }
+        if af > bf {
+            return 1
+        }
+        return 0
+    }
+    return u.s_cmp(v_to_str(a), v_to_str(b))
+}
+
+fn sort_by_values(vec: mut ref u.Vec, fnv: ref Value, n: ref lang.Node) bool = trust {
+    val keys: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = 0
+    for {
+        if i >= vec.len {
+            break
+        }
+        val item: ref Value = u.vec_p(vec, i) as ref Value
+        val key: ref Value = call_one(fnv, item, n)
+        if g_flow != 0 {
+            return false
+        }
+        u.vec_pushp(keys, key as ref void)
+        i++
+    }
+    val j: mut i64 = 1
+    for {
+        if j >= vec.len {
+            break
+        }
+        val item: ref Value = u.vec_p(vec, j) as ref Value
+        val key: ref Value = u.vec_p(keys, j) as ref Value
+        val k: mut i64 = j - 1
+        for {
+            if k < 0 {
+                break
+            }
+            val cur_key: ref Value = u.vec_p(keys, k) as ref Value
+            if compare_values(cur_key, key) <= 0 {
+                break
+            }
+            u.vec_setp(keys, k + 1, cur_key)
+            u.vec_setp(vec, k + 1, u.vec_p(vec, k))
+            k--
+        }
+        u.vec_setp(keys, k + 1, key)
+        u.vec_setp(vec, k + 1, item)
+        j++
+    }
+    return true
+}
+
+fn reverse_values(vec: mut ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    val j: mut i64 = vec.len - 1
+    for {
+        if i >= j {
+            break
+        }
+        val left: ref Value = u.vec_p(vec, i) as ref Value
+        val right: ref Value = u.vec_p(vec, j) as ref Value
+        u.vec_setp(vec, i, right)
+        u.vec_setp(vec, j, left)
+        i++
+        j--
     }
 }
 

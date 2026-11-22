@@ -1,0 +1,11 @@
+# Blood sample: list .sx files in ./lib, newest first.
+
+var newest_first = std.glob("./lib/*").filter(
+    |f| f.basename().like("*.sx")
+).sort_by(
+    |f| f.modified()
+).reverse()
+
+for file in newest_first {
+    say(file)
+}

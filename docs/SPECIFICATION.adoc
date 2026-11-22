@@ -1903,6 +1903,8 @@ Method calls use the attribute syntax `value.name(arguments)`.
 |`contains(x)` |1 |Membership by equality.
 |`join(sep)` |1 |Join string representations with separator `sep`.
 |`sort()` |0 |Sort in place by string representation.
+|`sort_by(fn)` |1 |Sort in place by the key returned by `fn(x)`. Numeric keys compare numerically. Returns the list.
+|`reverse()` |0 |Reverse the list in place. Returns the list.
 |`map(fn)` |1 |New list containing `fn(x)` for each element `x`.
 |`pmap(fn)` |1 |Like `map(fn)`, but calls run concurrently in child processes.
 Results keep the original input order.
@@ -1957,6 +1959,7 @@ final element; `\r\n` is accepted.
 |`parent()` |0 |Directory component of a path.
 |`basename()` |0 |Final component of a path.
 |`stem()` |0 |Final component of a path with its last extension removed.
+|`modified()` |0 |File modification time as seconds since the Unix epoch, or `0` when unavailable.
 |`abs()` |0 |Absolute, cleaned path. Expands `~` and resolves relative paths
 against the current directory.
 |`exists()` |0 |Whether the path exists.

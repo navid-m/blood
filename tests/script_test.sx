@@ -592,3 +592,29 @@ test "script reports missing shell commands as script errors" {
         assert run(src) == 0
     }
 }
+
+test "script lists sort by key and reverse" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var xs = [\"b\", \"c\", \"a\"]\nif xs.sort_by(|x| x).join(\"\") != \"abc\" {\n    raise \"sort_by return\"\n}\nif xs.join(\"\") != \"abc\" {\n    raise \"sort_by\"\n}\nif xs.reverse().join(\"\") != \"cba\" {\n    raise \"reverse return\"\n}\nif xs.join(\"\") != \"cba\" {\n    raise \"reverse\"\n}\nvar recs = [{\"n\": 3}, {\"n\": 1}, {\"n\": 2}]\nrecs.sort_by(|r| r.n).reverse()\nif recs.map(|r| r.n).join(\",\") != \"3,2,1\" {\n    raise \"numeric keys\"\n}\nvar ages = [10, 2, 33]\nif ages.sort_by(|n| n).join(\",\") != \"2,10,33\" {\n    raise \"numeric order\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script paths report modification times" {
+    trust {
+        fresh()
+        val dir: ref u8 = c"/tmp/blood-unit-script/modified"
+        assert u.mkdir_p(dir)
+        val file: ref u8 = u.path_join(dir, c"a.txt")
+        val missing: ref u8 = u.path_join(dir, c"missing.txt")
+        assert u.write_file(file, c"x")
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_add(b, c"if \"")
+        u.buf_add(b, file)
+        u.buf_add(b, c"\".modified() <= 0 {\n    raise \"modified\"\n}\nif \"")
+        u.buf_add(b, missing)
+        u.buf_add(b, c"\".modified() != 0 {\n    raise \"missing modified\"\n}\n")
+        assert run(u.buf_take(b)) == 0
+    }
+}
