@@ -950,6 +950,15 @@ assignments are temporarily applied and then restored.
 with no arguments prints all aliases. `unalias NAME...` removes aliases.
 `unalias -a` removes all aliases.
 
+Alias names may contain punctuation such as dots. A definition value may
+contain spaces without quotes: words after `NAME=` are appended until another
+`NAME=` token starts a new definition. For example:
+
+[source]
+----
+alias cd..=cd ..
+----
+
 Aliases are expanded by re-scanning the replacement text as a shell line with
 the original arguments appended and quoted. Expansion is recursive up to a
 depth of eight. Alias expansion is performed for single-command input. An alias

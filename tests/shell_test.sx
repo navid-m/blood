@@ -372,6 +372,13 @@ test "run_line manages aliases" {
         assert sh.run_line(c"alias short=\"echo hi\"") == 0
         assert u.s_eq(@bitcast(u.map_get(sh.aliases(), c"short"), ref u8), c"echo hi")
 
+        assert sh.run_line(c"alias cd..=cd ..") == 0
+        assert u.s_eq(@bitcast(u.map_get(sh.aliases(), c"cd.."), ref u8), c"cd ..")
+
+        assert sh.run_line(c"alias one=1 two=2") == 0
+        assert u.s_eq(@bitcast(u.map_get(sh.aliases(), c"one"), ref u8), c"1")
+        assert u.s_eq(@bitcast(u.map_get(sh.aliases(), c"two"), ref u8), c"2")
+
         assert sh.run_line(c"unalias greet") == 0
         assert !u.map_has(sh.aliases(), c"greet")
         assert u.map_has(sh.aliases(), c"short")

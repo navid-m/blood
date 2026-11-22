@@ -2498,19 +2498,34 @@ fn bi_alias(cmd: ref Command) i32 = trust {
         val eq: i64 = u.s_index_of_char(def, 61, 0)
         if eq > 0 {
             val name: ref u8 = u.s_substr_perm(def, 0, eq)
-            val value: ref u8 = u.s_dup_perm(strip_alias_quotes(u.s_substr(
-                        def,
-                        eq + 1,
-                        u.s_len(def)
-                    )))
-            u.map_put(sh_aliases, name, @bitcast(value, i64))
-        } else {
-            if u.map_has(sh_aliases, def) {
-                val v: ref u8 = @bitcast(u.map_get(sh_aliases, def), ref u8)
-                u.write_fd(1, u.s_cat3(def, c"='", u.s_cat(v, c"'\n")))
-            } else {
-                u.write_fd(2, u.s_cat3(c"blood: alias: ", def, c": not found\n"))
+            val vb: mut ref u.Buf = u.buf_new()
+            u.buf_add(vb, strip_alias_quotes(u.s_substr(
+                def,
+                eq + 1,
+                u.s_len(def)
+            )))
+            i++
+            for {
+                if i >= cmd.argv.len {
+                    break
+                }
+                val extra: ref u8 = argv_at(cmd, i)
+                if u.s_index_of_char(extra, 61, 0) > 0 {
+                    break
+                }
+                u.buf_ch(vb, 32)
+                u.buf_add(vb, extra)
+                i++
             }
+            val value: ref u8 = u.s_dup_perm(u.buf_take(vb))
+            u.map_put(sh_aliases, name, @bitcast(value, i64))
+            continue
+        }
+        if u.map_has(sh_aliases, def) {
+            val v: ref u8 = @bitcast(u.map_get(sh_aliases, def), ref u8)
+            u.write_fd(1, u.s_cat3(def, c"='", u.s_cat(v, c"'\n")))
+        } else {
+            u.write_fd(2, u.s_cat3(c"blood: alias: ", def, c": not found\n"))
         }
         i++
     }
