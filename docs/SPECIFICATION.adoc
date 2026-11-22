@@ -41,6 +41,7 @@ blood SCRIPT.blood|SCRIPT.bx [ARG...]
 blood -init
 blood -fmt PATH...
 blood -translate-sh [-o DIR] PATH...
+blood -ref [-stdout]
 blood -version
 blood -help
 ----
@@ -82,6 +83,10 @@ exists it is not overwritten.
 `blood -version` and `blood -v` print the version line.
 
 `blood -help` and `blood -h` print usage information.
+
+`blood -ref` writes the language reference embedded in the executable to
+`BLOOD_LANGUAGE_REFERENCE.adoc` in the current directory. With `-stdout`, the
+reference is written to standard output instead.
 
 An unrecognised flag beginning with `-` produces
 `blood: unknown flag 'OPTION'` and status 2. Command-line options use the

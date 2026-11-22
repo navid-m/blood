@@ -4,6 +4,7 @@ blood2
 blood-dev
 blood
 blood.exe
+BLOOD_LANGUAGE_REFERENCE.adoc
 SPECTRE_LANGUAGE_REFERENCE.md
 lib/
 std__*

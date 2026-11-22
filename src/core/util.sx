@@ -1753,17 +1753,20 @@ pub fn read_file(path: ref u8) ref u8 = trust {
     return out
 }
 
-pub fn write_file(path: ref u8, data: ref u8) bool = trust {
+pub fn write_file_n(path: ref u8, data: ref u8, n: i64) bool = trust {
     val f: ref void = rt.fopen(path, c"wb")
     if f == none {
         return false
     }
-    val n: i64 = s_len(data)
     if n > 0 {
         rt.fwrite(data, 1 as usize, n as usize, f)
     }
     rt.fclose(f)
     return true
+}
+
+pub fn write_file(path: ref u8, data: ref u8) bool = trust {
+    return write_file_n(path, data, s_len(data))
 }
 
 pub fn append_file(path: ref u8, data: ref u8) bool = trust {
