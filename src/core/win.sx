@@ -71,6 +71,11 @@ when windows {
     ) i32 = "GetConsoleScreenBufferInfo"
     extern (C, header) fn c_set_output_cp(cp: u32) i32 = "SetConsoleOutputCP"
     extern (C, header) fn c_set_input_cp(cp: u32) i32 = "SetConsoleCP"
+    extern (C, header) fn c_get_file_attributes_ex(
+        path: ref u8,
+        level: i32,
+        data: ref void
+    ) i32 = "GetFileAttributesExA"
 }
 
 type WinCoord = {
@@ -91,6 +96,20 @@ type WinConsoleInfo = {
     attrs: u16
     window: WinRect
     max_size: WinCoord
+}
+
+type FileTime = {
+    low: u32
+    high: u32
+}
+
+type WinFileAttributeData = {
+    attrs: u32
+    creation: FileTime
+    access: FileTime
+    write: FileTime
+    size_high: u32
+    size_low: u32
 }
 
 type BxProc = {
@@ -737,5 +756,33 @@ pub fn term_size(rows: ref i64, cols: ref i64) i32 = trust {
     }
     otherwise {
         return -1
+    }
+}
+
+fn filetime_seconds(ft: FileTime) i64 = trust {
+    val ticks: u64 = ((ft.high as u64) << 32) | (ft.low as u64)
+    if ticks == 0 {
+        return 0
+    }
+    return (ticks / (10000000 as u64)) as i64 - 11644473600
+}
+
+/// Read file creation and modification times as Unix seconds.
+pub fn file_times(path: ref u8, modified: ref i64, created: ref i64) bool = trust {
+    when windows {
+        val data: mut WinFileAttributeData = @zeroed
+        if c_get_file_attributes_ex(path, 0, @addr(data) as ref void) == 0 {
+            return false
+        }
+        if modified != none {
+            @store64(modified as ref void, filetime_seconds(data.write))
+        }
+        if created != none {
+            @store64(created as ref void, filetime_seconds(data.creation))
+        }
+        return true
+    }
+    otherwise {
+        return false
     }
 }

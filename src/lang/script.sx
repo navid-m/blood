@@ -5,6 +5,7 @@ val lang = use("lang.sx")
 val term = use("../shell/terminal.sx")
 val sh   = use("../shell/shell.sx")
 val ex   = use("../core/exec.sx")
+val win  = use("../core/win.sx")
 val re   = use("std/regex")
 val rt   = use("std/runtime")
 val tcol = use("std/terminal")
@@ -14,6 +15,11 @@ pub type Value = {
     tag: mut i64
     i: mut i64
     p: mut ref void
+}
+
+pub type FileTimes = {
+    modified: mut i64
+    created: mut i64
 }
 
 pub type Env = {
@@ -1781,37 +1787,120 @@ fn spawn_result(
     }
 }
 
-fn file_modified(path: ref u8) i64 = trust {
+fn parse_int_pair(text: ref u8, first: ref i64, second: ref i64) bool = trust {
+    val n: i64 = u.s_len(text)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            return false
+        }
+        val c: u8 = @load8(@ptradd(text, i))
+        if c != 32 && c != 9 && c != 10 && c != 13 {
+            break
+        }
+        i++
+    }
+    val start1: i64 = i
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(text, i))
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            break
+        }
+        i++
+    }
+    if i <= start1 {
+        return false
+    }
+    val v1: mut i64 = 0
+    match u.parse_int(u.s_substr(text, start1, i)) {
+        some x => {
+            v1 = x
+        }
+        none => {
+            return false
+        }
+    }
+    for {
+        if i >= n {
+            return false
+        }
+        val c: u8 = @load8(@ptradd(text, i))
+        if c != 32 && c != 9 && c != 10 && c != 13 {
+            break
+        }
+        i++
+    }
+    val start2: i64 = i
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(text, i))
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            break
+        }
+        i++
+    }
+    if i <= start2 {
+        return false
+    }
+    match u.parse_int(u.s_substr(text, start2, i)) {
+        some x => {
+            if first != none {
+                @store64(first as ref void, v1)
+            }
+            if second != none {
+                @store64(second as ref void, x)
+            }
+            return true
+        }
+        none => {
+            return false
+        }
+    }
+    return false
+}
+
+pub fn file_times(path: ref u8) FileTimes = trust {
+    val full: ref u8 = u.expand_tilde(path)
+    val out: mut FileTimes = FileTimes{modified: 0, created: 0}
     when windows {
-        return 0
+        win.file_times(full, @addr(out.modified), @addr(out.created))
     }
     otherwise {
-        val full: ref u8 = u.expand_tilde(path)
-        val av: mut ref u.Vec = u.vec_new()
-        u.vec_pushp(av, c"stat" as ref void)
-        when darwin {
-            u.vec_pushp(av, c"-f" as ref void)
-            u.vec_pushp(av, c"%m" as ref void)
-        }
-        otherwise {
-            u.vec_pushp(av, c"-c" as ref void)
-            u.vec_pushp(av, c"%Y" as ref void)
-        }
-        u.vec_pushp(av, full as ref void)
-        val res: ref Value = spawn_result(av, c"", false, false, none)
-        if result_status(res) != 0 {
-            return 0
-        }
-        match u.parse_int(u.s_trim(result_text(res, c"stdout"))) {
-            some t => {
-                return t
+        if u.file_exists(full) {
+            val av: mut ref u.Vec = u.vec_new()
+            u.vec_pushp(av, c"stat" as ref void)
+            when darwin {
+                u.vec_pushp(av, c"-f" as ref void)
+                u.vec_pushp(av, c"%m %B" as ref void)
             }
-            none => {
-                return 0
+            otherwise {
+                u.vec_pushp(av, c"-c" as ref void)
+                u.vec_pushp(av, c"%Y %W" as ref void)
+            }
+            u.vec_pushp(av, full as ref void)
+            val res: ref Value = spawn_result(av, c"", false, false, none)
+            if result_status(res) == 0 {
+                val text: ref u8 = u.s_trim(result_text(res, c"stdout"))
+                val modified: mut i64 = 0
+                val created: mut i64 = 0
+                if parse_int_pair(text, @addr(modified), @addr(created)) {
+                    out.modified = modified
+                    out.created = created
+                }
             }
         }
-        return 0
     }
+    return out
+}
+
+fn file_modified(path: ref u8) i64 = trust {
+    val times: FileTimes = file_times(path)
+    return times.modified
 }
 
 fn remove_all_path(path: ref u8) bool = trust {

@@ -115,7 +115,7 @@ test ":rla reloads config, aliases and .bloodrc" {
         val rc: ref u8 = u.path_join(dir, c".bloodrc")
         assert u.write_file(
             rc,
-            c"alias ll='echo reloaded'\nval user_paths = [\"bin\"]\nfn prelude() {\n    std.write_file(\"/tmp/blood-unit-escape/reload/prelude.txt\", \"ran\")\n}\nprelude()\n"
+            c"alias ll='echo reloaded'\nvar user_paths = [\"bin\"]\nfn prelude() {\n    std.write_file(\"/tmp/blood-unit-escape/reload/prelude.txt\", \"ran\")\n}\nprelude()\n"
         )
         val marker: ref u8 = u.path_join(dir, c"prelude.txt")
 

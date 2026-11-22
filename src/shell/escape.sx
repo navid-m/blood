@@ -6,6 +6,7 @@ val histmod = use("../core/history.sx")
 val shell   = use("shell.sx")
 val script  = use("../lang/script.sx")
 val prompt  = use("prompt.sx")
+val rt      = use("std/runtime")
 
 val brand = @embed("../assets/brand.txt")
 val brand_len = @embedlen("../assets/brand.txt")
@@ -14,6 +15,8 @@ type LsEntry = {
     label: mut ref u8
     mode: mut u32
     size: mut i64
+    modified: mut ref u8
+    created: mut ref u8
     valid: mut bool
 }
 
@@ -255,6 +258,26 @@ fn ls_size(n: i64) ref u8 = trust {
     return ls_unit(n, 1024 * 1024 * 1024 * 1024, c"T")
 }
 
+fn ls_time(secs: i64) ref u8 = trust {
+    if secs <= 0 {
+        return u.s_dup(c"-")
+    }
+    val t: mut i64 = secs
+    val tm: ref void = rt.localtime(@addr(t))
+    if tm == none {
+        return u.s_dup(c"-")
+    }
+    val minute: i64 = (@load32(@ptradd(tm, 4)) as i64) & 0xFFFFFFFF
+    val hour: i64 = (@load32(@ptradd(tm, 8)) as i64) & 0xFFFFFFFF
+    val day: i64 = (@load32(@ptradd(tm, 12)) as i64) & 0xFFFFFFFF
+    val month: i64 = ((@load32(@ptradd(tm, 16)) as i64) & 0xFFFFFFFF) + 1
+    val year: i64 = ((@load32(@ptradd(tm, 20)) as i64) & 0xFFFFFFFF) + 1900
+    return u.s_format(
+        c"%04d-%02d-%02d %02d:%02d",
+        {year, month, day, hour, minute}
+    )
+}
+
 fn ls_spaces(n: i64) void = trust {
     val i: mut i64 = 0
     for {
@@ -277,17 +300,30 @@ fn ls_bar(n: i64) void = trust {
     }
 }
 
-fn ls_rule(left: ref u8, mid: ref u8, right: ref u8, a: i64, b: i64, c: i64) void = trust {
+fn ls_rule(
+    left: ref u8,
+    mid: ref u8,
+    right: ref u8,
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+    e: i64
+) void = trust {
     u.stdout_s(left)
     ls_bar(a + 2)
     u.stdout_s(mid)
     ls_bar(b + 2)
     u.stdout_s(mid)
     ls_bar(c + 2)
+    u.stdout_s(mid)
+    ls_bar(d + 2)
+    u.stdout_s(mid)
+    ls_bar(e + 2)
     u.stdout_ln(right)
 }
 
-fn ls_header(nw: i64, pw: i64, sw: i64) void = trust {
+fn ls_header(nw: i64, pw: i64, sw: i64, mw: i64, cw: i64) void = trust {
     u.stdout_s(c"│ Name")
     ls_spaces(nw - 4)
     u.stdout_s(c" │ Permissions")
@@ -295,10 +331,16 @@ fn ls_header(nw: i64, pw: i64, sw: i64) void = trust {
     u.stdout_s(c" │ ")
     ls_spaces(sw - 4)
     u.stdout_s(c"Size")
+    u.stdout_s(c" │ ")
+    u.stdout_s(c"Modified")
+    ls_spaces(mw - 8)
+    u.stdout_s(c" │ ")
+    u.stdout_s(c"Created")
+    ls_spaces(cw - 7)
     u.stdout_ln(c" │")
 }
 
-fn ls_row(e: ref LsEntry, nw: i64, pw: i64, sw: i64) void = trust {
+fn ls_row(e: ref LsEntry, nw: i64, pw: i64, sw: i64, mw: i64, cw: i64) void = trust {
     val perms: mut ref u8 = c"-"
     val size: mut ref u8 = c"-"
     if e.valid {
@@ -314,6 +356,12 @@ fn ls_row(e: ref LsEntry, nw: i64, pw: i64, sw: i64) void = trust {
     u.stdout_s(c" │ ")
     ls_spaces(sw - u.visible_width(size))
     u.stdout_s(size)
+    u.stdout_s(c" │ ")
+    u.stdout_s(e.modified)
+    ls_spaces(mw - u.visible_width(e.modified))
+    u.stdout_s(c" │ ")
+    u.stdout_s(e.created)
+    ls_spaces(cw - u.visible_width(e.created))
     u.stdout_ln(c" │")
 }
 
@@ -349,6 +397,9 @@ fn ls_collect(dir: ref u8, out: mut ref u.Vec) void = trust {
         }
         e.mode = fi.mode
         e.size = fi.size
+        val times: script.FileTimes = script.file_times(full)
+        e.modified = ls_time(times.modified)
+        e.created = ls_time(times.created)
         e.valid = fi.valid
         u.vec_pushp(out, e as ref void)
         u.s_free(full)
@@ -394,6 +445,8 @@ fn list_table(path: ref u8) i32 = trust {
     val nw: mut i64 = 4
     val pw: mut i64 = 11
     val sw: mut i64 = 4
+    val mw: mut i64 = 8
+    val cw: mut i64 = 7
     val i: mut i64 = 0
     for {
         if i >= out.len {
@@ -414,22 +467,30 @@ fn list_table(path: ref u8) i32 = trust {
                 sw = s
             }
         }
+        val m: i64 = u.visible_width(e.modified)
+        if m > mw {
+            mw = m
+        }
+        val c: i64 = u.visible_width(e.created)
+        if c > cw {
+            cw = c
+        }
         i++
     }
 
-    ls_rule(c"╭", c"┬", c"╮", nw, pw, sw)
-    ls_header(nw, pw, sw)
-    ls_rule(c"├", c"┼", c"┤", nw, pw, sw)
+    ls_rule(c"╭", c"┬", c"╮", nw, pw, sw, mw, cw)
+    ls_header(nw, pw, sw, mw, cw)
+    ls_rule(c"├", c"┼", c"┤", nw, pw, sw, mw, cw)
     i = 0
     for {
         if i >= out.len {
             break
         }
         val e: ref LsEntry = u.vec_p(out, i) as ref LsEntry
-        ls_row(e, nw, pw, sw)
+        ls_row(e, nw, pw, sw, mw, cw)
         i++
     }
-    ls_rule(c"╰", c"┴", c"╯", nw, pw, sw)
+    ls_rule(c"╰", c"┴", c"╯", nw, pw, sw, mw, cw)
 
     i = 0
     for {
