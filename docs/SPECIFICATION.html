@@ -3119,6 +3119,25 @@ aborting the remaining iterations. <code>para for</code> does not support <code>
 </div>
 </div>
 <div class="sect3">
+<h4 id="_parallel_map">Parallel map</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>var results = values.pmap(|x| f(x))</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>pmap</code> is the parallel counterpart of <code>map</code>. It starts a child process for each
+element and returns a new list with the callback results in the original input
+order. Assignments and other side effects inside the callback stay in the child
+process; only the returned value is sent back to the parent. Values are copied
+between processes, so results must be data values: null, booleans, numbers,
+strings, lists, and dictionaries. Functions and namespaces cannot cross the
+process boundary. Keep callbacks pure when output ordering matters, because
+child output may interleave. An uncaught callback error propagates to the
+caller. On platforms without <code>fork</code>, <code>pmap</code> maps the elements serially.</p>
+</div>
+</div>
+<div class="sect3">
 <h4 id="_functions">Functions</h4>
 <div class="listingblock">
 <div class="content">
@@ -3811,6 +3830,12 @@ the path.</p>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>map(fn)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">New list containing <code>fn(x)</code> for each element <code>x</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>pmap(fn)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Like <code>map(fn)</code>, but calls run concurrently in child processes.
+Results keep the original input order.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>filter(fn)</code></p></td>
@@ -4704,7 +4729,7 @@ sh("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-20 23:45:03 UTC
+Last updated 2026-11-22 03:28:50 UTC
 </div>
 </div>
 </body>

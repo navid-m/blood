@@ -1505,6 +1505,23 @@ error in an iteration reports the error and makes that iteration fail without
 aborting the remaining iterations. `para for` does not support `break` or
 `continue`. On platforms without `fork`, the statement reports an error.
 
+==== Parallel map
+
+[source]
+----
+var results = values.pmap(|x| f(x))
+----
+
+`pmap` is the parallel counterpart of `map`. It starts a child process for each
+element and returns a new list with the callback results in the original input
+order. Assignments and other side effects inside the callback stay in the child
+process; only the returned value is sent back to the parent. Values are copied
+between processes, so results must be data values: null, booleans, numbers,
+strings, lists, and dictionaries. Functions and namespaces cannot cross the
+process boundary. Keep callbacks pure when output ordering matters, because
+child output may interleave. An uncaught callback error propagates to the
+caller. On platforms without `fork`, `pmap` maps the elements serially.
+
 ==== Functions
 
 [source]
@@ -1832,6 +1849,8 @@ Method calls use the attribute syntax `value.name(arguments)`.
 |`join(sep)` |1 |Join string representations with separator `sep`.
 |`sort()` |0 |Sort in place by string representation.
 |`map(fn)` |1 |New list containing `fn(x)` for each element `x`.
+|`pmap(fn)` |1 |Like `map(fn)`, but calls run concurrently in child processes.
+Results keep the original input order.
 |`filter(fn)` |1 |New list of elements for which `fn(x)` is truthy.
 |`count([fn])` |0 or 1 |Number of elements. With `fn`, the number of elements
 for which `fn(x)` is truthy.

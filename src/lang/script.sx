@@ -2535,11 +2535,14 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
             sort_values(vec)
             return v_nil()
         }
-        if u.s_eq(name, c"map") || u.s_eq(name, c"filter") {
+        if u.s_eq(name, c"map") || u.s_eq(name, c"filter") || u.s_eq(name, c"pmap") {
             val fnv: ref Value = arg(args, 0)
             if fnv == none || fnv.tag != 7 {
                 set_error(u.s_cat3(name, c" expects a function", c""), n.line, n.col)
                 return v_nil()
+            }
+            if u.s_eq(name, c"pmap") {
+                return parallel_map(vec, fnv, n)
             }
             val out: mut ref u.Vec = list_new()
             val i: mut i64 = 0
@@ -3134,6 +3137,369 @@ fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
     if failed == 127 && pids.len == 0 {
         set_error(c"failed to start parallel iteration", n.line, n.col)
     }
+}
+
+type Decoder = {
+    s: mut ref u8
+    pos: mut i64
+    len: mut i64
+}
+
+fn encode_value(v: ref Value, b: mut ref u.Buf) void = trust {
+    if is_nil(v) {
+        u.buf_ch(b, 110)
+        return
+    }
+    if v.tag == 1 {
+        if v.i != 0 {
+            u.buf_add(b, c"b1")
+        } else {
+            u.buf_add(b, c"b0")
+        }
+        return
+    }
+    if v.tag == 2 {
+        u.buf_ch(b, 105)
+        u.buf_add(b, u.s_int(v.i))
+        u.buf_ch(b, 59)
+        return
+    }
+    if v.tag == 3 {
+        u.buf_ch(b, 102)
+        u.buf_add(b, u.s_int(v.i))
+        u.buf_ch(b, 59)
+        return
+    }
+    if v.tag == 4 {
+        val s: ref u8 = v.p as ref u8
+        val n: i64 = u.s_len(s)
+        u.buf_ch(b, 115)
+        u.buf_add(b, u.s_int(n))
+        u.buf_ch(b, 58)
+        u.buf_addn(b, s, n)
+        return
+    }
+    if v.tag == 5 {
+        val vec: ref u.Vec = v.p as ref u.Vec
+        u.buf_ch(b, 108)
+        u.buf_add(b, u.s_int(vec.len))
+        u.buf_ch(b, 58)
+        val i: mut i64 = 0
+        for {
+            if i >= vec.len {
+                break
+            }
+            encode_value(u.vec_p(vec, i) as ref Value, b)
+            i++
+        }
+        return
+    }
+    if v.tag == 6 {
+        val m: ref u.Map = v.p as ref u.Map
+        u.buf_ch(b, 100)
+        u.buf_add(b, u.s_int(m.len))
+        u.buf_ch(b, 58)
+        val i: mut i64 = 0
+        for {
+            if i >= m.cap {
+                break
+            }
+            if u.map_used_at(m, i) {
+                val key: ref u8 = u.map_key_at(m, i)
+                u.buf_ch(b, 115)
+                u.buf_add(b, u.s_int(u.s_len(key)))
+                u.buf_ch(b, 58)
+                u.buf_add(b, key)
+                encode_value(@bitcast(u.map_val_at(m, i), ref Value), b)
+            }
+            i++
+        }
+        return
+    }
+    u.buf_ch(b, 110)
+}
+
+fn decode_token(d: mut ref Decoder, delim: u8) ref u8 = trust {
+    val start: i64 = d.pos
+    for {
+        if d.pos >= d.len {
+            break
+        }
+        if @load8(@ptradd(d.s, d.pos)) == delim {
+            val out: ref u8 = u.s_substr(d.s, start, d.pos)
+            d.pos++
+            return out
+        }
+        d.pos++
+    }
+    return u.s_substr(d.s, start, d.pos)
+}
+
+fn decode_value(d: mut ref Decoder) ref Value = trust {
+    if d.pos >= d.len {
+        return v_nil()
+    }
+    val tag: u8 = @load8(@ptradd(d.s, d.pos))
+    d.pos++
+    if tag == 110 {
+        return v_nil()
+    }
+    if tag == 98 {
+        if d.pos >= d.len {
+            return v_bool(false)
+        }
+        val c: u8 = @load8(@ptradd(d.s, d.pos))
+        d.pos++
+        return v_bool(c == 49)
+    }
+    if tag == 105 {
+        val raw: ref u8 = decode_token(d, 59)
+        match u.parse_int(raw) {
+            some n => {
+                return v_int(n)
+            }
+            none => {
+                return v_int(0)
+            }
+        }
+    }
+    if tag == 102 {
+        val raw: ref u8 = decode_token(d, 59)
+        match u.parse_int(raw) {
+            some n => {
+                return v_float(@bitcast(n, f64))
+            }
+            none => {
+                return v_float(0.0)
+            }
+        }
+    }
+    if tag == 115 {
+        val raw: ref u8 = decode_token(d, 58)
+        match u.parse_int(raw) {
+            some n => {
+                val start: i64 = d.pos
+                val end: i64 = start + n
+                if end > d.len {
+                    d.pos = d.len
+                    return v_str_own(u.s_substr(d.s, start, d.len))
+                }
+                d.pos = end
+                return v_str_own(u.s_substr(d.s, start, end))
+            }
+            none => {
+                return v_nil()
+            }
+        }
+    }
+    if tag == 108 {
+        val raw: ref u8 = decode_token(d, 58)
+        val out: mut ref u.Vec = list_new()
+        match u.parse_int(raw) {
+            some n => {
+                val i: mut i64 = 0
+                for {
+                    if i >= n {
+                        break
+                    }
+                    u.vec_pushp(out, decode_value(d) as ref void)
+                    i++
+                }
+            }
+            none => {}
+        }
+        return v_list(out)
+    }
+    if tag == 100 {
+        val raw: ref u8 = decode_token(d, 58)
+        val m: mut ref u.Map = dict_new()
+        match u.parse_int(raw) {
+            some n => {
+                val i: mut i64 = 0
+                for {
+                    if i >= n {
+                        break
+                    }
+                    val key: ref Value = decode_value(d)
+                    val item: ref Value = decode_value(d)
+                    u.map_put(m, key_of(key), @bitcast(item, i64))
+                    i++
+                }
+            }
+            none => {}
+        }
+        return v_dict(m)
+    }
+    return v_nil()
+}
+
+fn read_all_fd(fd: i32) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    val chunk: ref u8 = u.xalloc(4096 as usize) as ref u8
+    for {
+        val n: i64 = ex.fd_read(fd, chunk, 4096)
+        if n <= 0 {
+            break
+        }
+        u.buf_addn(b, chunk, n)
+    }
+    u.xfree(chunk)
+    return u.buf_take(b)
+}
+
+fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = trust {
+    when windows {
+        val out: mut ref u.Vec = list_new()
+        val i: mut i64 = 0
+        for {
+            if i >= vec.len {
+                break
+            }
+            val result: ref Value = call_one(fnv, u.vec_p(vec, i) as ref Value, n)
+            if g_flow != 0 {
+                return v_nil()
+            }
+            u.vec_pushp(out, result as ref void)
+            i++
+        }
+        return v_list(out)
+    }
+    val out: mut ref u.Vec = list_new()
+    val pids: mut ref u.Vec = u.vec_new()
+    val fds: mut ref u.Vec = u.vec_new()
+    val failed: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= vec.len {
+            break
+        }
+        if u.interrupt_flag != 0 {
+            break
+        }
+        val p: ex.Pipe = ex.make_pipe()
+        val pid: i32 = rt.fork()
+        if pid == 0 {
+            val ci: mut i64 = 0
+            for {
+                if ci >= fds.len {
+                    break
+                }
+                ex.fd_close(num_i(u.vec_p(fds, ci) as ref Value) as i32)
+                ci++
+            }
+            ex.fd_close(p.read_fd)
+            g_error = none
+            g_flow = 0
+            g_return = none
+            set_status(0)
+            val result: ref Value = call_one(fnv, u.vec_p(vec, i) as ref Value, n)
+            val code: mut i64 = 0
+            if g_flow == 4 {
+                val msg: mut ref u8 = g_error
+                if msg == none {
+                    msg = u.s_dup(c"error")
+                }
+                val info: mut ref u.Vec = list_new()
+                u.vec_pushp(info, v_int(g_err_line) as ref void)
+                u.vec_pushp(info, v_int(g_err_col) as ref void)
+                u.vec_pushp(info, v_str(msg) as ref void)
+                val b: mut ref u.Buf = u.buf_new()
+                u.buf_ch(b, 101)
+                encode_value(v_list(info), b)
+                u.write_fd(p.write_fd, u.buf_take(b))
+                code = 1
+            } elif g_flow == 5 {
+                code = u.script_exit_code
+            } else {
+                val b: mut ref u.Buf = u.buf_new()
+                u.buf_ch(b, 111)
+                encode_value(result, b)
+                u.write_fd(p.write_fd, u.buf_take(b))
+            }
+            if code < 0 {
+                code = 0
+            }
+            ex.fd_close(p.write_fd)
+            rt.exit_now((code & 255) as i32)
+            return v_nil()
+        }
+        ex.fd_close(p.write_fd)
+        if pid < 0 {
+            ex.fd_close(p.read_fd)
+            failed = 127
+            break
+        }
+        u.vec_pushp(pids, v_int(pid as i64) as ref void)
+        u.vec_pushp(fds, v_int(p.read_fd as i64) as ref void)
+        i++
+    }
+    val j: mut i64 = 0
+    for {
+        if j >= fds.len {
+            break
+        }
+        val fd: i32 = num_i(u.vec_p(fds, j) as ref Value) as i32
+        val payload: ref u8 = read_all_fd(fd)
+        ex.fd_close(fd)
+        val pid: i32 = num_i(u.vec_p(pids, j) as ref Value) as i32
+        val status: mut i32 = 0
+        val got: mut i32 = -1
+        for {
+            got = rt.waitpid(pid, @addr(status), 0)
+            if got >= 0 || u.interrupt_flag == 0 {
+                break
+            }
+        }
+        val code: mut i64 = 127
+        if got >= 0 {
+            code = wait_status_code(status)
+        }
+        if code != 0 && failed == 0 {
+            failed = code
+        }
+        if u.s_len(payload) == 0 {
+            u.vec_pushp(out, v_nil() as ref void)
+        } else {
+            val kind: u8 = @load8(payload)
+            val d: mut ref Decoder = u.xalloc(@sizeof(Decoder) as i64) as ref Decoder
+            d.s = payload
+            d.pos = 1
+            d.len = u.s_len(payload)
+            if kind == 111 {
+                u.vec_pushp(out, decode_value(d) as ref void)
+            } elif kind == 101 {
+                val info: ref Value = decode_value(d)
+                if info != none && info.tag == 5 && g_error == none {
+                    val iv: ref u.Vec = info.p as ref u.Vec
+                    if iv.len >= 3 {
+                        set_error(
+                            v_to_str(u.vec_p(iv, 2) as ref Value),
+                            num_i(u.vec_p(iv, 0) as ref Value),
+                            num_i(u.vec_p(iv, 1) as ref Value)
+                        )
+                    }
+                }
+                u.vec_pushp(out, v_nil() as ref void)
+            } else {
+                u.vec_pushp(out, v_nil() as ref void)
+            }
+        }
+        j++
+    }
+    set_status(failed)
+    if u.interrupt_flag != 0 {
+        u.interrupt_flag = 0
+        set_error(c"interrupted", n.line, n.col)
+        return v_nil()
+    }
+    if failed == 127 && fds.len == 0 {
+        set_error(c"failed to start parallel map", n.line, n.col)
+        return v_nil()
+    }
+    if g_flow != 0 {
+        return v_nil()
+    }
+    return v_list(out)
 }
 
 fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {

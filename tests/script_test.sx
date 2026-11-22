@@ -57,6 +57,14 @@ test "script supports list map filter and count with lambdas" {
     }
 }
 
+test "script supports parallel map with lambdas" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var xs = [1, 2, 3, 4]\nvar doubled = xs.pmap(|x| x * 2)\nif doubled.join(\",\") != \"2,4,6,8\" {\n    raise \"pmap\"\n}\nvar tagged = [\"a\", \"b\", \"c\"].pmap(|s| {\n    return {\"name\": s, \"len\": s.len()}\n})\nif tagged[0].name != \"a\" or tagged[2].len != 1 {\n    raise \"pmap dict\"\n}\nvar offset = 10\nif xs.pmap(|x| x + offset).join(\",\") != \"11,12,13,14\" {\n    raise \"pmap closure\"\n}\nvar ordered = [3, 1, 2].pmap(|x| {\n    std.sleep(x * 20)\n    return x\n})\nif ordered.join(\",\") != \"3,1,2\" {\n    raise \"pmap order\"\n}\nif [].pmap(|x| x).len() != 0 {\n    raise \"pmap empty\"\n}\nvar mixed = [1, 2.5, \"x\", true, null].pmap(|v| v)\nif mixed[0] != 1 or mixed[1] != 2.5 or mixed[2] != \"x\" or mixed[3] != true or mixed[4] != null {\n    raise \"pmap values\"\n}\nvar nested = [[1, 2], {\"a\": [3]}].pmap(|v| v)\nif nested[0][1] != 2 or nested[1].a[0] != 3 {\n    raise \"pmap nested\"\n}\ntry {\n    [1].pmap(|x| 1 / 0)\n} catch err {\n    if \"division\" not in err {\n        raise \"pmap error\"\n    }\n}\n"
+        assert run(src) == 0
+    }
+}
+
 test "script exposes builtins through the std namespace" {
     trust {
         fresh()

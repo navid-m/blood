@@ -10,35 +10,35 @@ fn check_sample(sample) {
     var expected = "samples/expected/{name}.out"
 
     if not expected.is_file() {
-        say("FAIL {name}: missing expected output ({expected})")
-        return null
+        return { "ok": false, "report": "FAIL {name}: missing expected output ({expected})" }
     }
 
     var sample_args = (std.read_file("samples/args/{name}.args") ?? "").split_words()
     var r           = run([blood_bin, sample, ...sample_args])
 
     if not r.ok {
-        say("FAIL {name}: exited with status {r.status}")
-        print(std.indent(r.stderr, 4))
-        return false
+        var report = "FAIL {name}: exited with status {r.status}"
+        if r.stderr != "" {
+            report += "\n" + std.indent(r.stderr, 4).strip_suffix("\n")
+        }
+        return { "ok": false, "report": report }
     }
 
     if r.stderr != "" {
-        say("FAIL {name}: wrote to stderr")
-        print(std.indent(r.stderr, 4))
-        return false
+        var report = "FAIL {name}: wrote to stderr"
+        report += "\n" + std.indent(r.stderr, 4).strip_suffix("\n")
+        return { "ok": false, "report": report }
     }
 
     var want = std.read_file(expected) ?? ""
 
     if r.stdout != want {
-        say("FAIL {name}: output did not match {expected}")
-        print(std.indent(std.unified_diff(want, r.stdout), 4))
-        return false
+        var report = "FAIL {name}: output did not match {expected}"
+        report += "\n" + std.indent(std.unified_diff(want, r.stdout), 4).strip_suffix("\n")
+        return { "ok": false, "report": report }
     }
 
-    say("PASS {name}")
-    return true
+    return { "ok": true, "report": "PASS {name}" }
 }
 
 var root = std.this_dir().parent()
@@ -93,10 +93,14 @@ say("==> running samples")
 
 var (
     samples  = std.glob("samples/*.bx")
-    results  = samples.map(|sample| check_sample(sample))
-    count    = results.count(|result| result != null)
-    failures = results.filter(|result| result != true).count()
+    results  = samples.pmap(|sample| check_sample(sample))
+    count    = results.len()
+    failures = results.count(|result| not result.ok)
 )
+
+for result in results {
+    say(result.report)
+}
 
 if count == 0 {
     fail("error: no samples found")
