@@ -6,6 +6,16 @@ val win        = use("win.sx")
 
 val g_temp_seq: mut i64 = 0
 
+when windows {
+    extern "windows.h"
+    extern (C, header) fn c_get_active_processor_count(group: u16) u32 = "GetActiveProcessorCount"
+}
+
+when darwin {
+    extern "unistd.h"
+    extern (C, header) fn c_sysconf(name: i32) i64 = "sysconf"
+}
+
 val g_heap: allocators.HeapAllocator = @zeroed
 
 val g_scratch: allocators.ScopedArenaAllocator = @zeroed
@@ -1527,6 +1537,101 @@ pub fn path_base(s: ref u8) ref u8 = trust {
         i--
     }
     return s_dup(s)
+}
+
+fn count_cpu_list(s: ref u8) i64 = trust {
+    if s == none {
+        return 0
+    }
+    val n: i64 = s_len(s)
+    val total: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c < 48 || c > 57 {
+            i++
+            continue
+        }
+        val first: mut i64 = 0
+        for {
+            if i >= n {
+                break
+            }
+            val d: u8 = @load8(@ptradd(s, i))
+            if d < 48 || d > 57 {
+                break
+            }
+            first = first * 10 + (d as i64 - 48)
+            i++
+        }
+        val last: mut i64 = first
+        if i < n && @load8(@ptradd(s, i)) == 45 {
+            i++
+            val second: mut i64 = 0
+            val have: mut bool = false
+            for {
+                if i >= n {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(s, i))
+                if d < 48 || d > 57 {
+                    break
+                }
+                second = second * 10 + (d as i64 - 48)
+                have = true
+                i++
+            }
+            if have {
+                last = second
+            }
+        }
+        if last >= first {
+            total += last - first + 1
+        }
+        for {
+            if i >= n {
+                break
+            }
+            if @load8(@ptradd(s, i)) == 44 {
+                i++
+                break
+            }
+            i++
+        }
+    }
+    return total
+}
+
+/// Number of logical processors available to the process.
+pub fn cpu_count() i64 = trust {
+    when windows {
+        val n: u32 = c_get_active_processor_count(65535 as u16)
+        if n > 0 {
+            return n as i64
+        }
+    }
+    otherwise {
+        when linux {
+            val data: ref u8 = read_file(c"/sys/devices/system/cpu/online")
+            if data != none {
+                val n: i64 = count_cpu_list(data)
+                xfree(data)
+                if n > 0 {
+                    return n
+                }
+            }
+        }
+        when darwin {
+            val n: i64 = c_sysconf(58)
+            if n > 0 {
+                return n
+            }
+        }
+    }
+    return 1
 }
 
 pub fn home_dir() ref u8 = trust {

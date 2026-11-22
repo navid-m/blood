@@ -65,6 +65,14 @@ test "script supports parallel map with lambdas" {
     }
 }
 
+test "script sets the worker limit for parallel operations" {
+    trust {
+        fresh()
+        val src: ref u8 = c"if std.set_workers(1) != 1 {\n    raise \"set_workers\"\n}\nvar xs = [1, 2, 3, 4].pmap(|x| x * 2)\nif xs.join(\",\") != \"2,4,6,8\" {\n    raise \"pmap workers\"\n}\npara for x in [1, 2, 3] {\n    pass\n}\nif x != 3 {\n    raise \"para workers\"\n}\ntry {\n    std.set_workers(0)\n} catch err {\n    if \"positive\" not in err {\n        raise \"set_workers validation\"\n    }\n}\n"
+        assert run(src) == 0
+    }
+}
+
 test "script exposes builtins through the std namespace" {
     trust {
         fresh()

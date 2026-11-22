@@ -52,6 +52,7 @@ val g_args: mut ref u.Vec = none
 val g_script_path: mut ref u8 = none
 val g_defers: mut ref u.Vec = none
 val g_temp_seq: mut i64 = 0
+val g_workers: mut i64 = 1
 val g_prelude: mut ref u.Map = none
 val g_nil_cache: mut ref Value = none
 val g_true_cache: mut ref Value = none
@@ -1467,6 +1468,9 @@ fn native_id(name: ref u8) i64 = trust {
     if u.s_eq(name, c"mkdir_p") {
         return 51
     }
+    if u.s_eq(name, c"set_workers") {
+        return 52
+    }
     return 0
 }
 
@@ -2446,6 +2450,29 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     if id == 51 {
         return v_bool(u.mkdir_p(u.expand_tilde(v_to_str(arg(args, 0)))))
     }
+    if id == 52 {
+        val requested: i64 = num_i(arg(args, 0))
+        if requested < 1 {
+            set_error(c"set_workers expects a positive integer", n.line, n.col)
+            return v_nil()
+        }
+        val max: i64 = u.cpu_count()
+        if requested > max {
+            val b: mut ref u.Buf = u.buf_new()
+            u.buf_add(b, c"blood: warning: std.set_workers(")
+            u.buf_add(b, u.s_int(requested))
+            u.buf_add(b, c") exceeds the ")
+            u.buf_add(b, u.s_int(max))
+            u.buf_add(b, c" available logical cores; using ")
+            u.buf_add(b, u.s_int(max))
+            u.buf_add(b, c"\n")
+            u.write_fd(2, u.buf_take(b))
+            g_workers = max
+            return v_int(max)
+        }
+        g_workers = requested
+        return v_int(requested)
+    }
     if id == 99 {
         return v_nil()
     }
@@ -2954,6 +2981,13 @@ fn wait_status_code(status: i32) i64 = trust {
     return (128 + (status & 127)) as i64
 }
 
+fn worker_limit() i64 = trust {
+    if g_workers < 1 {
+        return 1
+    }
+    return g_workers
+}
+
 fn para_items(iterable: ref Value) ref u.Vec = trust {
     val items: mut ref u.Vec = u.vec_new()
     if iterable == none {
@@ -2999,6 +3033,35 @@ fn para_items(iterable: ref Value) ref u.Vec = trust {
         }
     }
     return items
+}
+
+fn para_reap(pids: mut ref u.Vec) i64 = trust {
+    if pids.len == 0 {
+        return 0
+    }
+    val status: mut i32 = 0
+    val got: mut i32 = -1
+    for {
+        got = rt.waitpid(-1, @addr(status), 0)
+        if got >= 0 || u.interrupt_flag == 0 {
+            break
+        }
+    }
+    if got < 0 {
+        return 127
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= pids.len {
+            break
+        }
+        if (num_i(u.vec_p(pids, i) as ref Value) as i32) == got {
+            u.vec_remove(pids, i)
+            break
+        }
+        i++
+    }
+    return wait_status_code(status)
 }
 
 fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
@@ -3058,72 +3121,69 @@ fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
     }
     val pids: mut ref u.Vec = u.vec_new()
     val failed: mut i64 = 0
+    val limit: i64 = worker_limit()
+    val started: mut i64 = 0
+    val spawn_failed: mut i64 = 0
     val i: mut i64 = 0
     for {
-        if i >= items.len {
-            break
-        }
-        if u.interrupt_flag != 0 {
-            break
-        }
-        val item: ref Value = u.vec_p(items, i) as ref Value
-        val pid: i32 = rt.fork()
-        if pid == 0 {
-            g_error = none
-            g_flow = 0
-            g_return = none
-            env_assign(env, n.s, item)
-            set_status(0)
-            exec_block(body, env, false)
-            val code: mut i64 = 0
-            if g_flow == 4 {
-                val msg: mut ref u8 = g_error
-                if msg == none {
-                    msg = u.s_dup(c"error")
-                }
-                report_error(c"", g_err_line, g_err_col, msg, g_err_len)
-                code = 1
-            } elif g_flow == 5 {
-                code = u.script_exit_code
-            } else {
-                code = status_value()
-            }
-            if code < 0 {
-                code = 0
-            }
-            rt.exit_now((code & 255) as i32)
-            return
-        }
-        if pid < 0 {
-            failed = 127
-            break
-        }
-        u.vec_pushp(pids, v_int(pid as i64) as ref void)
-        i++
-    }
-    val j: mut i64 = 0
-    for {
-        if j >= pids.len {
-            break
-        }
-        val pid: i32 = num_i(u.vec_p(pids, j) as ref Value) as i32
-        val status: mut i32 = 0
-        val got: mut i32 = -1
         for {
-            got = rt.waitpid(pid, @addr(status), 0)
-            if got >= 0 || u.interrupt_flag == 0 {
+            if i >= items.len || spawn_failed != 0 {
                 break
             }
-        }
-        if got >= 0 {
-            val code: i64 = wait_status_code(status)
-            if code != 0 && failed == 0 {
-                failed = code
+            if u.interrupt_flag != 0 {
+                break
             }
-        } elif failed == 0 {
-            failed = 127
+            if pids.len >= limit {
+                val code: i64 = para_reap(pids)
+                if code != 0 && failed == 0 {
+                    failed = code
+                }
+                continue
+            }
+            val item: ref Value = u.vec_p(items, i) as ref Value
+            val pid: i32 = rt.fork()
+            if pid == 0 {
+                g_error = none
+                g_flow = 0
+                g_return = none
+                env_assign(env, n.s, item)
+                set_status(0)
+                exec_block(body, env, false)
+                val code: mut i64 = 0
+                if g_flow == 4 {
+                    val msg: mut ref u8 = g_error
+                    if msg == none {
+                        msg = u.s_dup(c"error")
+                    }
+                    report_error(c"", g_err_line, g_err_col, msg, g_err_len)
+                    code = 1
+                } elif g_flow == 5 {
+                    code = u.script_exit_code
+                } else {
+                    code = status_value()
+                }
+                if code < 0 {
+                    code = 0
+                }
+                rt.exit_now((code & 255) as i32)
+                return
+            }
+            if pid < 0 {
+                failed = 127
+                spawn_failed = 1
+                break
+            }
+            u.vec_pushp(pids, v_int(pid as i64) as ref void)
+            started++
+            i++
         }
-        j++
+        if pids.len == 0 {
+            break
+        }
+        val code: i64 = para_reap(pids)
+        if code != 0 && failed == 0 {
+            failed = code
+        }
     }
     if items.len > 0 {
         env_assign(env, n.s, u.vec_p(items, items.len - 1) as ref Value)
@@ -3134,7 +3194,7 @@ fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
         set_error(c"interrupted", n.line, n.col)
         return
     }
-    if failed == 127 && pids.len == 0 {
+    if failed == 127 && started == 0 {
         set_error(c"failed to start parallel iteration", n.line, n.col)
     }
 }
@@ -3368,80 +3428,88 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
     val pids: mut ref u.Vec = u.vec_new()
     val fds: mut ref u.Vec = u.vec_new()
     val failed: mut i64 = 0
-    val i: mut i64 = 0
+    val limit: i64 = worker_limit()
+    val head: mut i64 = 0
+    val next: mut i64 = 0
+    val started: mut i64 = 0
+    val spawn_failed: mut i64 = 0
     for {
-        if i >= vec.len {
-            break
-        }
-        if u.interrupt_flag != 0 {
-            break
-        }
-        val p: ex.Pipe = ex.make_pipe()
-        val pid: i32 = rt.fork()
-        if pid == 0 {
-            val ci: mut i64 = 0
-            for {
-                if ci >= fds.len {
-                    break
-                }
-                ex.fd_close(num_i(u.vec_p(fds, ci) as ref Value) as i32)
-                ci++
+        for {
+            if next >= vec.len || spawn_failed != 0 {
+                break
             }
-            ex.fd_close(p.read_fd)
-            g_error = none
-            g_flow = 0
-            g_return = none
-            set_status(0)
-            val result: ref Value = call_one(fnv, u.vec_p(vec, i) as ref Value, n)
-            val code: mut i64 = 0
-            if g_flow == 4 {
-                val msg: mut ref u8 = g_error
-                if msg == none {
-                    msg = u.s_dup(c"error")
-                }
-                val info: mut ref u.Vec = list_new()
-                u.vec_pushp(info, v_int(g_err_line) as ref void)
-                u.vec_pushp(info, v_int(g_err_col) as ref void)
-                u.vec_pushp(info, v_str(msg) as ref void)
-                val b: mut ref u.Buf = u.buf_new()
-                u.buf_ch(b, 101)
-                encode_value(v_list(info), b)
-                u.write_fd(p.write_fd, u.buf_take(b))
-                code = 1
-            } elif g_flow == 5 {
-                code = u.script_exit_code
-            } else {
-                val b: mut ref u.Buf = u.buf_new()
-                u.buf_ch(b, 111)
-                encode_value(result, b)
-                u.write_fd(p.write_fd, u.buf_take(b))
+            if u.interrupt_flag != 0 || g_flow != 0 {
+                break
             }
-            if code < 0 {
-                code = 0
+            if pids.len - head >= limit {
+                break
+            }
+            val p: ex.Pipe = ex.make_pipe()
+            val pid: i32 = rt.fork()
+            if pid == 0 {
+                val ci: mut i64 = head
+                for {
+                    if ci >= fds.len {
+                        break
+                    }
+                    ex.fd_close(num_i(u.vec_p(fds, ci) as ref Value) as i32)
+                    ci++
+                }
+                ex.fd_close(p.read_fd)
+                g_error = none
+                g_flow = 0
+                g_return = none
+                set_status(0)
+                val result: ref Value = call_one(fnv, u.vec_p(vec, next) as ref Value, n)
+                val code: mut i64 = 0
+                if g_flow == 4 {
+                    val msg: mut ref u8 = g_error
+                    if msg == none {
+                        msg = u.s_dup(c"error")
+                    }
+                    val info: mut ref u.Vec = list_new()
+                    u.vec_pushp(info, v_int(g_err_line) as ref void)
+                    u.vec_pushp(info, v_int(g_err_col) as ref void)
+                    u.vec_pushp(info, v_str(msg) as ref void)
+                    val b: mut ref u.Buf = u.buf_new()
+                    u.buf_ch(b, 101)
+                    encode_value(v_list(info), b)
+                    u.write_fd(p.write_fd, u.buf_take(b))
+                    code = 1
+                } elif g_flow == 5 {
+                    code = u.script_exit_code
+                } else {
+                    val b: mut ref u.Buf = u.buf_new()
+                    u.buf_ch(b, 111)
+                    encode_value(result, b)
+                    u.write_fd(p.write_fd, u.buf_take(b))
+                }
+                if code < 0 {
+                    code = 0
+                }
+                ex.fd_close(p.write_fd)
+                rt.exit_now((code & 255) as i32)
+                return v_nil()
             }
             ex.fd_close(p.write_fd)
-            rt.exit_now((code & 255) as i32)
-            return v_nil()
+            if pid < 0 {
+                ex.fd_close(p.read_fd)
+                failed = 127
+                spawn_failed = 1
+                break
+            }
+            u.vec_pushp(pids, v_int(pid as i64) as ref void)
+            u.vec_pushp(fds, v_int(p.read_fd as i64) as ref void)
+            started++
+            next++
         }
-        ex.fd_close(p.write_fd)
-        if pid < 0 {
-            ex.fd_close(p.read_fd)
-            failed = 127
+        if head >= pids.len {
             break
         }
-        u.vec_pushp(pids, v_int(pid as i64) as ref void)
-        u.vec_pushp(fds, v_int(p.read_fd as i64) as ref void)
-        i++
-    }
-    val j: mut i64 = 0
-    for {
-        if j >= fds.len {
-            break
-        }
-        val fd: i32 = num_i(u.vec_p(fds, j) as ref Value) as i32
+        val fd: i32 = num_i(u.vec_p(fds, head) as ref Value) as i32
         val payload: ref u8 = read_all_fd(fd)
         ex.fd_close(fd)
-        val pid: i32 = num_i(u.vec_p(pids, j) as ref Value) as i32
+        val pid: i32 = num_i(u.vec_p(pids, head) as ref Value) as i32
         val status: mut i32 = 0
         val got: mut i32 = -1
         for {
@@ -3484,7 +3552,7 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
                 u.vec_pushp(out, v_nil() as ref void)
             }
         }
-        j++
+        head++
     }
     set_status(failed)
     if u.interrupt_flag != 0 {
@@ -3492,7 +3560,7 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
         set_error(c"interrupted", n.line, n.col)
         return v_nil()
     }
-    if failed == 127 && fds.len == 0 {
+    if failed == 127 && started == 0 {
         set_error(c"failed to start parallel map", n.line, n.col)
         return v_nil()
     }
@@ -4011,6 +4079,7 @@ pub fn script_init() void = trust {
     g_depth = 0
     g_interactive = 1
     g_script_path = none
+    g_workers = u.cpu_count()
     g_args = u.vec_new_perm()
     g_prelude = u.map_new_perm()
     val stdm: mut ref u.Map = u.map_new_perm()
@@ -4070,6 +4139,7 @@ pub fn script_init() void = trust {
     define_std_native(stdm, c"join")
     define_std_native(stdm, c"cd")
     define_std_native(stdm, c"unified_diff")
+    define_std_native(stdm, c"set_workers")
     define_prelude(c"say")
     define_prelude(c"print")
     define_prelude(c"eprint")
