@@ -15,7 +15,7 @@ for x in ["hello", "world"] {
 And another example:
 
 ```h
-say(std.glob("./src/lang/*.sx").map(|f| { return {"file": f.basename(), "modified": f.modified()} }).dump().jtable())
+say(std.glob("./src/lang/*.sx").map(|f| -> {"file": f.basename(), "modified": f.modified()}).dump().jtable())
 ```
 
 Output:

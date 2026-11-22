@@ -1618,6 +1618,7 @@ default are null.
 ----
 |l| EXPRESSION
 |a, b| EXPRESSION
+|a, b| -> EXPRESSION
 |a, b| {
     BLOCK
 }
@@ -1634,6 +1635,14 @@ function. For example:
 ----
 var lines = sh("test-suite").stdout.lines()
 var passes = lines.count(|l| l.starts_with("[pass]"))
+----
+
+The `->` form forces an expression body even when the expression begins with
+`{`. This makes dictionary literals usable directly:
+
+[source]
+----
+var rows = files.map(|f| -> {"file": f.basename(), "modified": f.modified()})
 ----
 
 
@@ -2117,7 +2126,7 @@ list-item    = [ "..." ] expression ;
 dict-literal = "{" [ expression ":" expression
                      { "," expression ":" expression } [ "," ] ] "}" ;
 lambda       = "|" [ IDENT { "," IDENT } ] "|"
-               ( expression | "{" { statement } "}" ) ;
+               ( "->" expression | expression | "{" { statement } "}" ) ;
 ....
 
 `type-text` is accepted and skipped by the parser; type annotations have no

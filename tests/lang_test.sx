@@ -451,3 +451,25 @@ test "parser rejects method chains continued on a new line" {
         assert u.s_contains(lang.last_error(), c"move '.field'")
     }
 }
+
+test "parser builds arrow lambdas with expression bodies" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"var f = |x| -> {\"n\": x}\n")
+        assert lang.last_error() == none
+        val fn_node: ref lang.Node = kid(kid(prog, 0), 0)
+        assert fn_node.kind == lang.NodeKind.FnLit
+        val body: ref lang.Node = kid(fn_node, 0)
+        assert body.kind == lang.NodeKind.Block
+        val ret: ref lang.Node = kid(body, 0)
+        assert ret.kind == lang.NodeKind.Return
+        assert kid(ret, 0).kind == lang.NodeKind.DictLit
+
+        val expr: ref lang.Node = lang.parse(c"var g = |x| -> x + 1\n")
+        assert lang.last_error() == none
+        val gfn: ref lang.Node = kid(kid(expr, 0), 0)
+        val gbody: ref lang.Node = kid(gfn, 0)
+        val gret: ref lang.Node = kid(gbody, 0)
+        assert gret.kind == lang.NodeKind.Return
+        assert kid(gret, 0).kind == lang.NodeKind.Binary
+    }
+}
