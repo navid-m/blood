@@ -64,7 +64,7 @@ cd .\blood\fw
 - [Benchmark Results](https://navid-m.github.io/shellarena/)
 - [Discord](https://discord.gg/sPS9xQc92X)
 
-## Examples
+## Notes
 
 The shell and the language are one. shell commands are values, strings interpolate, and loops hold real data. Thus, there are no quoting layers to get tangled with.
 
