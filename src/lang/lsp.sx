@@ -1,0 +1,1488 @@
+/// Language Server Protocol implementation for Blood scripts.
+///
+/// The server speaks JSON-RPC over stdin/stdout using the standard LSP
+/// Content-Length framing. It keeps an in-memory copy of every open document
+/// and provides diagnostics, completion, hover, navigation, symbols, rename,
+/// signature help, folding ranges and formatting.
+
+val u      = use("../core/util.sx")
+val ex     = use("../core/exec.sx")
+val lang   = use("lang.sx")
+val format = use("format.sx")
+val js     = use("std/json")
+val str    = use("std/string")
+
+type Symbol = {
+    name: mut ref u8
+    kind: mut i64
+    line: mut i64
+    col: mut i64
+    params: mut ref u.Vec
+}
+
+type Candidate = {
+    label: mut ref u8
+    kind: mut i64
+    detail: mut ref u8
+}
+
+type Span = {
+    start: mut i64
+    end: mut i64
+}
+
+type Pos = {
+    line: mut i64
+    ch: mut i64
+}
+
+val docs: mut ref u.Map = none
+val exit_flag: mut i64 = 0
+val exit_code: mut i64 = 0
+val did_shutdown: mut i64 = 0
+
+fn key(name: ref u8) str.StringView = trust {
+    return str.from_cstr(name)
+}
+
+fn jstr(v: js.JsonValue, name: ref u8) ref u8 = trust {
+    match js.object_get_str(v, key(name)) {
+        some value => {
+            return u.s_ndup(str.ptr(value), str.len(value))
+        }
+        none => {
+            return none
+        }
+    }
+}
+
+fn jint(v: js.JsonValue, name: ref u8) i64 = trust {
+    match js.object_get_int(v, key(name)) {
+        some value => {
+            return value
+        }
+        none => {
+            return 0
+        }
+    }
+}
+
+fn doc_text(uri: ref u8) ref u8 = trust {
+    if uri == none {
+        return none
+    }
+    val raw: i64 = u.map_get(docs, uri)
+    if raw == 0 {
+        return none
+    }
+    return @bitcast(raw, ref u8)
+}
+
+fn doc_put(uri: ref u8, text: ref u8) void = trust {
+    if uri == none || text == none {
+        return
+    }
+    val old: i64 = u.map_get(docs, uri)
+    if old != 0 {
+        u.s_free(@bitcast(old, ref u8) as ref void)
+    }
+    u.map_put(docs, uri, @bitcast(u.s_dup_perm(text), i64))
+}
+
+fn doc_drop(uri: ref u8) void = trust {
+    if uri == none {
+        return
+    }
+    val old: i64 = u.map_get(docs, uri)
+    if old != 0 {
+        u.s_free(@bitcast(old, ref u8) as ref void)
+    }
+    u.map_del(docs, uri)
+}
+
+fn json_quote(b: mut ref u.Buf, s: ref u8) void = trust {
+    u.buf_ch(b, 34)
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 34 {
+            u.buf_add(b, c"\\\"")
+        } elif c == 92 {
+            u.buf_add(b, c"\\\\")
+        } elif c == 10 {
+            u.buf_add(b, c"\\n")
+        } elif c == 13 {
+            u.buf_add(b, c"\\r")
+        } elif c == 9 {
+            u.buf_add(b, c"\\t")
+        } elif c == 8 {
+            u.buf_add(b, c"\\b")
+        } elif c == 12 {
+            u.buf_add(b, c"\\f")
+        } elif c < 32 {
+            u.buf_add(b, c"\\u00")
+            val hi: u8 = c / 16
+            val lo: u8 = c % 16
+            if hi < 10 {
+                u.buf_ch(b, 48 + hi)
+            } else {
+                u.buf_ch(b, 87 + hi)
+            }
+            if lo < 10 {
+                u.buf_ch(b, 48 + lo)
+            } else {
+                u.buf_ch(b, 87 + lo)
+            }
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+    u.buf_ch(b, 34)
+}
+
+fn id_raw(root: js.JsonValue) ref u8 = trust {
+    match js.object_get(root, key(c"id")) {
+        some value => {
+            if js.is_int(value) {
+                return u.s_int(js.as_int(value))
+            }
+            if js.is_uint(value) {
+                return u.s_uint(js.as_uint(value) as i64)
+            }
+            if js.is_string(value) {
+                val view: str.StringView = js.as_string(value)
+                val text: ref u8 = u.s_ndup(str.ptr(view), str.len(view))
+                val b: mut ref u.Buf = u.buf_new()
+                json_quote(b, text)
+                return u.buf_take(b)
+            }
+            return u.s_dup(c"null")
+        }
+        none => {
+            return none
+        }
+    }
+}
+
+fn send_payload(payload: ref u8) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"Content-Length: ")
+    u.buf_int(b, u.s_len(payload))
+    u.buf_add(b, c"\r\n\r\n")
+    u.buf_add(b, payload)
+    u.write_fd(1, u.buf_take(b))
+}
+
+fn send_result(id: ref u8, result: ref u8) void = trust {
+    if id == none {
+        return
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"{\"jsonrpc\":\"2.0\",\"id\":")
+    u.buf_add(b, id)
+    u.buf_add(b, c",\"result\":")
+    u.buf_add(b, result)
+    u.buf_ch(b, 125)
+    send_payload(u.buf_take(b))
+}
+
+fn send_error(id: ref u8, code: i64, message: ref u8) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"{\"jsonrpc\":\"2.0\",\"id\":")
+    if id == none {
+        u.buf_add(b, c"null")
+    } else {
+        u.buf_add(b, id)
+    }
+    u.buf_add(b, c",\"error\":{\"code\":")
+    u.buf_int(b, code)
+    u.buf_add(b, c",\"message\":")
+    json_quote(b, message)
+    u.buf_add(b, c"}}")
+    send_payload(u.buf_take(b))
+}
+
+fn send_notification(method: ref u8, params: ref u8) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"{\"jsonrpc\":\"2.0\",\"method\":")
+    json_quote(b, method)
+    u.buf_add(b, c",\"params\":")
+    u.buf_add(b, params)
+    u.buf_ch(b, 125)
+    send_payload(u.buf_take(b))
+}
+
+fn read_byte() i32 = trust {
+    val c: mut u8 = 0
+    val n: i64 = ex.fd_read(0, @addr(c) as ref u8, 1)
+    if n <= 0 {
+        return -1
+    }
+    return c as i32
+}
+
+fn read_header_line() ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    for {
+        val c: i32 = read_byte()
+        if c < 0 {
+            if b.len == 0 {
+                return none
+            }
+            break
+        }
+        if c == 10 {
+            break
+        }
+        if c == 13 {
+            continue
+        }
+        u.buf_ch(b, c as u8)
+    }
+    return u.buf_take(b)
+}
+
+fn read_message_length() i64 = trust {
+    val length: mut i64 = -1
+    for {
+        val line: ref u8 = read_header_line()
+        if line == none {
+            return -1
+        }
+        if u.s_len(line) == 0 {
+            break
+        }
+        if u.s_starts(line, c"Content-Length:") || u.s_starts(line, c"content-length:") {
+            val colon: i64 = u.s_index_of_char(line, 58, 0)
+            if colon >= 0 {
+                match u.parse_int(u.s_trim(u.s_substr(line, colon + 1, u.s_len(line)))) {
+                    some value => {
+                        length = value
+                    }
+                    none => {}
+                }
+            }
+        }
+    }
+    return length
+}
+
+fn read_exact(n: i64) ref u8 = trust {
+    if n <= 0 {
+        return u.s_dup(c"")
+    }
+    val out: ref u8 = u.s_alloc(n)
+    val got: mut i64 = 0
+    for {
+        if got >= n {
+            break
+        }
+        val r: i64 = ex.fd_read(0, @ptradd(out, got), n - got)
+        if r <= 0 {
+            break
+        }
+        got = got + r
+    }
+    @store8(@ptradd(out, got), 0)
+    return out
+}
+
+fn line_start_offset(text: ref u8, line: i64) i64 = trust {
+    if line <= 0 {
+        return 0
+    }
+    val n: i64 = u.s_len(text)
+    val current: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        if @load8(@ptradd(text, i)) == 10 {
+            current++
+            if current == line {
+                return i + 1
+            }
+        }
+        i++
+    }
+    return n
+}
+
+fn position_offset(text: ref u8, line: i64, ch: i64) i64 = trust {
+    val n: i64 = u.s_len(text)
+    val start: i64 = line_start_offset(text, line)
+    val i: mut i64 = start
+    val count: mut i64 = 0
+    for {
+        if i >= n || count >= ch {
+            break
+        }
+        if @load8(@ptradd(text, i)) == 10 {
+            break
+        }
+        i = u.utf8_next(text, i, n)
+        count++
+    }
+    return i
+}
+
+fn pos_at(text: ref u8, offset: i64) Pos = trust {
+    val n: i64 = u.s_len(text)
+    val limit: mut i64 = offset
+    if limit > n {
+        limit = n
+    }
+    val line: mut i64 = 0
+    val ch: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= limit {
+            break
+        }
+        val c: u8 = @load8(@ptradd(text, i))
+        if c == 10 {
+            line++
+            ch = 0
+            i++
+            continue
+        }
+        val next: i64 = u.utf8_next(text, i, n)
+        ch++
+        i = next
+    }
+    return Pos{line: line, ch: ch}
+}
+
+fn is_ident_byte(c: u8) bool = trust {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95
+}
+
+fn word_span_at(text: ref u8, offset: i64) Span = trust {
+    val n: i64 = u.s_len(text)
+    val at: mut i64 = offset
+    if at > n {
+        at = n
+    }
+    if at < 0 {
+        at = 0
+    }
+    val start: mut i64 = at
+    for {
+        if start <= 0 {
+            break
+        }
+        val prev: i64 = u.utf8_prev(text, start)
+        if !is_ident_byte(@load8(@ptradd(text, prev))) {
+            break
+        }
+        start = prev
+    }
+    val end: mut i64 = at
+    for {
+        if end >= n {
+            break
+        }
+        if !is_ident_byte(@load8(@ptradd(text, end))) {
+            break
+        }
+        end = u.utf8_next(text, end, n)
+    }
+    return Span{start: start, end: end}
+}
+
+fn add_range(b: mut ref u.Buf, sl: i64, sc: i64, el: i64, ec: i64) void = trust {
+    u.buf_add(b, c"{\"start\":{\"line\":")
+    u.buf_int(b, sl)
+    u.buf_add(b, c",\"character\":")
+    u.buf_int(b, sc)
+    u.buf_add(b, c"},\"end\":{\"line\":")
+    u.buf_int(b, el)
+    u.buf_add(b, c",\"character\":")
+    u.buf_int(b, ec)
+    u.buf_add(b, c"}}")
+}
+
+fn add_range_offsets(b: mut ref u.Buf, text: ref u8, start: i64, end: i64) void = trust {
+    val sp: Pos = pos_at(text, start)
+    val ep: Pos = pos_at(text, end)
+    add_range(b, sp.line, sp.ch, ep.line, ep.ch)
+}
+
+fn params_obj(params: option[js.JsonValue], name: ref u8) option[js.JsonValue] = trust {
+    match params {
+        some value => {
+            return js.object_get(value, key(name))
+        }
+        none => {
+            return none
+        }
+    }
+}
+
+fn params_str(params: option[js.JsonValue], name: ref u8) ref u8 = trust {
+    match params_obj(params, name) {
+        some value => {
+            if js.is_string(value) {
+                val view: str.StringView = js.as_string(value)
+                return u.s_ndup(str.ptr(view), str.len(view))
+            }
+        }
+        none => {}
+    }
+    return none
+}
+
+fn params_nested_str(params: option[js.JsonValue], outer: ref u8, inner: ref u8) ref u8 = trust {
+    match params_obj(params, outer) {
+        some value => {
+            return jstr(value, inner)
+        }
+        none => {}
+    }
+    return none
+}
+
+fn params_nested_int(params: option[js.JsonValue], outer: ref u8, inner: ref u8) i64 = trust {
+    match params_obj(params, outer) {
+        some value => {
+            return jint(value, inner)
+        }
+        none => {}
+    }
+    return 0
+}
+
+fn doc_uri(params: option[js.JsonValue]) ref u8 = trust {
+    return params_nested_str(params, c"textDocument", c"uri")
+}
+
+fn doc_from_params(params: option[js.JsonValue]) ref u8 = trust {
+    val uri: ref u8 = doc_uri(params)
+    return doc_text(uri)
+}
+
+fn add_symbol(out: mut ref u.Vec, name: ref u8, kind: i64, line: i64, col: i64, params: ref u.Vec) void = trust {
+    if name == none || u.s_len(name) == 0 {
+        return
+    }
+    val s: mut ref Symbol = u.xalloc(@sizeof(Symbol) as i64) as ref Symbol
+    s.name = name
+    s.kind = kind
+    s.line = line
+    s.col = col
+    s.params = params
+    u.vec_pushp(out, s as ref void)
+}
+
+fn collect_symbols(n: ref lang.Node, out: mut ref u.Vec) void = trust {
+    if n == none {
+        return
+    }
+    if n.kind == lang.NodeKind.FnDef {
+        add_symbol(out, n.s, 12, n.line, n.col, n.params)
+    } elif n.kind == lang.NodeKind.VarDecl {
+        add_symbol(out, n.s, 13, n.line, n.col, none)
+    } elif n.kind == lang.NodeKind.For || n.kind == lang.NodeKind.ParaFor {
+        add_symbol(out, n.s, 13, n.line, n.col, none)
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= n.kids.len {
+            break
+        }
+        collect_symbols(u.vec_p(n.kids, i) as ref lang.Node, out)
+        i++
+    }
+    val j: mut i64 = 0
+    for {
+        if j >= n.defaults.len {
+            break
+        }
+        collect_symbols(u.vec_p(n.defaults, j) as ref lang.Node, out)
+        j++
+    }
+}
+
+fn document_symbols(text: ref u8) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val program: ref lang.Node = lang.parse(text)
+    collect_symbols(program, out)
+    return out
+}
+
+fn find_symbol(symbols: ref u.Vec, name: ref u8) ref Symbol = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= symbols.len {
+            break
+        }
+        val s: ref Symbol = u.vec_p(symbols, i) as ref Symbol
+        if u.s_eq(s.name, name) {
+            return s
+        }
+        i++
+    }
+    return none
+}
+
+fn kind_name(kind: i64) ref u8 = trust {
+    if kind == 12 {
+        return u.s_dup(c"function")
+    }
+    return u.s_dup(c"variable")
+}
+
+fn add_candidate(out: mut ref u.Vec, label: ref u8, kind: i64, detail: ref u8) void = trust {
+    val c: mut ref Candidate = u.xalloc(@sizeof(Candidate) as i64) as ref Candidate
+    c.label = label
+    c.kind = kind
+    c.detail = detail
+    u.vec_pushp(out, c as ref void)
+}
+
+fn add_keywords(out: mut ref u.Vec) void = trust {
+    add_candidate(out, c"if", 14, c"keyword")
+    add_candidate(out, c"elif", 14, c"keyword")
+    add_candidate(out, c"else", 14, c"keyword")
+    add_candidate(out, c"while", 14, c"keyword")
+    add_candidate(out, c"for", 14, c"keyword")
+    add_candidate(out, c"para", 14, c"keyword")
+    add_candidate(out, c"fn", 14, c"keyword")
+    add_candidate(out, c"def", 14, c"keyword")
+    add_candidate(out, c"export", 14, c"keyword")
+    add_candidate(out, c"defer", 14, c"keyword")
+    add_candidate(out, c"var", 14, c"keyword")
+    add_candidate(out, c"return", 14, c"keyword")
+    add_candidate(out, c"break", 14, c"keyword")
+    add_candidate(out, c"continue", 14, c"keyword")
+    add_candidate(out, c"pass", 14, c"keyword")
+    add_candidate(out, c"try", 14, c"keyword")
+    add_candidate(out, c"catch", 14, c"keyword")
+    add_candidate(out, c"except", 14, c"keyword")
+    add_candidate(out, c"raise", 14, c"keyword")
+    add_candidate(out, c"throw", 14, c"keyword")
+    add_candidate(out, c"in", 14, c"keyword")
+    add_candidate(out, c"not", 14, c"keyword")
+    add_candidate(out, c"and", 14, c"keyword")
+    add_candidate(out, c"or", 14, c"keyword")
+    add_candidate(out, c"true", 14, c"keyword")
+    add_candidate(out, c"false", 14, c"keyword")
+    add_candidate(out, c"null", 14, c"keyword")
+}
+
+fn add_builtins(out: mut ref u.Vec) void = trust {
+    add_candidate(out, c"say", 3, c"builtin")
+    add_candidate(out, c"print", 3, c"builtin")
+    add_candidate(out, c"eprint", 3, c"builtin")
+    add_candidate(out, c"input", 3, c"builtin")
+    add_candidate(out, c"sleep", 3, c"builtin")
+    add_candidate(out, c"exit", 3, c"builtin")
+    add_candidate(out, c"sh", 3, c"builtin")
+    add_candidate(out, c"run", 3, c"builtin")
+    add_candidate(out, c"cd", 3, c"builtin")
+    add_candidate(out, c"source", 3, c"builtin")
+    add_candidate(out, c"len", 3, c"builtin")
+    add_candidate(out, c"str", 3, c"builtin")
+    add_candidate(out, c"int", 3, c"builtin")
+    add_candidate(out, c"float", 3, c"builtin")
+    add_candidate(out, c"bool", 3, c"builtin")
+    add_candidate(out, c"range", 3, c"builtin")
+    add_candidate(out, c"abs", 3, c"builtin")
+    add_candidate(out, c"min", 3, c"builtin")
+    add_candidate(out, c"max", 3, c"builtin")
+    add_candidate(out, c"sum", 3, c"builtin")
+    add_candidate(out, c"type", 3, c"builtin")
+    add_candidate(out, c"keys", 3, c"builtin")
+    add_candidate(out, c"values", 3, c"builtin")
+    add_candidate(out, c"items", 3, c"builtin")
+    add_candidate(out, c"read_file", 3, c"builtin")
+    add_candidate(out, c"write_file", 3, c"builtin")
+    add_candidate(out, c"append_file", 3, c"builtin")
+    add_candidate(out, c"env", 3, c"builtin")
+    add_candidate(out, c"clock", 3, c"builtin")
+    add_candidate(out, c"chr", 3, c"builtin")
+    add_candidate(out, c"ord", 3, c"builtin")
+    add_candidate(out, c"glob", 3, c"builtin")
+    add_candidate(out, c"rename", 3, c"builtin")
+    add_candidate(out, c"this", 3, c"builtin")
+    add_candidate(out, c"this_dir", 3, c"builtin")
+    add_candidate(out, c"indent", 3, c"builtin")
+    add_candidate(out, c"exists", 3, c"builtin")
+    add_candidate(out, c"is_file", 3, c"builtin")
+    add_candidate(out, c"is_dir", 3, c"builtin")
+    add_candidate(out, c"is_executable", 3, c"builtin")
+    add_candidate(out, c"which", 3, c"builtin")
+    add_candidate(out, c"mktemp_dir", 3, c"builtin")
+    add_candidate(out, c"mkdir_p", 3, c"builtin")
+    add_candidate(out, c"remove_file", 3, c"builtin")
+    add_candidate(out, c"remove_all", 3, c"builtin")
+    add_candidate(out, c"parent", 3, c"builtin")
+    add_candidate(out, c"basename", 3, c"builtin")
+    add_candidate(out, c"stem", 3, c"builtin")
+    add_candidate(out, c"join", 3, c"builtin")
+    add_candidate(out, c"unified_diff", 3, c"builtin")
+}
+
+fn builtin_signature(name: ref u8) ref u8 = trust {
+    if u.s_eq(name, c"len") {
+        return u.s_dup(c"len(value) -> int")
+    }
+    if u.s_eq(name, c"str") {
+        return u.s_dup(c"str(value) -> string")
+    }
+    if u.s_eq(name, c"int") {
+        return u.s_dup(c"int(value) -> int")
+    }
+    if u.s_eq(name, c"float") {
+        return u.s_dup(c"float(value) -> float")
+    }
+    if u.s_eq(name, c"bool") {
+        return u.s_dup(c"bool(value) -> bool")
+    }
+    if u.s_eq(name, c"range") {
+        return u.s_dup(c"range(start, end) -> list")
+    }
+    if u.s_eq(name, c"read_file") {
+        return u.s_dup(c"read_file(path) -> string")
+    }
+    if u.s_eq(name, c"write_file") {
+        return u.s_dup(c"write_file(path, text) -> bool")
+    }
+    if u.s_eq(name, c"append_file") {
+        return u.s_dup(c"append_file(path, text) -> bool")
+    }
+    if u.s_eq(name, c"glob") {
+        return u.s_dup(c"glob(pattern) -> list")
+    }
+    if u.s_eq(name, c"run") {
+        return u.s_dup(c"run(argv, cwd = null) -> result")
+    }
+    if u.s_eq(name, c"sh") {
+        return u.s_dup(c"sh(command) -> result")
+    }
+    if u.s_eq(name, c"env") {
+        return u.s_dup(c"env(name) -> string?")
+    }
+    if u.s_eq(name, c"join") {
+        return u.s_dup(c"join(a, b) -> string")
+    }
+    if u.s_eq(name, c"sleep") {
+        return u.s_dup(c"sleep(milliseconds) -> null")
+    }
+    return none
+}
+
+fn builtin_doc(name: ref u8) ref u8 = trust {
+    val sig: ref u8 = builtin_signature(name)
+    if sig != none {
+        return u.s_cat3(c"```blood\n", sig, c"\n```")
+    }
+    if u.s_eq(name, c"say") || u.s_eq(name, c"print") || u.s_eq(name, c"eprint") {
+        return u.s_dup(c"Print values to standard output.")
+    }
+    if u.s_eq(name, c"input") {
+        return u.s_dup(c"Read a line from standard input.")
+    }
+    if u.s_eq(name, c"exit") {
+        return u.s_dup(c"Exit the script with the given status.")
+    }
+    if u.s_eq(name, c"cd") {
+        return u.s_dup(c"Change the current working directory.")
+    }
+    return none
+}
+
+fn publish_diagnostics(uri: ref u8, text: ref u8) void = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"{\"uri\":")
+    json_quote(b, uri)
+    u.buf_add(b, c",\"diagnostics\":[")
+    lang.parse(text)
+    val message: ref u8 = lang.last_error()
+    if message != none {
+        val line: mut i64 = lang.last_error_line() - 1
+        val col: mut i64 = lang.last_error_col() - 1
+        if line < 0 {
+            line = 0
+        }
+        if col < 0 {
+            col = 0
+        }
+        val span: mut i64 = lang.last_error_len()
+        if span < 1 {
+            span = 1
+        }
+        val start: i64 = position_offset(text, line, col)
+        val end: mut i64 = start + span
+        if end > u.s_len(text) {
+            end = u.s_len(text)
+        }
+        val sp: Pos = pos_at(text, start)
+        val ep: Pos = pos_at(text, end)
+        u.buf_add(b, c"{\"range\":")
+        add_range(b, sp.line, sp.ch, ep.line, ep.ch)
+        u.buf_add(b, c",\"severity\":1,\"source\":\"blood\",\"message\":")
+        json_quote(b, message)
+        u.buf_ch(b, 125)
+    }
+    u.buf_add(b, c"]}")
+    send_notification(c"textDocument/publishDiagnostics", u.buf_take(b))
+}
+
+fn init_result() ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(
+        b,
+        c"{\"capabilities\":{\"positionEncoding\":\"utf-16\",\"textDocumentSync\":{\"openClose\":true,\"change\":1,\"save\":{\"includeText\":true}},\"completionProvider\":{\"triggerCharacters\":[\".\"]},\"hoverProvider\":true,\"definitionProvider\":true,\"referencesProvider\":true,\"documentSymbolProvider\":true,\"workspaceSymbolProvider\":true,\"renameProvider\":true,\"documentFormattingProvider\":true,\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]},\"foldingRangeProvider\":true},\"serverInfo\":{\"name\":\"blood-lsp\",\"version\":\"0.1.4\"}}"
+    )
+    return u.buf_take(b)
+}
+
+fn completion_result(text: ref u8, offset: i64) ref u8 = trust {
+    val n: i64 = u.s_len(text)
+    val at: mut i64 = offset
+    if at > n {
+        at = n
+    }
+    if at < 0 {
+        at = 0
+    }
+    val start: mut i64 = at
+    for {
+        if start <= 0 {
+            break
+        }
+        val prev: i64 = u.utf8_prev(text, start)
+        if !is_ident_byte(@load8(@ptradd(text, prev))) {
+            break
+        }
+        start = prev
+    }
+    val prefix: ref u8 = u.s_substr(text, start, at)
+    val member: bool = start > 0 && @load8(@ptradd(text, start - 1)) == 46
+    val candidates: mut ref u.Vec = u.vec_new()
+    add_builtins(candidates)
+    if !member {
+        add_keywords(candidates)
+        add_candidate(candidates, c"std", 9, c"namespace")
+        val symbols: ref u.Vec = document_symbols(text)
+        val si: mut i64 = 0
+        for {
+            if si >= symbols.len {
+                break
+            }
+            val s: ref Symbol = u.vec_p(symbols, si) as ref Symbol
+            add_candidate(candidates, s.name, s.kind, kind_name(s.kind))
+            si++
+        }
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"{\"isIncomplete\":false,\"items\":[")
+    val plen: i64 = u.s_len(prefix)
+    val first: mut i64 = 1
+    val i: mut i64 = 0
+    for {
+        if i >= candidates.len {
+            break
+        }
+        val c: ref Candidate = u.vec_p(candidates, i) as ref Candidate
+        val apply: mut bool = true
+        if plen > 0 && !u.s_starts(c.label, prefix) {
+            apply = false
+        }
+        if apply {
+            if first == 0 {
+                u.buf_ch(b, 44)
+            }
+            first = 0
+            u.buf_add(b, c"{\"label\":")
+            json_quote(b, c.label)
+            u.buf_add(b, c",\"kind\":")
+            u.buf_int(b, c.kind)
+            u.buf_add(b, c",\"detail\":")
+            json_quote(b, c.detail)
+            u.buf_ch(b, 125)
+        }
+        i++
+    }
+    u.buf_add(b, c"]}")
+    return u.buf_take(b)
+}
+
+fn hover_result(text: ref u8, offset: i64) ref u8 = trust {
+    val span: Span = word_span_at(text, offset)
+    if span.end <= span.start {
+        return u.s_dup(c"null")
+    }
+    val name: ref u8 = u.s_substr(text, span.start, span.end)
+    val symbols: ref u.Vec = document_symbols(text)
+    val symbol: ref Symbol = find_symbol(symbols, name)
+    val doc: mut ref u8 = none
+    if symbol != none {
+        if symbol.kind == 12 {
+            val b: mut ref u.Buf = u.buf_new()
+            u.buf_add(b, c"```blood\nfn ")
+            u.buf_add(b, name)
+            u.buf_ch(b, 40)
+            val pi: mut i64 = 0
+            for {
+                if pi >= symbol.params.len {
+                    break
+                }
+                if pi > 0 {
+                    u.buf_add(b, c", ")
+                }
+                u.buf_add(b, u.vec_p(symbol.params, pi) as ref u8)
+                pi++
+            }
+            u.buf_add(b, c")\n```")
+            doc = u.buf_take(b)
+        } else {
+            doc = u.s_cat3(c"**", name, c"** — variable")
+        }
+    } else {
+        doc = builtin_doc(name)
+        if doc == none {
+            if u.s_eq(name, c"std") {
+                doc = u.s_dup(c"`std` — standard library namespace")
+            } else {
+                doc = u.s_cat3(c"**", name, c"**")
+            }
+        }
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"{\"contents\":{\"kind\":\"markdown\",\"value\":")
+    json_quote(b, doc)
+    u.buf_add(b, c"},\"range\":")
+    add_range_offsets(b, text, span.start, span.end)
+    u.buf_ch(b, 125)
+    return u.buf_take(b)
+}
+
+fn location_json(uri: ref u8, line: i64, col: i64, length: i64) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"{\"uri\":")
+    json_quote(b, uri)
+    u.buf_add(b, c",\"range\":")
+    add_range(b, line - 1, col - 1, line - 1, col - 1 + length)
+    u.buf_ch(b, 125)
+    return u.buf_take(b)
+}
+
+fn definition_result(uri: ref u8, text: ref u8, offset: i64) ref u8 = trust {
+    val span: Span = word_span_at(text, offset)
+    if span.end <= span.start {
+        return u.s_dup(c"null")
+    }
+    val name: ref u8 = u.s_substr(text, span.start, span.end)
+    val symbols: ref u.Vec = document_symbols(text)
+    val symbol: ref Symbol = find_symbol(symbols, name)
+    if symbol == none {
+        return u.s_dup(c"null")
+    }
+    return location_json(uri, symbol.line, symbol.col, u.s_len(name))
+}
+
+fn occurrences_json(uri: ref u8, text: ref u8, name: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 91)
+    val n: i64 = u.s_len(text)
+    val nl: i64 = u.s_len(name)
+    val i: mut i64 = 0
+    val first: mut i64 = 1
+    for {
+        if i + nl > n {
+            break
+        }
+        if @load8(@ptradd(text, i)) == @load8(name) {
+            val before_ok: bool = i == 0 || !is_ident_byte(@load8(@ptradd(text, i - 1)))
+            val after_ok: bool = i + nl >= n || !is_ident_byte(@load8(@ptradd(text, i + nl)))
+            if before_ok && after_ok {
+                val same: mut bool = true
+                val k: mut i64 = 0
+                for {
+                    if k >= nl {
+                        break
+                    }
+                    if @load8(@ptradd(text, i + k)) != @load8(@ptradd(name, k)) {
+                        same = false
+                        break
+                    }
+                    k++
+                }
+                if same {
+                    if first == 0 {
+                        u.buf_ch(b, 44)
+                    }
+                    first = 0
+                    val sp: Pos = pos_at(text, i)
+                    u.buf_add(b, c"{\"uri\":")
+                    json_quote(b, uri)
+                    u.buf_add(b, c",\"range\":")
+                    add_range(b, sp.line, sp.ch, sp.line, sp.ch + nl)
+                    u.buf_ch(b, 125)
+                }
+            }
+        }
+        i++
+    }
+    u.buf_ch(b, 93)
+    return u.buf_take(b)
+}
+
+fn rename_edits_json(text: ref u8, name: ref u8, new_name: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 91)
+    val n: i64 = u.s_len(text)
+    val nl: i64 = u.s_len(name)
+    val i: mut i64 = 0
+    val first: mut i64 = 1
+    for {
+        if i + nl > n {
+            break
+        }
+        if @load8(@ptradd(text, i)) == @load8(name) {
+            val before_ok: bool = i == 0 || !is_ident_byte(@load8(@ptradd(text, i - 1)))
+            val after_ok: bool = i + nl >= n || !is_ident_byte(@load8(@ptradd(text, i + nl)))
+            if before_ok && after_ok {
+                val same: mut bool = true
+                val k: mut i64 = 0
+                for {
+                    if k >= nl {
+                        break
+                    }
+                    if @load8(@ptradd(text, i + k)) != @load8(@ptradd(name, k)) {
+                        same = false
+                        break
+                    }
+                    k++
+                }
+                if same {
+                    if first == 0 {
+                        u.buf_ch(b, 44)
+                    }
+                    first = 0
+                    val sp: Pos = pos_at(text, i)
+                    u.buf_add(b, c"{\"range\":")
+                    add_range(b, sp.line, sp.ch, sp.line, sp.ch + nl)
+                    u.buf_add(b, c",\"newText\":")
+                    json_quote(b, new_name)
+                    u.buf_ch(b, 125)
+                }
+            }
+        }
+        i++
+    }
+    u.buf_ch(b, 93)
+    return u.buf_take(b)
+}
+
+fn references_result(uri: ref u8, text: ref u8, offset: i64) ref u8 = trust {
+    val span: Span = word_span_at(text, offset)
+    if span.end <= span.start {
+        return u.s_dup(c"[]")
+    }
+    val name: ref u8 = u.s_substr(text, span.start, span.end)
+    return occurrences_json(uri, text, name)
+}
+
+fn rename_result(uri: ref u8, text: ref u8, offset: i64, new_name: ref u8) ref u8 = trust {
+    val span: Span = word_span_at(text, offset)
+    if span.end <= span.start || new_name == none {
+        return u.s_dup(c"null")
+    }
+    val name: ref u8 = u.s_substr(text, span.start, span.end)
+    val edits: ref u8 = rename_edits_json(text, name, new_name)
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"{\"changes\":{")
+    json_quote(b, uri)
+    u.buf_add(b, c":")
+    u.buf_add(b, edits)
+    u.buf_add(b, c"}}")
+    return u.buf_take(b)
+}
+
+fn document_symbols_result(uri: ref u8, text: ref u8) ref u8 = trust {
+    val symbols: ref u.Vec = document_symbols(text)
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 91)
+    val i: mut i64 = 0
+    for {
+        if i >= symbols.len {
+            break
+        }
+        if i > 0 {
+            u.buf_ch(b, 44)
+        }
+        val s: ref Symbol = u.vec_p(symbols, i) as ref Symbol
+        u.buf_add(b, c"{\"name\":")
+        json_quote(b, s.name)
+        u.buf_add(b, c",\"kind\":")
+        u.buf_int(b, s.kind)
+        u.buf_add(b, c",\"location\":")
+        u.buf_add(b, location_json(uri, s.line, s.col, u.s_len(s.name)))
+        u.buf_ch(b, 125)
+        i++
+    }
+    u.buf_ch(b, 93)
+    return u.buf_take(b)
+}
+
+fn workspace_symbols_result(query: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 91)
+    val first: mut i64 = 1
+    val i: mut i64 = 0
+    for {
+        if i >= docs.cap {
+            break
+        }
+        if u.map_used_at(docs, i) {
+            val uri: ref u8 = u.map_key_at(docs, i)
+            val text: ref u8 = @bitcast(u.map_val_at(docs, i), ref u8)
+            val symbols: ref u.Vec = document_symbols(text)
+            val j: mut i64 = 0
+            for {
+                if j >= symbols.len {
+                    break
+                }
+                val s: ref Symbol = u.vec_p(symbols, j) as ref Symbol
+                if query == none || u.s_len(query) == 0 || u.s_contains(s.name, query) {
+                    if first == 0 {
+                        u.buf_ch(b, 44)
+                    }
+                    first = 0
+                    u.buf_add(b, c"{\"name\":")
+                    json_quote(b, s.name)
+                    u.buf_add(b, c",\"kind\":")
+                    u.buf_int(b, s.kind)
+                    u.buf_add(b, c",\"location\":")
+                    u.buf_add(b, location_json(uri, s.line, s.col, u.s_len(s.name)))
+                    u.buf_ch(b, 125)
+                }
+                j++
+            }
+        }
+        i++
+    }
+    u.buf_ch(b, 93)
+    return u.buf_take(b)
+}
+
+fn signature_result(text: ref u8, offset: i64) ref u8 = trust {
+    val n: i64 = u.s_len(text)
+    val at: mut i64 = offset
+    if at > n {
+        at = n
+    }
+    val depth: mut i64 = 0
+    val open: mut i64 = -1
+    val i: mut i64 = at
+    for {
+        if i <= 0 {
+            break
+        }
+        i--
+        val c: u8 = @load8(@ptradd(text, i))
+        if c == 41 {
+            depth++
+        } elif c == 40 {
+            if depth == 0 {
+                open = i
+                break
+            }
+            depth--
+        }
+    }
+    if open < 0 {
+        return u.s_dup(c"null")
+    }
+    val before: i64 = word_span_at(text, open).end
+    val ws: Span = word_span_at(text, before)
+    if ws.end <= ws.start {
+        return u.s_dup(c"null")
+    }
+    val name: ref u8 = u.s_substr(text, ws.start, ws.end)
+    val symbols: ref u.Vec = document_symbols(text)
+    val symbol: ref Symbol = find_symbol(symbols, name)
+    val active: mut i64 = 0
+    val j: mut i64 = open + 1
+    for {
+        if j >= at {
+            break
+        }
+        val c: u8 = @load8(@ptradd(text, j))
+        if c == 44 {
+            active++
+        }
+        j++
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    if symbol != none && symbol.kind == 12 {
+        u.buf_add(b, c"{\"signatures\":[{\"label\":")
+        val label: mut ref u.Buf = u.buf_new()
+        u.buf_add(label, c"fn ")
+        u.buf_add(label, name)
+        u.buf_ch(label, 40)
+        val pi: mut i64 = 0
+        for {
+            if pi >= symbol.params.len {
+                break
+            }
+            if pi > 0 {
+                u.buf_add(label, c", ")
+            }
+            u.buf_add(label, u.vec_p(symbol.params, pi) as ref u8)
+            pi++
+        }
+        u.buf_ch(label, 41)
+        val lbl: ref u8 = u.buf_take(label)
+        json_quote(b, lbl)
+        u.buf_add(b, c",\"parameters\":[")
+        val k: mut i64 = 0
+        for {
+            if k >= symbol.params.len {
+                break
+            }
+            if k > 0 {
+                u.buf_ch(b, 44)
+            }
+            u.buf_add(b, c"{\"label\":")
+            json_quote(b, u.vec_p(symbol.params, k) as ref u8)
+            u.buf_ch(b, 125)
+            k++
+        }
+        u.buf_add(b, c"]}],\"activeParameter\":")
+        u.buf_int(b, active)
+        u.buf_add(b, c",\"activeSignature\":0}")
+        return u.buf_take(b)
+    }
+    val sig: ref u8 = builtin_signature(name)
+    if sig == none {
+        return u.s_dup(c"null")
+    }
+    u.buf_add(b, c"{\"signatures\":[{\"label\":")
+    json_quote(b, sig)
+    u.buf_add(b, c",\"parameters\":[]}],\"activeParameter\":")
+    u.buf_int(b, active)
+    u.buf_add(b, c",\"activeSignature\":0}")
+    return u.buf_take(b)
+}
+
+fn formatting_result(text: ref u8) ref u8 = trust {
+    val formatted: ref u8 = format.format_text(text)
+    if u.s_eq(formatted, text) {
+        return u.s_dup(c"[]")
+    }
+    val end: Pos = pos_at(text, u.s_len(text))
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"[{\"range\":")
+    add_range(b, 0, 0, end.line, end.ch)
+    u.buf_add(b, c",\"newText\":")
+    json_quote(b, formatted)
+    u.buf_add(b, c"}]")
+    return u.buf_take(b)
+}
+
+fn folding_result(text: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_ch(b, 91)
+    val stack: mut ref u.Vec = u.vec_new()
+    val first: mut i64 = 1
+    val n: i64 = u.s_len(text)
+    val line: mut i64 = 0
+    val i: mut i64 = 0
+    val quote: mut u8 = 0
+    val comment: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        val at_end: bool = i == n || @load8(@ptradd(text, i)) == 10
+        if at_end {
+            line++
+            quote = 0
+            comment = 0
+            if i == n {
+                break
+            }
+            i++
+            continue
+        }
+        val c: u8 = @load8(@ptradd(text, i))
+        if quote != 0 {
+            if c == 92 {
+                i += 2
+                continue
+            }
+            if c == quote {
+                quote = 0
+            }
+            i++
+            continue
+        }
+        if comment != 0 {
+            i++
+            continue
+        }
+        if c == 35 {
+            comment = 1
+            i++
+            continue
+        }
+        if c == 34 || c == 39 {
+            quote = c
+            i++
+            continue
+        }
+        if c == 123 {
+            u.vec_push(stack, line)
+        } elif c == 125 {
+            if stack.len > 0 {
+                val top: i64 = u.vec_gets(stack, stack.len - 1)
+                stack.len--
+                if top < line {
+                    if first == 0 {
+                        u.buf_ch(b, 44)
+                    }
+                    first = 0
+                    u.buf_add(b, c"{\"startLine\":")
+                    u.buf_int(b, top)
+                    u.buf_add(b, c",\"endLine\":")
+                    u.buf_int(b, line)
+                    u.buf_add(b, c",\"kind\":\"region\"}")
+                }
+            }
+        }
+        i++
+    }
+    u.buf_ch(b, 93)
+    return u.buf_take(b)
+}
+
+fn handle_notification(method: ref u8, params: option[js.JsonValue]) void = trust {
+    if u.s_eq(method, c"textDocument/didOpen") {
+        val uri: ref u8 = params_nested_str(params, c"textDocument", c"uri")
+        val text: ref u8 = params_nested_str(params, c"textDocument", c"text")
+        if uri != none && text != none {
+            doc_put(uri, text)
+            publish_diagnostics(uri, text)
+        }
+        return
+    }
+    if u.s_eq(method, c"textDocument/didChange") {
+        val uri: ref u8 = doc_uri(params)
+        val text: mut ref u8 = none
+        match params_obj(params, c"contentChanges") {
+            some changes => {
+                if js.is_array(changes) && js.len(changes) > 0 {
+                    match js.array_get(changes, js.len(changes) - 1) {
+                        some change => {
+                            text = jstr(change, c"text")
+                        }
+                        none => {}
+                    }
+                }
+            }
+            none => {}
+        }
+        if uri != none && text != none {
+            doc_put(uri, text)
+            publish_diagnostics(uri, text)
+        }
+        return
+    }
+    if u.s_eq(method, c"textDocument/didSave") {
+        val uri: ref u8 = doc_uri(params)
+        val text: ref u8 = doc_text(uri)
+        if text != none {
+            publish_diagnostics(uri, text)
+        }
+        return
+    }
+    if u.s_eq(method, c"textDocument/didClose") {
+        val uri: ref u8 = doc_uri(params)
+        doc_drop(uri)
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_add(b, c"{\"uri\":")
+        json_quote(b, uri)
+        u.buf_add(b, c",\"diagnostics\":[]}")
+        send_notification(c"textDocument/publishDiagnostics", u.buf_take(b))
+        return
+    }
+    if u.s_eq(method, c"exit") {
+        exit_flag = 1
+        if did_shutdown != 0 {
+            exit_code = 0
+        } else {
+            exit_code = 1
+        }
+    }
+}
+
+fn dispatch(root: js.JsonValue) void = trust {
+    val method: ref u8 = jstr(root, c"method")
+    if method == none {
+        return
+    }
+    val id: ref u8 = id_raw(root)
+    val params: option[js.JsonValue] = js.object_get(root, key(c"params"))
+    if id == none {
+        handle_notification(method, params)
+        return
+    }
+    if u.s_eq(method, c"initialize") {
+        send_result(id, init_result())
+        return
+    }
+    if u.s_eq(method, c"shutdown") {
+        did_shutdown = 1
+        send_result(id, u.s_dup(c"null"))
+        return
+    }
+    if u.s_eq(method, c"textDocument/completion") {
+        val text: ref u8 = doc_from_params(params)
+        if text == none {
+            send_result(id, u.s_dup(c"null"))
+            return
+        }
+        val line: i64 = params_nested_int(params, c"position", c"line")
+        val ch: i64 = params_nested_int(params, c"position", c"character")
+        send_result(id, completion_result(text, position_offset(text, line, ch)))
+        return
+    }
+    if u.s_eq(method, c"textDocument/hover") {
+        val text: ref u8 = doc_from_params(params)
+        if text == none {
+            send_result(id, u.s_dup(c"null"))
+            return
+        }
+        val line: i64 = params_nested_int(params, c"position", c"line")
+        val ch: i64 = params_nested_int(params, c"position", c"character")
+        send_result(id, hover_result(text, position_offset(text, line, ch)))
+        return
+    }
+    if u.s_eq(method, c"textDocument/definition") {
+        val uri: ref u8 = doc_uri(params)
+        val text: ref u8 = doc_text(uri)
+        if text == none {
+            send_result(id, u.s_dup(c"null"))
+            return
+        }
+        val line: i64 = params_nested_int(params, c"position", c"line")
+        val ch: i64 = params_nested_int(params, c"position", c"character")
+        send_result(id, definition_result(uri, text, position_offset(text, line, ch)))
+        return
+    }
+    if u.s_eq(method, c"textDocument/references") {
+        val uri: ref u8 = doc_uri(params)
+        val text: ref u8 = doc_text(uri)
+        if text == none {
+            send_result(id, u.s_dup(c"[]"))
+            return
+        }
+        val line: i64 = params_nested_int(params, c"position", c"line")
+        val ch: i64 = params_nested_int(params, c"position", c"character")
+        send_result(id, references_result(uri, text, position_offset(text, line, ch)))
+        return
+    }
+    if u.s_eq(method, c"textDocument/rename") {
+        val uri: ref u8 = doc_uri(params)
+        val text: ref u8 = doc_text(uri)
+        if text == none {
+            send_result(id, u.s_dup(c"null"))
+            return
+        }
+        val line: i64 = params_nested_int(params, c"position", c"line")
+        val ch: i64 = params_nested_int(params, c"position", c"character")
+        val new_name: ref u8 = params_str(params, c"newName")
+        send_result(id, rename_result(uri, text, position_offset(text, line, ch), new_name))
+        return
+    }
+    if u.s_eq(method, c"textDocument/documentSymbol") {
+        val uri: ref u8 = doc_uri(params)
+        val text: ref u8 = doc_text(uri)
+        if text == none {
+            send_result(id, u.s_dup(c"[]"))
+            return
+        }
+        send_result(id, document_symbols_result(uri, text))
+        return
+    }
+    if u.s_eq(method, c"workspace/symbol") {
+        val query: ref u8 = params_str(params, c"query")
+        send_result(id, workspace_symbols_result(query))
+        return
+    }
+    if u.s_eq(method, c"textDocument/signatureHelp") {
+        val text: ref u8 = doc_from_params(params)
+        if text == none {
+            send_result(id, u.s_dup(c"null"))
+            return
+        }
+        val line: i64 = params_nested_int(params, c"position", c"line")
+        val ch: i64 = params_nested_int(params, c"position", c"character")
+        send_result(id, signature_result(text, position_offset(text, line, ch)))
+        return
+    }
+    if u.s_eq(method, c"textDocument/formatting") {
+        val text: ref u8 = doc_from_params(params)
+        if text == none {
+            send_result(id, u.s_dup(c"[]"))
+            return
+        }
+        send_result(id, formatting_result(text))
+        return
+    }
+    if u.s_eq(method, c"textDocument/foldingRange") {
+        val text: ref u8 = doc_from_params(params)
+        if text == none {
+            send_result(id, u.s_dup(c"[]"))
+            return
+        }
+        send_result(id, folding_result(text))
+        return
+    }
+    send_error(id, -32601, u.s_cat(c"method not found: ", method))
+}
+
+fn handle_message(body: ref u8) void = trust {
+    match js.parse(str.from_cstr(body)) {
+        ok doc => {
+            dispatch(js.root(doc))
+            js.doc_free(doc)
+        }
+        err _ => {
+            send_error(none, -32700, c"parse error")
+        }
+    }
+}
+
+fn run() i32 = trust {
+    docs = u.map_new_perm()
+    for {
+        u.scratch_begin()
+        val length: i64 = read_message_length()
+        if length < 0 {
+            u.scratch_end()
+            break
+        }
+        val body: ref u8 = read_exact(length)
+        handle_message(body)
+        u.scratch_end()
+        if exit_flag != 0 {
+            return exit_code as i32
+        }
+    }
+    return 0
+}
+
+pub fn serve() i32 = trust {
+    return run()
+}

@@ -2527,7 +2527,7 @@ fn bi_help(cmd: ref Command) i32 = trust {
         \\  wait            wait for background jobs
         \\  dir ARGS..      alias for ls
         \\
-        \\interactive keys: Ctrl-A/E/B/F/K/U/W/L/R
+        \\interactive keys: Ctrl-A/E/B/F/K/U/W/L/R, Alt-Left/Right (word movement)
     )
     return 0
 }

@@ -789,6 +789,87 @@ fn ed_kill_to_end(e: mut ref Editor) void = trust {
     }
 }
 
+fn ed_word_left(e: mut ref Editor) void = trust {
+    val i: mut i64 = e.pos
+    for {
+        if i <= 0 {
+            break
+        }
+        val prev: i64 = u.utf8_prev(e.line, i)
+        val c: u8 = @load8(@ptradd(e.line, prev))
+        if c != 32 && c != 9 {
+            break
+        }
+        i = prev
+    }
+    for {
+        if i <= 0 {
+            break
+        }
+        val prev: i64 = u.utf8_prev(e.line, i)
+        val c: u8 = @load8(@ptradd(e.line, prev))
+        if c == 32 || c == 9 {
+            break
+        }
+        i = prev
+    }
+    e.pos = i
+}
+
+fn ed_word_right(e: mut ref Editor) void = trust {
+    val i: mut i64 = e.pos
+    for {
+        if i >= e.len {
+            break
+        }
+        val c: u8 = @load8(@ptradd(e.line, i))
+        if c != 32 && c != 9 {
+            break
+        }
+        i = u.utf8_next(e.line, i, e.len)
+    }
+    for {
+        if i >= e.len {
+            break
+        }
+        val c: u8 = @load8(@ptradd(e.line, i))
+        if c == 32 || c == 9 {
+            break
+        }
+        i = u.utf8_next(e.line, i, e.len)
+    }
+    e.pos = i
+}
+
+fn csi_modifier(params: ref u8) i64 = trust {
+    if params == none {
+        return 0
+    }
+    val n: i64 = u.s_len(params)
+    val sep: mut i64 = -1
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        if @load8(@ptradd(params, i)) == 59 {
+            sep = i
+        }
+        i++
+    }
+    if sep < 0 || sep + 1 >= n {
+        return 0
+    }
+    match u.parse_int(u.s_substr(params, sep + 1, n)) {
+        some v => {
+            return v
+        }
+        none => {
+            return 0
+        }
+    }
+}
+
 fn ed_kill_word(e: mut ref Editor) void = trust {
     val end: i64 = e.pos
     val i: mut i64 = e.pos
@@ -1623,6 +1704,7 @@ fn menu_next(e: mut ref Editor, delta: i64) void = trust {
 /// Apply a cursor/navigation key from a CSI (`ESC [ A`) or SS3 (`ESC O A`)
 /// sequence. Returns false when `final` is not a navigation key.
 fn escape_nav(e: mut ref Editor, final: i32, params: ref u8) bool = trust {
+    val mod: i64 = csi_modifier(params)
     if final == 65 {
         if e.menu_active == 1 {
             menu_next(e, -1)
@@ -1642,6 +1724,8 @@ fn escape_nav(e: mut ref Editor, final: i32, params: ref u8) bool = trust {
     if final == 67 {
         if e.menu_active == 1 {
             menu_next(e, 1)
+        } elif mod == 3 || mod == 5 {
+            ed_word_right(e)
         } elif e.pos < e.len {
             e.pos = u.utf8_next(e.line, e.pos, e.len)
         } else {
@@ -1652,6 +1736,8 @@ fn escape_nav(e: mut ref Editor, final: i32, params: ref u8) bool = trust {
     if final == 68 {
         if e.menu_active == 1 {
             menu_next(e, -1)
+        } elif mod == 3 || mod == 5 {
+            ed_word_left(e)
         } elif e.pos > 0 {
             e.pos = u.utf8_prev(e.line, e.pos)
         }
@@ -1724,15 +1810,15 @@ fn read_escape(e: mut ref Editor) i64 = trust {
         return 1
     }
     if c1 == 98 {
-        if e.pos > 0 {
-            e.pos = u.utf8_prev(e.line, e.pos)
-        }
+        ed_word_left(e)
         return 1
     }
     if c1 == 102 {
-        if e.pos < e.len {
-            e.pos = u.utf8_next(e.line, e.pos, e.len)
-        }
+        ed_word_right(e)
+        return 1
+    }
+    if c1 == 127 || c1 == 8 {
+        ed_kill_word(e)
         return 1
     }
     return 1

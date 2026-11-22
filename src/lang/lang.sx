@@ -119,6 +119,7 @@ pub type Parser = {
 val g_error: mut ref u8 = none
 val g_error_line: mut i64 = 0
 val g_error_col: mut i64 = 0
+val g_error_len: mut i64 = 1
 val g_no_unparen: mut i64 = 0
 
 pub fn last_error() ref u8 = trust {
@@ -133,19 +134,32 @@ pub fn last_error_col() i64 = trust {
     return g_error_col
 }
 
+pub fn last_error_len() i64 = trust {
+    return g_error_len
+}
+
 fn set_error(line: i64, col: i64, msg: ref u8) void = trust {
+    set_error_span(line, col, msg, 1)
+}
+
+fn set_error_span(line: i64, col: i64, msg: ref u8, span: i64) void = trust {
     if g_error != none {
         return
     }
     g_error = u.s_dup(msg)
     g_error_line = line
     g_error_col = col
+    g_error_len = span
+    if g_error_len < 1 {
+        g_error_len = 1
+    }
 }
 
 pub fn clear_error() void = trust {
     g_error = none
     g_error_line = 0
     g_error_col = 0
+    g_error_len = 1
 }
 
 fn tok_new(
@@ -672,13 +686,25 @@ fn text_is(t: ref Token, text: ref u8) bool = trust {
     return u.s_eq(t.text, text)
 }
 
+fn token_span(t: ref Token) i64 = trust {
+    val span: i64 = t.end - t.start
+    if span < 1 {
+        return 1
+    }
+    return span
+}
+
+fn cur_span(p: ref Parser) i64 = trust {
+    return token_span(cur(p))
+}
+
 fn expect_op(p: mut ref Parser, text: ref u8) bool = trust {
     val t: ref Token = cur(p)
     if u.s_eq(t.text, text) {
         advance(p)
         return true
     }
-    set_error(t.line, t.col, u.s_cat3(c"expected '", text, c"'"))
+    set_error_span(t.line, t.col, u.s_cat3(c"expected '", text, c"'"), token_span(t))
     return false
 }
 
@@ -696,7 +722,12 @@ fn parse_suite(p: mut ref Parser, line: i64, col: i64) ref Node = trust {
     val block: mut ref Node = node_new(NodeKind.Block, line, col)
     val t: ref Token = cur(p)
     if t.kind == TokenKind.Op && text_is(t, c":") {
-        set_error(t.line, t.col, c"colon blocks are not supported; use braces")
+        set_error_span(
+            t.line,
+            t.col,
+            c"colon blocks are not supported; use braces",
+            token_span(t)
+        )
         return block
     }
     if !expect_op(p, c"{") {
@@ -713,7 +744,12 @@ fn parse_suite(p: mut ref Parser, line: i64, col: i64) ref Node = trust {
             break
         }
         if cur(p).kind == TokenKind.Eof {
-            set_error(cur(p).line, cur(p).col, c"unexpected end of file in block")
+            set_error_span(
+                cur(p).line,
+                cur(p).col,
+                c"unexpected end of file in block",
+                cur_span(p)
+            )
             break
         }
         val s: ref Node = parse_statement(p)
@@ -827,7 +863,7 @@ fn parse_defer(p: mut ref Parser) ref Node = trust {
 fn parse_var_item(p: mut ref Parser) ref Node = trust {
     val name: ref Token = cur(p)
     if name.kind != TokenKind.Ident {
-        set_error(name.line, name.col, c"expected a variable name")
+        set_error_span(name.line, name.col, c"expected a variable name", token_span(name))
         return node_new(NodeKind.VarDecl, name.line, name.col)
     }
     advance(p)
@@ -852,7 +888,12 @@ fn parse_var(p: mut ref Parser) ref Node = trust {
                 break
             }
             if cur(p).kind == TokenKind.Eof {
-                set_error(cur(p).line, cur(p).col, c"expected ')' after variable declarations")
+                set_error_span(
+                    cur(p).line,
+                    cur(p).col,
+                    c"expected ')' after variable declarations",
+                    cur_span(p)
+                )
                 break
             }
             if cur(p).kind == TokenKind.Op && (text_is(
@@ -978,7 +1019,12 @@ fn parse_para_for(p: mut ref Parser) ref Node = trust {
     val t: ref Token = cur(p)
     advance(p)
     if !keyword(cur(p), c"for") {
-        set_error(cur(p).line, cur(p).col, c"expected 'for' after 'para'")
+        set_error_span(
+            cur(p).line,
+            cur(p).col,
+            c"expected 'for' after 'para'",
+            cur_span(p)
+        )
         return node_new(NodeKind.ParaFor, t.line, t.col)
     }
     advance(p)
@@ -989,7 +1035,7 @@ fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = tr
     val n: mut ref Node = node_new(kind, t.line, t.col)
     val var: ref Token = cur(p)
     if var.kind != TokenKind.Ident {
-        set_error(var.line, var.col, c"expected a loop variable")
+        set_error_span(var.line, var.col, c"expected a loop variable", token_span(var))
         return n
     }
     n.s = u.s_intern(var.text)
@@ -998,7 +1044,12 @@ fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = tr
         advance(p)
         val value_var: ref Token = cur(p)
         if value_var.kind != TokenKind.Ident {
-            set_error(value_var.line, value_var.col, c"expected a loop variable")
+            set_error_span(
+                value_var.line,
+                value_var.col,
+                c"expected a loop variable",
+                token_span(value_var)
+            )
             return n
         }
         u.vec_pushp(n.params, u.s_intern(value_var.text) as ref void)
@@ -1007,7 +1058,7 @@ fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = tr
     if keyword(cur(p), c"in") {
         advance(p)
     } else {
-        set_error(cur(p).line, cur(p).col, c"expected 'in'")
+        set_error_span(cur(p).line, cur(p).col, c"expected 'in'", cur_span(p))
     }
     val iter: ref Node = parse_expr(p)
     u.vec_pushp(n.kids, iter)
@@ -1046,7 +1097,7 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
     advance(p)
     val name: ref Token = cur(p)
     if name.kind != TokenKind.Ident {
-        set_error(name.line, name.col, c"expected a function name")
+        set_error_span(name.line, name.col, c"expected a function name", token_span(name))
         return n
     }
     n.s = u.s_intern(name.text)
@@ -1059,7 +1110,12 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
             }
             val pt: ref Token = cur(p)
             if pt.kind != TokenKind.Ident {
-                set_error(pt.line, pt.col, c"expected a parameter name")
+                set_error_span(
+                    pt.line,
+                    pt.col,
+                    c"expected a parameter name",
+                    token_span(pt)
+                )
                 break
             }
             u.vec_pushp(n.params, u.s_intern(pt.text) as ref void)
@@ -1133,7 +1189,12 @@ fn parse_try(p: mut ref Parser) ref Node = trust {
         val ct: ref Token = cur(p)
         u.vec_pushp(n.kids, parse_suite(p, ct.line, ct.col) as ref void)
     } else {
-        set_error(t.line, t.col, c"expected 'catch' after try block")
+        set_error_span(
+            t.line,
+            t.col,
+            c"expected 'catch' after try block",
+            token_span(t)
+        )
     }
     return n
 }
@@ -1774,7 +1835,12 @@ fn parse_postfix(p: mut ref Parser) ref Node = trust {
             val attr: mut ref Node = node_new(NodeKind.Attr, t.line, t.col)
             u.vec_pushp(attr.kids, node)
             if cur(p).kind != TokenKind.Ident {
-                set_error(cur(p).line, cur(p).col, c"expected an attribute name")
+                set_error_span(
+                    cur(p).line,
+                    cur(p).col,
+                    c"expected an attribute name",
+                    cur_span(p)
+                )
                 return attr
             }
             attr.s = u.s_dup(cur(p).text)
@@ -1797,7 +1863,7 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
                 n.a = v
             }
             none => {
-                set_error(t.line, t.col, c"invalid integer literal")
+                set_error_span(t.line, t.col, c"invalid integer literal", token_span(t))
             }
         }
         return n
@@ -1810,7 +1876,7 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
                 n.a = @bitcast(v, i64)
             }
             none => {
-                set_error(t.line, t.col, c"invalid float literal")
+                set_error_span(t.line, t.col, c"invalid float literal", token_span(t))
             }
         }
         return n
@@ -1937,7 +2003,12 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
             }
             val pt: ref Token = cur(p)
             if pt.kind != TokenKind.Ident {
-                set_error(pt.line, pt.col, c"expected a parameter name")
+                set_error_span(
+                    pt.line,
+                    pt.col,
+                    c"expected a parameter name",
+                    token_span(pt)
+                )
                 break
             }
             u.vec_pushp(n.params, u.s_intern(pt.text) as ref void)
@@ -1962,7 +2033,7 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
         }
         return n
     }
-    set_error(t.line, t.col, c"unexpected token")
+    set_error_span(t.line, t.col, c"unexpected token", token_span(t))
     advance(p)
     return node_new(NodeKind.NullLit, t.line, t.col)
 }

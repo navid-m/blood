@@ -7,6 +7,8 @@ val sh   = use("../shell/shell.sx")
 val ex   = use("../core/exec.sx")
 val re   = use("std/regex")
 val rt   = use("std/runtime")
+val tcol = use("std/terminal")
+val sstr = use("std/string")
 
 pub type Value = {
     tag: mut i64
@@ -39,6 +41,8 @@ val g_builtins: mut ref Env = none
 val g_error: mut ref u8 = none
 val g_err_line: mut i64 = 0
 val g_err_col: mut i64 = 0
+val g_err_len: mut i64 = 0
+val g_error_source: mut ref u8 = none
 val g_flow: mut i64 = 0
 val g_return: mut ref Value = none
 val g_interactive: mut i64 = 1
@@ -346,6 +350,7 @@ fn set_error(msg: ref u8, line: i64, col: i64) void = trust {
         g_error = u.s_dup(msg)
         g_err_line = line
         g_err_col = col
+        g_err_len = 0
     }
     g_flow = 4
 }
@@ -3023,7 +3028,7 @@ fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
                 if msg == none {
                     msg = u.s_dup(c"error")
                 }
-                report_error(c"", g_err_line, g_err_col, msg)
+                report_error(c"", g_err_line, g_err_col, msg, g_err_len)
                 code = 1
             } elif g_flow == 5 {
                 code = u.script_exit_code
@@ -3073,7 +3078,7 @@ fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
                 if msg == none {
                     msg = u.s_dup(c"error")
                 }
-                report_error(c"", g_err_line, g_err_col, msg)
+                report_error(c"", g_err_line, g_err_col, msg, g_err_len)
                 code = 1
             } elif g_flow == 5 {
                 code = u.script_exit_code
@@ -4013,19 +4018,200 @@ fn promote_roots() void = trust {
     }
 }
 
-fn report_error(label: ref u8, line: i64, col: i64, msg: ref u8) void = trust {
+fn digits10(n: i64) i64 = trust {
+    val v: mut i64 = n
+    if v < 0 {
+        v = 0 - v
+    }
+    val d: mut i64 = 1
+    for {
+        if v < 10 {
+            break
+        }
+        v = v / 10
+        d++
+    }
+    return d
+}
+
+fn buf_add_view(b: mut ref u.Buf, view: sstr.StringView) void = trust {
+    u.buf_addn(b, sstr.ptr(view), sstr.len(view))
+}
+
+fn buf_fg(b: mut ref u.Buf, color: tcol.Color, enabled: bool) void = trust {
+    if enabled {
+        buf_add_view(b, tcol.fg(color))
+    }
+}
+
+fn buf_style(b: mut ref u.Buf, text_style: tcol.Style, enabled: bool) void = trust {
+    if enabled {
+        buf_add_view(b, tcol.style(text_style))
+    }
+}
+
+fn buf_reset(b: mut ref u.Buf, enabled: bool) void = trust {
+    if enabled {
+        buf_add_view(b, tcol.reset())
+    }
+}
+
+fn source_line_at(src: ref u8, line: i64) ref u8 = trust {
+    if src == none || line <= 0 {
+        return none
+    }
+    val n: i64 = u.s_len(src)
+    val start: mut i64 = 0
+    val current: mut i64 = 1
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(src, i)) == 10 {
+            if current == line {
+                val end: mut i64 = i
+                if end > start && @load8(@ptradd(src, end - 1)) == 13 {
+                    end--
+                }
+                return u.s_substr(src, start, end)
+            }
+            current++
+            start = i + 1
+        }
+        i++
+    }
+    return none
+}
+
+fn is_word_byte(c: u8) bool = trust {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95
+}
+
+fn inferred_span(line: ref u8, col: i64) i64 = trust {
+    val n: i64 = u.s_len(line)
+    val start: i64 = col - 1
+    if start < 0 || start >= n || !is_word_byte(@load8(@ptradd(line, start))) {
+        return 1
+    }
+    val end: mut i64 = start
+    for {
+        if end >= n {
+            break
+        }
+        if !is_word_byte(@load8(@ptradd(line, end))) {
+            break
+        }
+        end++
+    }
+    if end <= start {
+        return 1
+    }
+    return end - start
+}
+
+fn report_error(label: ref u8, line: i64, col: i64, msg: ref u8, span: i64) void = trust {
+    val color: bool = tcol.is_enabled()
     val b: mut ref u.Buf = u.buf_new()
-    u.buf_add(b, c"blood: ")
+    buf_style(b, tcol.Style.Bold, color)
     if label != none && u.s_len(label) > 0 {
         u.buf_add(b, label)
-        u.buf_add(b, c":")
+    } else {
+        u.buf_add(b, c"blood")
     }
+    u.buf_ch(b, 58)
     u.buf_add(b, u.s_int(line))
-    u.buf_add(b, c":")
+    u.buf_ch(b, 58)
     u.buf_add(b, u.s_int(col))
-    u.buf_add(b, c": ")
+    buf_reset(b, color)
+    u.buf_ch(b, 58)
+    u.buf_ch(b, 32)
+    buf_style(b, tcol.Style.Bold, color)
+    buf_fg(b, tcol.Color.Red, color)
+    u.buf_add(b, c"error")
+    buf_reset(b, color)
+    u.buf_ch(b, 58)
+    u.buf_ch(b, 32)
     u.buf_add(b, msg)
     u.buf_ch(b, 10)
+
+    val src_line: ref u8 = source_line_at(g_error_source, line)
+    if src_line != none && col > 0 {
+        val gutter: i64 = digits10(line)
+        val pad: mut i64 = 0
+        for {
+            if pad >= gutter {
+                break
+            }
+            u.buf_ch(b, 32)
+            pad++
+        }
+        buf_fg(b, tcol.Color.BrightBlack, color)
+        u.buf_add(b, c" |")
+        buf_reset(b, color)
+        u.buf_ch(b, 10)
+
+        buf_fg(b, tcol.Color.BrightBlack, color)
+        u.buf_add(b, u.s_int(line))
+        u.buf_add(b, c" |")
+        buf_reset(b, color)
+        u.buf_ch(b, 32)
+        u.buf_add(b, src_line)
+        u.buf_ch(b, 10)
+
+        pad = 0
+        for {
+            if pad >= gutter {
+                break
+            }
+            u.buf_ch(b, 32)
+            pad++
+        }
+        buf_fg(b, tcol.Color.BrightBlack, color)
+        u.buf_add(b, c" |")
+        buf_reset(b, color)
+        u.buf_ch(b, 32)
+
+        val n: i64 = u.s_len(src_line)
+        val at: mut i64 = 0
+        for {
+            if at >= col - 1 || at >= n {
+                break
+            }
+            val c: u8 = @load8(@ptradd(src_line, at))
+            if c == 9 {
+                u.buf_ch(b, 9)
+            } else {
+                u.buf_ch(b, 32)
+            }
+            at++
+        }
+        val length: mut i64 = span
+        if length <= 0 {
+            length = inferred_span(src_line, col)
+        }
+        if length < 1 {
+            length = 1
+        }
+        if col - 1 + length > n && n >= col {
+            length = n - (col - 1)
+        }
+        if length < 1 {
+            length = 1
+        }
+        buf_style(b, tcol.Style.Bold, color)
+        buf_fg(b, tcol.Color.Red, color)
+        val k: mut i64 = 0
+        for {
+            if k >= length {
+                break
+            }
+            u.buf_ch(b, 94)
+            k++
+        }
+        buf_reset(b, color)
+        u.buf_ch(b, 10)
+    }
     u.write_fd(2, u.buf_take(b))
 }
 
@@ -4035,6 +4221,8 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
     }
     u.scratch_begin()
     g_run_depth++
+    val previous_source: ref u8 = g_error_source
+    g_error_source = src
     u.script_exit_code = -1
     g_error = none
     g_flow = 0
@@ -4045,7 +4233,14 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
     }
     val program: ref lang.Node = lang.parse(src)
     if lang.last_error() != none {
-        report_error(label, lang.last_error_line(), lang.last_error_col(), lang.last_error())
+        report_error(
+            label,
+            lang.last_error_line(),
+            lang.last_error_col(),
+            lang.last_error(),
+            lang.last_error_len()
+        )
+        g_error_source = previous_source
         g_run_depth--
         u.scratch_end()
         return 2
@@ -4060,6 +4255,7 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
     if g_flow == 5 {
         g_flow = 0
         val code: i32 = u.script_exit_code as i32
+        g_error_source = previous_source
         g_run_depth--
         u.scratch_end()
         return code
@@ -4072,18 +4268,21 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
         if u.s_eq(msg, c"interrupted") && g_interactive != 0 {
             g_error = none
             g_flow = 0
+            g_error_source = previous_source
             g_run_depth--
             u.scratch_end()
             return 130
         }
-        report_error(label, g_err_line, g_err_col, msg)
+        report_error(label, g_err_line, g_err_col, msg, g_err_len)
         g_error = none
         g_flow = 0
+        g_error_source = previous_source
         g_run_depth--
         u.scratch_end()
         return 1
     }
     g_flow = 0
+    g_error_source = previous_source
     g_run_depth--
     u.scratch_end()
     return 0
