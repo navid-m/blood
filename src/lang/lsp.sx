@@ -260,11 +260,8 @@ fn read_message_length() i64 = trust {
         if u.s_starts(line, c"Content-Length:") || u.s_starts(line, c"content-length:") {
             val colon: i64 = u.s_index_of_char(line, 58, 0)
             if colon >= 0 {
-                match u.parse_int(u.s_trim(u.s_substr(line, colon + 1, u.s_len(line)))) {
-                    some value => {
-                        length = value
-                    }
-                    none => {}
+                if u.parse_int(u.s_trim(u.s_substr(line, colon + 1, u.s_len(line)))) is some value {
+                    length = value
                 }
             }
         }
@@ -426,34 +423,25 @@ fn params_obj(params: option[js.JsonValue], name: ref u8) option[js.JsonValue] =
 }
 
 fn params_str(params: option[js.JsonValue], name: ref u8) ref u8 = trust {
-    match params_obj(params, name) {
-        some value => {
-            if js.is_string(value) {
-                val view: str.StringView = js.as_string(value)
-                return u.s_ndup(str.ptr(view), str.len(view))
-            }
+    if params_obj(params, name) is some value {
+        if js.is_string(value) {
+            val view: str.StringView = js.as_string(value)
+            return u.s_ndup(str.ptr(view), str.len(view))
         }
-        none => {}
     }
     return none
 }
 
 fn params_nested_str(params: option[js.JsonValue], outer: ref u8, inner: ref u8) ref u8 = trust {
-    match params_obj(params, outer) {
-        some value => {
-            return jstr(value, inner)
-        }
-        none => {}
+    if params_obj(params, outer) is some value {
+        return jstr(value, inner)
     }
     return none
 }
 
 fn params_nested_int(params: option[js.JsonValue], outer: ref u8, inner: ref u8) i64 = trust {
-    match params_obj(params, outer) {
-        some value => {
-            return jint(value, inner)
-        }
-        none => {}
+    if params_obj(params, outer) is some value {
+        return jint(value, inner)
     }
     return 0
 }
@@ -467,7 +455,14 @@ fn doc_from_params(params: option[js.JsonValue]) ref u8 = trust {
     return doc_text(uri)
 }
 
-fn add_symbol(out: mut ref u.Vec, name: ref u8, kind: i64, line: i64, col: i64, params: ref u.Vec) void = trust {
+fn add_symbol(
+    out: mut ref u.Vec,
+    name: ref u8,
+    kind: i64,
+    line: i64,
+    col: i64,
+    params: ref u.Vec
+) void = trust {
     if name == none || u.s_len(name) == 0 {
         return
     }
@@ -1282,18 +1277,12 @@ fn handle_notification(method: ref u8, params: option[js.JsonValue]) void = trus
     if u.s_eq(method, c"textDocument/didChange") {
         val uri: ref u8 = doc_uri(params)
         val text: mut ref u8 = none
-        match params_obj(params, c"contentChanges") {
-            some changes => {
-                if js.is_array(changes) && js.len(changes) > 0 {
-                    match js.array_get(changes, js.len(changes) - 1) {
-                        some change => {
-                            text = jstr(change, c"text")
-                        }
-                        none => {}
-                    }
+        if params_obj(params, c"contentChanges") is some changes {
+            if js.is_array(changes) && js.len(changes) > 0 {
+                if js.array_get(changes, js.len(changes) - 1) is some change {
+                    text = jstr(change, c"text")
                 }
             }
-            none => {}
         }
         if uri != none && text != none {
             doc_put(uri, text)

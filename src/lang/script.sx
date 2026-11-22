@@ -1,17 +1,17 @@
 /// Interpreter for the Blood scripting language.
 
-val u    = use("../core/util.sx")
-val lang = use("lang.sx")
-val term = use("../shell/terminal.sx")
-val sh   = use("../shell/shell.sx")
-val ex   = use("../core/exec.sx")
-val win  = use("../core/win.sx")
-val re   = use("std/regex")
-val rt   = use("std/runtime")
-val tcol = use("std/terminal")
-val sstr = use("std/string")
-val js   = use("std/json")
-val alc  = use("std/allocators")
+val u      = use("../core/util.sx")
+val lang   = use("lang.sx")
+val term   = use("../shell/terminal.sx")
+val sh     = use("../shell/shell.sx")
+val ex     = use("../core/exec.sx")
+val win    = use("../core/win.sx")
+val re     = use("std/regex")
+val rt     = use("std/runtime")
+val tcol   = use("std/terminal")
+val sstr   = use("std/string")
+val js     = use("std/json")
+val alc    = use("std/allocators")
 val crypto = use("std/crypto")
 
 pub type Value = {
@@ -4307,38 +4307,32 @@ fn decode_value(d: mut ref Decoder) ref Value = trust {
     if tag == 108 {
         val raw: ref u8 = decode_token(d, 58)
         val out: mut ref u.Vec = list_new()
-        match u.parse_int(raw) {
-            some n => {
-                val i: mut i64 = 0
-                for {
-                    if i >= n {
-                        break
-                    }
-                    u.vec_pushp(out, decode_value(d) as ref void)
-                    i++
+        if u.parse_int(raw) is some n {
+            val i: mut i64 = 0
+            for {
+                if i >= n {
+                    break
                 }
+                u.vec_pushp(out, decode_value(d) as ref void)
+                i++
             }
-            none => {}
         }
         return v_list(out)
     }
     if tag == 100 {
         val raw: ref u8 = decode_token(d, 58)
         val m: mut ref u.Map = dict_new()
-        match u.parse_int(raw) {
-            some n => {
-                val i: mut i64 = 0
-                for {
-                    if i >= n {
-                        break
-                    }
-                    val key: ref Value = decode_value(d)
-                    val item: ref Value = decode_value(d)
-                    u.map_put(m, key_of(key), @bitcast(item, i64))
-                    i++
+        if u.parse_int(raw) is some n {
+            val i: mut i64 = 0
+            for {
+                if i >= n {
+                    break
                 }
+                val key: ref Value = decode_value(d)
+                val item: ref Value = decode_value(d)
+                u.map_put(m, key_of(key), @bitcast(item, i64))
+                i++
             }
-            none => {}
         }
         return v_dict(m)
     }
@@ -5183,7 +5177,8 @@ fn node_has_defer(n: ref lang.Node) bool = trust {
     return false
 }
 
-fn collect_var_decls(n: ref lang.Node, out: mut ref u.Vec) void = trust {    if n == none {
+fn collect_var_decls(n: ref lang.Node, out: mut ref u.Vec) void = trust {
+    if n == none {
         return
     }
     if (n.kind == lang.NodeKind.VarDecl || n.kind == lang.NodeKind.ConstDecl) && n.s != none {

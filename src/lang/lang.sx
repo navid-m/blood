@@ -815,13 +815,13 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
             val after: ref Token = peek(p, 2)
             val adjacent: bool = after.start == next.end
             val line_end: bool = after.kind == TokenKind.Newline || after.kind == TokenKind.Eof || (after.kind == TokenKind.Op && (u.s_eq(
-                after.text,
-                c";"
-            ) || u.s_eq(after.text, c"}")))
+                        after.text,
+                        c";"
+                    ) || u.s_eq(after.text, c"}")))
             val path_tail: bool = after.kind == TokenKind.Op && (u.s_eq(
-                after.text,
-                c"/"
-            ) || u.s_eq(after.text, c"\\"))
+                    after.text,
+                    c"/"
+                ) || u.s_eq(after.text, c"\\"))
             if (adjacent || line_end) && !path_tail {
                 set_error_span(
                     t.line,
@@ -871,7 +871,10 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
     if keyword(t, c"pub") {
         return parse_pub(p)
     }
-    if keyword(t, c"use") && (peek(p, 1).kind == TokenKind.Str || peek(p, 1).kind == TokenKind.RawStr) {
+    if keyword(
+        t,
+        c"use"
+    ) && (peek(p, 1).kind == TokenKind.Str || peek(p, 1).kind == TokenKind.RawStr) {
         return parse_use(p)
     }
     val command_call: ref Node = try_command_call(p)
