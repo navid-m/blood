@@ -1938,6 +1938,7 @@ final element; `\r\n` is accepted.
 |`strip_suffix(suffix)` |1 |Remove one trailing suffix when present.
 |`contains(needle)` |1 |Substring test.
 |`matches(pattern)` |1 |Regular-expression search.
+|`like(pattern, ignore_case: BOOL)` |1 |Glob match. `*` matches any sequence and `?` matches one byte. `ignore_case` is an optional named argument.
 |`replace(from,to)` |2 |Replace all occurrences.
 |`last()` |0 |Return the last UTF-8 code point, or null when empty.
 |`len()` |0 |Byte length.

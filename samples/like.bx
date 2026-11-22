@@ -1,0 +1,15 @@
+var sx_files = std.glob("./lib/*").filter(|f| f.basename().like("*.sx"))
+
+var tests = std.glob("./samples/*").filter(
+    |f| f.basename().like("sample???.sx")
+)
+
+var not_errors = std.glob("./samples/*").filter(
+    |f| not f.basename().like("*_error.sx")
+)
+
+var name = "README.md"
+
+if name.like("readme*", ignore_case: true) {
+    say("found a readme")
+}

@@ -576,3 +576,11 @@ test "script const declarations reject reassignment" {
         assert run(src) == 0
     }
 }
+
+test "script string like matches glob patterns" {
+    trust {
+        fresh()
+        val src: ref u8 = c"if not \"some_file.sx\".like(\"*.sx\") {\n    raise \"suffix\"\n}\nif \"some_file.txt\".like(\"*.sx\") {\n    raise \"wrong suffix\"\n}\nif not \"sample123.sx\".like(\"sample???.sx\") {\n    raise \"question\"\n}\nif \"sample12.sx\".like(\"sample???.sx\") {\n    raise \"question length\"\n}\nif not \"README.md\".like(\"readme*\", ignore_case: true) {\n    raise \"ignore case\"\n}\nif \"README.md\".like(\"readme*\") {\n    raise \"case sensitive\"\n}\nif not \"\".like(\"*\") or \"\".like(\"?\") {\n    raise \"empty\"\n}\nif not ([\"a.sx\", \"b.txt\", \"c.sx\"].filter(|f| f.like(\"*.sx\")).join(\",\") == \"a.sx,c.sx\") {\n    raise \"filter\"\n}\n"
+        assert run(src) == 0
+    }
+}

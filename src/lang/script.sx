@@ -1958,6 +1958,70 @@ fn regex_match(s: ref u8, pattern: ref u8) bool = trust {
     return false
 }
 
+fn like_byte_eq(a: u8, b: u8, ignore_case: bool) bool = trust {
+    val left: mut u8 = a
+    val right: mut u8 = b
+    if ignore_case {
+        if left >= 65 && left <= 90 {
+            left = left + 32
+        }
+        if right >= 65 && right <= 90 {
+            right = right + 32
+        }
+    }
+    return left == right
+}
+
+fn like_match(s: ref u8, pattern: ref u8, ignore_case: bool) bool = trust {
+    val sl: i64 = u.s_len(s)
+    val pl: i64 = u.s_len(pattern)
+    val si: mut i64 = 0
+    val pi: mut i64 = 0
+    val star: mut i64 = -1
+    val mark: mut i64 = 0
+    for {
+        if si >= sl {
+            break
+        }
+        if pi < pl {
+            val pc: u8 = @load8(@ptradd(pattern, pi))
+            if pc == 42 {
+                star = pi
+                mark = si
+                pi++
+                continue
+            }
+            if pc == 63 {
+                pi++
+                si++
+                continue
+            }
+            if like_byte_eq(pc, @load8(@ptradd(s, si)), ignore_case) {
+                pi++
+                si++
+                continue
+            }
+        }
+        if star >= 0 {
+            mark++
+            si = mark
+            pi = star + 1
+            continue
+        }
+        return false
+    }
+    for {
+        if pi >= pl {
+            break
+        }
+        if @load8(@ptradd(pattern, pi)) != 42 {
+            break
+        }
+        pi++
+    }
+    return pi == pl
+}
+
 fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     if id == 1 {
         val v: ref Value = arg(args, 0)
@@ -2772,6 +2836,11 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
         }
         if u.s_eq(name, c"matches") {
             return v_bool(regex_match(s, v_to_str(arg(args, 0))))
+        }
+        if u.s_eq(name, c"like") {
+            val pattern: ref u8 = v_to_str(arg(args, 0))
+            val ignore_case: bool = truthy(arg_named(n, args, c"ignore_case"))
+            return v_bool(like_match(s, pattern, ignore_case))
         }
         if u.s_eq(name, c"last") {
             val len: i64 = u.s_len(s)
