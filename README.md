@@ -33,6 +33,13 @@ Output:
 └──────────────┴────────────┘
 ```
 
+Yet another example:
+
+```h
+say("hello".enc_b64())     # aGVsbG8=
+say("aGVsbG8=".dec_b64())  # hello
+```
+
 #### Quick install
 
 POSIX:
@@ -61,7 +68,7 @@ cd .\blood\fw
 
 The shell and the language are one. shell commands are values, strings interpolate, and loops hold real data. Thus, there are no quoting layers to get tangled with.
 
-```
+```h
 fn lines(path) {
     return std.len(std.read_file(path).strip().split("\n"))
 }
@@ -79,7 +86,7 @@ say "source total: {total} lines"
 
 Note that captured commands are ordinary strings, so you can do:
 
-```
+```h
 branch = sh("git branch --show-current").strip()
 say "working on {branch}"
 
@@ -93,7 +100,7 @@ if changes != "" {
 
 Parallelism is a keyword, therefore every iteration is a child process. No thread pools or async/await.
 
-```
+```h
 para for file in std.glob("src/*.sx") {
     say sh("sha256sum {file}").strip()
 }
