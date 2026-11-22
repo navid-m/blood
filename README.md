@@ -6,10 +6,30 @@ Written with the [Spectre Programming Language](https://spectrelang.org)
 
 Outperforms ksh and dash on several benchmarks, outperforming Elvish and Fish by up to 120x on general purpose tasks as per [Shell Arena](https://navid-m.github.io/shellarena/).
 
-```
+```h
 for x in ["hello", "world"] {
     sh("cowsay " + x)
 }
+```
+
+And another example:
+
+```h
+say(std.glob("./src/lang/*.sx").map(|f| { return {"file": f.basename(), "modified": f.modified()} }).dump().jtable())
+```
+
+Output:
+
+```
+┌──────────────┬────────────┐
+│ file         │ modified   │
+├──────────────┼────────────┤
+│ format.sx    │ 1795343823 │
+│ lang.sx      │ 1795346879 │
+│ lsp.sx       │ 1795343822 │
+│ script.sx    │ 1795356865 │
+│ translate.sx │ 1795214737 │
+└──────────────┴────────────┘
 ```
 
 #### Quick install
