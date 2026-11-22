@@ -12,6 +12,7 @@ val tcol = use("std/terminal")
 val sstr = use("std/string")
 val js   = use("std/json")
 val alc  = use("std/allocators")
+val crypto = use("std/crypto")
 
 pub type Value = {
     tag: mut i64
@@ -1905,6 +1906,52 @@ fn file_modified(path: ref u8) i64 = trust {
     return times.modified
 }
 
+fn base64_encode_copy(data: ref u8) ref u8 = trust {
+    val len: i64 = u.s_len(data)
+    val cap: i64 = ((len + 2) / 3) * 4 + 64
+    match alc.Arena.new(cap as usize) {
+        ok arena => {
+            val encoded: ref u8 = crypto.base64_encode[alc.Arena, ref u8](arena, data)
+            val out: mut ref u8 = c""
+            if encoded != none {
+                out = u.s_dup(encoded)
+            }
+            alc.Arena.free(arena)
+            return out
+        }
+        err _ => {
+            return c""
+        }
+    }
+}
+
+fn base64_decode_copy(text: ref u8, n: ref lang.Node, label: ref u8) ref u8 = trust {
+    val cap: i64 = u.s_len(text) + 128
+    match alc.Arena.new(cap as usize) {
+        ok arena => {
+            match crypto.base64_decode[alc.Arena](arena, text) {
+                ok decoded => {
+                    val out: mut ref u8 = c""
+                    if decoded.len > 0 {
+                        out = u.s_ndup(decoded.ptr, decoded.len)
+                    }
+                    alc.Arena.free(arena)
+                    return out
+                }
+                err _ => {
+                    alc.Arena.free(arena)
+                    set_error(u.s_cat3(label, c": invalid base64", c""), n.line, n.col)
+                    return c""
+                }
+            }
+        }
+        err _ => {
+            set_error(u.s_cat3(label, c": out of memory", c""), n.line, n.col)
+            return c""
+        }
+    }
+}
+
 fn remove_all_path(path: ref u8) bool = trust {
     if !u.file_exists(path) && !u.is_dir(path) {
         return true
@@ -3410,6 +3457,46 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
         }
         if u.s_eq(name, c"modified") {
             return v_int(file_modified(s))
+        }
+        if u.s_eq(name, c"enc_b64") {
+            return v_str_own(base64_encode_copy(s))
+        }
+        if u.s_eq(name, c"dec_b64") {
+            val out: ref u8 = base64_decode_copy(s, n, c"dec_b64")
+            if g_flow != 0 {
+                return v_nil()
+            }
+            return v_str_own(out)
+        }
+        if u.s_eq(name, c"file_enc_b64") {
+            val path: ref u8 = u.expand_tilde(s)
+            val data: ref u8 = u.read_file(path)
+            if data == none {
+                set_error(
+                    u.s_cat3(c"file_enc_b64: cannot read ", path, c""),
+                    n.line,
+                    n.col
+                )
+                return v_nil()
+            }
+            return v_str_own(base64_encode_copy(data))
+        }
+        if u.s_eq(name, c"file_dec_b64") {
+            val path: ref u8 = u.expand_tilde(s)
+            val data: ref u8 = u.read_file(path)
+            if data == none {
+                set_error(
+                    u.s_cat3(c"file_dec_b64: cannot read ", path, c""),
+                    n.line,
+                    n.col
+                )
+                return v_nil()
+            }
+            val out: ref u8 = base64_decode_copy(u.s_trim(data), n, c"file_dec_b64")
+            if g_flow != 0 {
+                return v_nil()
+            }
+            return v_str_own(out)
         }
         if u.s_eq(name, c"exists") {
             return call_native(36, args_for(obj), n)

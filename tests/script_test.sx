@@ -642,3 +642,29 @@ test "script paths report modification times" {
         assert run(u.buf_take(b)) == 0
     }
 }
+
+test "script strings and files encode and decode base64" {
+    trust {
+        fresh()
+        val dir: ref u8 = c"/tmp/blood-unit-script/base64"
+        assert u.mkdir_p(dir)
+        val source: ref u8 = u.path_join(dir, c"message.txt")
+        val encoded: ref u8 = u.path_join(dir, c"message.b64")
+        assert u.write_file(source, c"file hello")
+
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_add(b, c"if \"hello\".enc_b64() != \"aGVsbG8=\" {\n    raise \"string encode\"\n}\nif \"aGVsbG8=\".dec_b64() != \"hello\" {\n    raise \"string decode\"\n}\nif \"")
+        u.buf_add(b, source)
+        u.buf_add(b, c"\".enc_b64() == \"")
+        u.buf_add(b, source)
+        u.buf_add(b, c"\".file_enc_b64() {\n    raise \"string read file\"\n}\nif \"")
+        u.buf_add(b, source)
+        u.buf_add(b, c"\".file_enc_b64() != \"ZmlsZSBoZWxsbw==\" {\n    raise \"file encode\"\n}\nif \"")
+        u.buf_add(b, encoded)
+        u.buf_add(b, c"\".file_dec_b64() != \"file hello\" {\n    raise \"file decode\"\n}\ntry {\n    \"not base64\".dec_b64()\n} catch err {\n    if \"invalid base64\" not in err {\n        raise \"bad base64\"\n    }\n}\ntry {\n    \"")
+        u.buf_add(b, u.path_join(dir, c"missing.b64"))
+        u.buf_add(b, c"\".file_dec_b64()\n} catch err {\n    if \"cannot read\" not in err {\n        raise \"missing file\"\n    }\n}\n")
+        assert u.write_file(encoded, c"ZmlsZSBoZWxsbw==")
+        assert run(u.buf_take(b)) == 0
+    }
+}

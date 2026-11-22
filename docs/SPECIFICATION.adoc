@@ -1976,6 +1976,10 @@ final element; `\r\n` is accepted.
 |`basename()` |0 |Final component of a path.
 |`stem()` |0 |Final component of a path with its last extension removed.
 |`modified()` |0 |File modification time as seconds since the Unix epoch, or `0` when unavailable.
+|`enc_b64()` |0 |Base64-encode the string.
+|`dec_b64()` |0 |Decode the string as base64. Invalid input raises a catchable error.
+|`file_enc_b64()` |0 |Read a file and return its contents as base64.
+|`file_dec_b64()` |0 |Read a base64 file and return the decoded contents. Invalid input raises a catchable error.
 |`abs()` |0 |Absolute, cleaned path. Expands `~` and resolves relative paths
 against the current directory.
 |`exists()` |0 |Whether the path exists.

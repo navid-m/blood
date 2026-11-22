@@ -1,0 +1,18 @@
+# Blood sample: base64 encode and decode strings and files.
+
+var text = "hello, blood"
+
+say("string: " + text.enc_b64())
+say("decoded: " + text.enc_b64().dec_b64())
+
+var dir = std.mktemp_dir("blood-base64")
+var source = std.join(dir, "message.txt")
+var encoded = std.join(dir, "message.b64")
+
+std.write_file(source, text)
+std.write_file(encoded, source.file_enc_b64())
+
+say("file: " + source.file_enc_b64())
+say("file decoded: " + encoded.file_dec_b64())
+
+std.remove_all(dir)
