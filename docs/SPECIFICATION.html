@@ -2653,7 +2653,7 @@ or in expression position:</p>
 <div class="content">
 <pre>if elif else while for in fn return break continue pass
 try catch except raise throw say defer export true false null none
-not and or</pre>
+not and or var const pub use</pre>
 </div>
 </div>
 <div class="paragraph">
@@ -2709,6 +2709,10 @@ not and or</pre>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock">function</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">User-defined or native callable.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">namespace</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Named bindings exposed by a module or by <code>std</code>.</p></td>
 </tr>
 </tbody>
 </table>
@@ -2852,9 +2856,10 @@ offsets, and return the UTF-8 sequence beginning at that offset.</p>
 </div>
 <div class="paragraph">
 <p>Attribute access has the form <code>container.name</code>. On a dictionary it reads the
-value for key <code>name</code>; a missing key yields null. On other values, plain
-attribute access yields null. Attribute assignment <code>dict.name = value</code> is
-supported for dictionaries.</p>
+value for key <code>name</code>; a missing key yields null. On a namespace it reads the
+exported binding named <code>name</code>; a missing name yields null. On other values,
+plain attribute access yields null. Attribute assignment <code>dict.name = value</code> is
+supported for dictionaries and for mutable exported module variables.</p>
 </div>
 </div>
 <div class="sect3">
@@ -2971,6 +2976,7 @@ var (
     NAME = expression
     OTHER = expression
 )
+const NAME = expression
 NAME = expression
 PLACE += expression
 PLACE -= expression
@@ -2980,12 +2986,14 @@ PLACE %= expression</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Variables must be introduced with <code>var</code> before they can be assigned. A <code>var</code>
-declaration creates a binding in the current scope and reports an error if the
-name is already declared there. The bulk form declares several variables at
-once. Declarations in a bulk block are separated by newlines or commas.
-Declarations made inside a <code>for</code> or <code>while</code> body are local to that body and are
-reset on each iteration.</p>
+<p>Variables must be introduced with <code>var</code> or <code>const</code> before they can be assigned.
+A <code>var</code> declaration creates a mutable binding in the current scope and reports
+an error if the name is already declared there. A <code>const</code> declaration creates a
+read-only binding; assigning to it, including with a compound assignment,
+reports an error. The value stored by a constant may still be a mutable list or
+dictionary. The bulk form declares several variables at once. Declarations in a
+bulk block are separated by newlines or commas. Declarations made inside a
+<code>for</code> or <code>while</code> body are local to that body and are reset on each iteration.</p>
 </div>
 <div class="paragraph">
 <p>Plain assignments do not create bindings. If the target variable does not exist
@@ -3008,6 +3016,50 @@ process environment:</p>
 </div>
 <div class="paragraph">
 <p>The variable remains available as an ordinary script binding.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_modules">Modules</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>use "some_file.bx"
+
+say(some_file.PI)
+some_file.some_function()</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>A <code>use</code> statement loads another Blood source file as a module. The module name
+is the file name without its final extension. A relative path is resolved
+against the directory of the file containing the <code>use</code> statement. Loaded
+modules are cached by absolute path, so repeated imports share the same module
+state.</p>
+</div>
+<div class="paragraph">
+<p>Only top-level declarations marked <code>pub</code> are visible through the module
+namespace. Private variables and functions remain accessible inside the module
+but are not exported:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code># some_file.bx
+pub const PI = 3.14
+pub var some_changeable_thing = 200
+
+fn private_function() {
+    say "hehe"
+}
+
+pub fn some_function() {
+    private_function()
+}</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>pub</code> may prefix <code>var</code>, <code>const</code>, or <code>fn</code>. Exported mutable variables may be
+assigned through the namespace, and the change is visible to the module&#8217;s
+functions. Exported constants and functions are read-only. A module is executed
+once, in its own top-level environment, when it is first imported.</p>
 </div>
 </div>
 <div class="sect3">
@@ -3993,6 +4045,11 @@ final element; <code>\r\n</code> is accepted.</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Regular-expression search.</p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>like(pattern, ignore_case: BOOL)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Glob match. <code>*</code> matches any sequence and <code>?</code> matches one byte. <code>ignore_case</code> is an optional named argument.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>replace(from,to)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Replace all occurrences.</p></td>
@@ -4729,7 +4786,7 @@ sh("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-22 03:28:50 UTC
+Last updated 2026-11-22 11:09:52 UTC
 </div>
 </div>
 </body>
