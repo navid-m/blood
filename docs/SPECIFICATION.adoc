@@ -1206,6 +1206,16 @@ Newlines and indentation are ignored inside unmatched `(` and `[` delimiters
 and inside dictionary literals. This permits multiline lists, dictionaries,
 and call arguments.
 
+A method or property chain cannot continue with `.` at the start of a new
+line. Keep the dot on the previous line or wrap the chain in parentheses:
+
+[source]
+----
+var files = std.glob("./*").filter(
+    |f| f.basename().like("*.txt")
+)
+----
+
 A semicolon `;` may separate simple statements on one line. A single-line
 suite may also follow the opening brace.
 

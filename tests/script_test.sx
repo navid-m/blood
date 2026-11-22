@@ -584,3 +584,11 @@ test "script string like matches glob patterns" {
         assert run(src) == 0
     }
 }
+
+test "script reports missing shell commands as script errors" {
+    trust {
+        fresh()
+        val src: ref u8 = c"try {\n    definitely_missing_command_xyz foo\n} catch err {\n    if \"command not found\" not in err {\n        raise \"missing command\"\n    }\n}\n"
+        assert run(src) == 0
+    }
+}

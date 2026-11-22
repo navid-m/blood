@@ -436,3 +436,18 @@ test "parser builds use, pub and const declarations" {
         assert x.flags == 0
     }
 }
+
+test "parser rejects method chains continued on a new line" {
+    trust {
+        lang.parse(c"var xs = [1]\n    .filter(|x| x > 0)\n")
+        assert lang.last_error() != none
+        assert lang.last_error_line() == 2
+        assert lang.last_error_col() == 5
+        assert lang.last_error_len() == 7
+        assert u.s_contains(lang.last_error(), c"cannot continue the previous line")
+
+        lang.parse(c"var x = {}\n    .field\n")
+        assert lang.last_error() != none
+        assert u.s_contains(lang.last_error(), c"move '.field'")
+    }
+}

@@ -1338,6 +1338,67 @@ fn is_builtin(name: ref u8) bool = trust {
     return false
 }
 
+fn find_in_path(name: ref u8) ref u8 = trust {
+    val path: ref u8 = u.env_get(c"PATH")
+    if path == none {
+        return none
+    }
+    val n: i64 = u.s_len(path)
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(path, i)) == u.path_list_sep() {
+            val dir: ref u8 = u.s_ndup(@ptradd(path, start), i - start)
+            if u.s_len(dir) > 0 {
+                val resolved: ref u8 = u.resolve_executable(u.path_join(dir, name))
+                if resolved != none {
+                    return resolved
+                }
+            }
+            start = i + 1
+        }
+        i++
+    }
+    return none
+}
+
+/// Whether a shell command name would resolve to a builtin, alias, script, or executable.
+pub fn command_known(name: ref u8) bool = trust {
+    if name == none || u.s_len(name) == 0 {
+        return true
+    }
+    when windows {
+        return true
+    }
+    otherwise {
+        if u.s_eq(name, c"time") {
+            return true
+        }
+        if sh_aliases != none && u.map_has(sh_aliases, name) {
+            return true
+        }
+        if is_builtin(name) {
+            return true
+        }
+        if (u.s_ends_with(
+                name,
+                c".blood"
+            ) || u.s_ends_with(name, c".bx")) && u.file_exists(name) {
+            return true
+        }
+        if u.s_contains(
+            name,
+            c"/"
+        ) || u.s_starts(name, c"~") || u.s_starts(name, c".") {
+            return u.resolve_executable(u.expand_tilde(name)) != none
+        }
+        return find_in_path(name) != none
+    }
+}
+
 fn run_pipeline(pipe: ref Pipeline, background: bool) i32 = trust {
     when windows {
         return run_pipeline_win(pipe, background)
@@ -2620,29 +2681,10 @@ fn bi_which(cmd: ref Command) i32 = trust {
         u.write_fd(1, u.s_cat3(name, c": aliased to ", u.s_cat(v, c"\n")))
         return 0
     }
-    val path: ref u8 = u.env_get(c"PATH")
-    if path != none {
-        val n: i64 = u.s_len(path)
-        val start: mut i64 = 0
-        val i: mut i64 = 0
-        for {
-            if i > n {
-                break
-            }
-            if i == n || @load8(@ptradd(path, i)) == u.path_list_sep() {
-                val dir: ref u8 = u.s_ndup(@ptradd(path, start), i - start)
-                if u.s_len(dir) > 0 {
-                    val full: ref u8 = u.path_join(dir, name)
-                    val resolved: ref u8 = u.resolve_executable(full)
-                    if resolved != none {
-                        u.write_fd(1, u.s_cat(resolved, c"\n"))
-                        return 0
-                    }
-                }
-                start = i + 1
-            }
-            i++
-        }
+    val resolved: ref u8 = find_in_path(name)
+    if resolved != none {
+        u.write_fd(1, u.s_cat(resolved, c"\n"))
+        return 0
     }
     u.write_fd(2, u.s_cat3(c"blood: ", name, c": not found\n"))
     return 1

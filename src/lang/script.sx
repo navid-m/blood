@@ -3827,6 +3827,113 @@ fn load_module(path: ref u8, n: ref lang.Node) ref Value = trust {
     return nsval
 }
 
+fn shell_name_start(c: u8) bool = trust {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn shell_name_byte(c: u8) bool = trust {
+    return shell_name_start(c) || (c >= 48 && c <= 57)
+}
+
+fn shell_assignment_word(word: ref u8) bool = trust {
+    val n: i64 = u.s_len(word)
+    if n == 0 || !shell_name_start(@load8(word)) {
+        return false
+    }
+    val i: mut i64 = 1
+    for {
+        if i >= n {
+            return false
+        }
+        val c: u8 = @load8(@ptradd(word, i))
+        if c == 61 {
+            return true
+        }
+        if !shell_name_byte(c) {
+            return false
+        }
+        i++
+    }
+    return false
+}
+
+fn shell_plain_word(word: ref u8) bool = trust {
+    val n: i64 = u.s_len(word)
+    if n == 0 {
+        return false
+    }
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(word, i))
+        val valid: bool = shell_name_byte(c) || c == 46 || c == 47 || c == 45 || c == 58 || c == 43 || c == 64 || c == 44 || (c == 126 && i == 0)
+        if !valid {
+            return false
+        }
+        i++
+    }
+    return true
+}
+
+/// Return the literal command head of a shell statement, or none when it is
+/// not safe to inspect without performing shell expansion.
+fn shell_head(text: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(text)
+    val i: mut i64 = 0
+    for {
+        for {
+            if i >= n {
+                return none
+            }
+            val c: u8 = @load8(@ptradd(text, i))
+            if c == 32 || c == 9 || c == 10 || c == 13 {
+                i++
+                continue
+            }
+            break
+        }
+        val start: i64 = i
+        for {
+            if i >= n {
+                break
+            }
+            val c: u8 = @load8(@ptradd(text, i))
+            if c == 32 || c == 9 || c == 10 || c == 13 {
+                break
+            }
+            i++
+        }
+        if i <= start {
+            return none
+        }
+        val word: ref u8 = u.s_substr(text, start, i)
+        if shell_assignment_word(word) {
+            continue
+        }
+        if !shell_plain_word(word) {
+            return none
+        }
+        return word
+    }
+    return none
+}
+
+fn shell_statement_missing(n: ref lang.Node) bool = trust {
+    when windows {
+        return false
+    }
+    otherwise {
+        val head: ref u8 = shell_head(n.s)
+        if head == none || sh.command_known(head) {
+            return false
+        }
+        set_error(u.s_cat3(c"command not found: ", head, c""), n.line, n.col)
+        return true
+    }
+}
+
 fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
     if n == none || g_flow != 0 {
         return
@@ -4230,6 +4337,9 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         if u.hooks_ready == 0 {
             return
         }
+        if shell_statement_missing(n) {
+            return
+        }
         val hook: fn(ref u8) i32 = u.run_shell_hook
         val st: i32 = hook(n.s)
         set_status(st as i64)
@@ -4241,6 +4351,9 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
     }
     if n.kind == lang.NodeKind.ShellCmd {
         if u.hooks_ready == 0 {
+            return
+        }
+        if shell_statement_missing(n) {
             return
         }
         val hook: fn(ref u8) i32 = u.run_shell_hook

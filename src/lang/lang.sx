@@ -810,6 +810,32 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
             t.text,
             c"/"
         ) || u.s_eq(t.text, c".") || u.s_eq(t.text, c"~")) {
+        val next: ref Token = peek(p, 1)
+        if u.s_eq(t.text, c".") && next.kind == TokenKind.Ident && t.end == next.start {
+            val after: ref Token = peek(p, 2)
+            val adjacent: bool = after.start == next.end
+            val line_end: bool = after.kind == TokenKind.Newline || after.kind == TokenKind.Eof || (after.kind == TokenKind.Op && (u.s_eq(
+                after.text,
+                c";"
+            ) || u.s_eq(after.text, c"}")))
+            val path_tail: bool = after.kind == TokenKind.Op && (u.s_eq(
+                after.text,
+                c"/"
+            ) || u.s_eq(after.text, c"\\"))
+            if (adjacent || line_end) && !path_tail {
+                set_error_span(
+                    t.line,
+                    t.col,
+                    u.s_cat3(
+                        c"a leading '.' cannot continue the previous line; move '.",
+                        next.text,
+                        c"' up or wrap the chain in parentheses"
+                    ),
+                    next.end - t.start
+                )
+                return node_new(NodeKind.Pass, t.line, t.col)
+            }
+        }
         return parse_shell_cmd(p, t)
     }
     if keyword(t, c"if") {
