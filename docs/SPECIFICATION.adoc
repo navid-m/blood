@@ -1220,7 +1220,7 @@ or in expression position:
 ....
 if elif else while for in fn return break continue pass
 try catch except raise throw say defer export true false null none
-not and or
+not and or var const pub use
 ....
 
 `none` is accepted as an alias for `null`.
@@ -1240,6 +1240,7 @@ The runtime value types are:
 |list |Ordered, mutable sequence of values.
 |dict |Mutable string-keyed map. Iteration order is unspecified.
 |function |User-defined or native callable.
+|namespace |Named bindings exposed by a module or by `std`.
 |===
 
 Lists and dictionaries are reference values. Assigning a list or dictionary
@@ -1312,9 +1313,10 @@ keys are converted to strings. Strings accept a byte offset, including negative
 offsets, and return the UTF-8 sequence beginning at that offset.
 
 Attribute access has the form `container.name`. On a dictionary it reads the
-value for key `name`; a missing key yields null. On other values, plain
-attribute access yields null. Attribute assignment `dict.name = value` is
-supported for dictionaries.
+value for key `name`; a missing key yields null. On a namespace it reads the
+exported binding named `name`; a missing name yields null. On other values,
+plain attribute access yields null. Attribute assignment `dict.name = value` is
+supported for dictionaries and for mutable exported module variables.
 
 ==== Operators
 
@@ -1377,6 +1379,7 @@ var (
     NAME = expression
     OTHER = expression
 )
+const NAME = expression
 NAME = expression
 PLACE += expression
 PLACE -= expression
@@ -1385,12 +1388,14 @@ PLACE /= expression
 PLACE %= expression
 ----
 
-Variables must be introduced with `var` before they can be assigned. A `var`
-declaration creates a binding in the current scope and reports an error if the
-name is already declared there. The bulk form declares several variables at
-once. Declarations in a bulk block are separated by newlines or commas.
-Declarations made inside a `for` or `while` body are local to that body and are
-reset on each iteration.
+Variables must be introduced with `var` or `const` before they can be assigned.
+A `var` declaration creates a mutable binding in the current scope and reports
+an error if the name is already declared there. A `const` declaration creates a
+read-only binding; assigning to it, including with a compound assignment,
+reports an error. The value stored by a constant may still be a mutable list or
+dictionary. The bulk form declares several variables at once. Declarations in a
+bulk block are separated by newlines or commas. Declarations made inside a
+`for` or `while` body are local to that body and are reset on each iteration.
 
 Plain assignments do not create bindings. If the target variable does not exist
 in the current environment chain, evaluation reports `undefined variable`. If
@@ -1409,6 +1414,46 @@ export PATH = (user_paths + [std.env("PATH")]).join(":")
 ----
 
 The variable remains available as an ordinary script binding.
+
+==== Modules
+
+[source]
+----
+use "some_file.bx"
+
+say(some_file.PI)
+some_file.some_function()
+----
+
+A `use` statement loads another Blood source file as a module. The module name
+is the file name without its final extension. A relative path is resolved
+against the directory of the file containing the `use` statement. Loaded
+modules are cached by absolute path, so repeated imports share the same module
+state.
+
+Only top-level declarations marked `pub` are visible through the module
+namespace. Private variables and functions remain accessible inside the module
+but are not exported:
+
+[source]
+----
+# some_file.bx
+pub const PI = 3.14
+pub var some_changeable_thing = 200
+
+fn private_function() {
+    say "hehe"
+}
+
+pub fn some_function() {
+    private_function()
+}
+----
+
+`pub` may prefix `var`, `const`, or `fn`. Exported mutable variables may be
+assigned through the namespace, and the change is visible to the module's
+functions. Exported constants and functions are read-only. A module is executed
+once, in its own top-level environment, when it is first imported.
 
 ==== `say`
 

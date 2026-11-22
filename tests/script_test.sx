@@ -473,6 +473,9 @@ test "script classifies script-looking lines" {
         assert !script.looks_like_script(c"")
         assert script.looks_like_script(c"var x = 1")
         assert script.looks_like_script(c"var (")
+        assert script.looks_like_script(c"const x = 1")
+        assert script.looks_like_script(c"pub fn f() {")
+        assert script.looks_like_script(c"use \"lib.bx\"")
     }
 }
 
@@ -520,6 +523,56 @@ test "script var declarations are fresh on each loop iteration" {
     trust {
         fresh()
         val src: ref u8 = c"var total = 0\nfor x in [1, 2, 3] {\n    var doubled = x * 2\n    total += doubled\n}\nif total != 12 {\n    raise \"for var\"\n}\nvar n = 0\nwhile n < 3 {\n    var label = \"iteration\"\n    if label != \"iteration\" {\n        raise \"while var\"\n    }\n    n += 1\n}\nif n != 3 {\n    raise \"while count\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script modules expose public bindings and keep private state" {
+    trust {
+        fresh()
+        val dir: ref u8 = c"/tmp/blood-unit-script/modules"
+        assert u.mkdir_p(dir)
+        val lib_path: ref u8 = u.path_join(dir, c"lib.bx")
+        assert u.write_file(
+            lib_path,
+            c"pub const PI = 3.14\npub var counter = 1\nvar secret = 42\nfn hidden() {\n    return 9\n}\npub fn bump() {\n    counter += 1\n    return counter\n}\npub fn get_counter() {\n    return counter\n}\n"
+        )
+        val main_path: ref u8 = u.path_join(dir, c"main.bx")
+        assert u.write_file(
+            main_path,
+            c"use \"lib.bx\"\nif lib.PI != 3.14 {\n    raise \"pi\"\n}\nif lib.counter != 1 {\n    raise \"counter\"\n}\nlib.counter = 10\nif lib.get_counter() != 10 {\n    raise \"external write\"\n}\nif lib.bump() != 11 or lib.counter != 11 {\n    raise \"internal write\"\n}\nif lib.secret != null {\n    raise \"private var\"\n}\ntry {\n    lib.hidden()\n} catch err {\n    if \"unknown member\" not in err {\n        raise \"private fn\"\n    }\n}\ntry {\n    lib.PI = 0\n} catch err {\n    if \"constant\" not in err {\n        raise \"const\"\n    }\n}\n"
+        )
+        assert script.run_file(main_path) == 0
+    }
+}
+
+test "script modules resolve nested relative imports" {
+    trust {
+        fresh()
+        val dir: ref u8 = c"/tmp/blood-unit-script/nested_modules"
+        val sub: ref u8 = u.path_join(dir, c"sub")
+        assert u.mkdir_p(sub)
+        assert u.write_file(
+            u.path_join(sub, c"util.bx"),
+            c"pub fn answer() {\n    return 42\n}\n"
+        )
+        assert u.write_file(
+            u.path_join(sub, c"lib.bx"),
+            c"use \"util.bx\"\npub fn via() {\n    return util.answer()\n}\n"
+        )
+        val main_path: ref u8 = u.path_join(dir, c"main.bx")
+        assert u.write_file(
+            main_path,
+            c"use \"sub/lib.bx\"\nif lib.via() != 42 {\n    raise \"nested import\"\n}\n"
+        )
+        assert script.run_file(main_path) == 0
+    }
+}
+
+test "script const declarations reject reassignment" {
+    trust {
+        fresh()
+        val src: ref u8 = c"const PI = 3.14\nif PI != 3.14 {\n    raise \"const value\"\n}\nfor i in [1, 2] {\n    const LOCAL = i\n    if LOCAL != i {\n        raise \"loop const\"\n    }\n}\ntry {\n    PI = 3\n} catch err {\n    if \"constant\" not in err {\n        raise \"const write\"\n    }\n}\ntry {\n    PI += 1\n} catch err {\n    if \"constant\" not in err {\n        raise \"const compound\"\n    }\n}\n"
         assert run(src) == 0
     }
 }

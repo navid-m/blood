@@ -30,6 +30,8 @@ pub enum NodeKind = {
     ExprStmt
     Assign
     VarDecl
+    ConstDecl
+    Use
     If
     While
     For
@@ -98,6 +100,7 @@ pub type Node = {
     col: mut i64
     start: mut i64
     end: mut i64
+    flags: mut i64
 }
 
 pub type Lexer = {
@@ -647,6 +650,7 @@ fn node_new(kind: NodeKind, line: i64, col: i64) ref Node = trust {
     n.col = col
     n.start = 0
     n.end = 0
+    n.flags = 0
     return n
 }
 
@@ -835,6 +839,15 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
     if keyword(t, c"var") {
         return parse_var(p)
     }
+    if keyword(t, c"const") {
+        return parse_const(p)
+    }
+    if keyword(t, c"pub") {
+        return parse_pub(p)
+    }
+    if keyword(t, c"use") && (peek(p, 1).kind == TokenKind.Str || peek(p, 1).kind == TokenKind.RawStr) {
+        return parse_use(p)
+    }
     val command_call: ref Node = try_command_call(p)
     if command_call != none {
         return command_call
@@ -860,14 +873,14 @@ fn parse_defer(p: mut ref Parser) ref Node = trust {
     return n
 }
 
-fn parse_var_item(p: mut ref Parser) ref Node = trust {
+fn parse_binding_item(p: mut ref Parser, kind: NodeKind) ref Node = trust {
     val name: ref Token = cur(p)
     if name.kind != TokenKind.Ident {
         set_error_span(name.line, name.col, c"expected a variable name", token_span(name))
-        return node_new(NodeKind.VarDecl, name.line, name.col)
+        return node_new(kind, name.line, name.col)
     }
     advance(p)
-    val n: mut ref Node = node_new(NodeKind.VarDecl, name.line, name.col)
+    val n: mut ref Node = node_new(kind, name.line, name.col)
     node_set_name(n, name.text)
     if !expect_op(p, c"=") {
         return n
@@ -876,7 +889,7 @@ fn parse_var_item(p: mut ref Parser) ref Node = trust {
     return n
 }
 
-fn parse_var(p: mut ref Parser) ref Node = trust {
+fn parse_binding(p: mut ref Parser, kind: NodeKind) ref Node = trust {
     val t: ref Token = cur(p)
     advance(p)
     if cur(p).kind == TokenKind.Op && text_is(cur(p), c"(") {
@@ -903,7 +916,7 @@ fn parse_var(p: mut ref Parser) ref Node = trust {
                 advance(p)
                 continue
             }
-            val item: ref Node = parse_var_item(p)
+            val item: ref Node = parse_binding_item(p, kind)
             u.vec_pushp(block.kids, item as ref void)
             if g_error != none {
                 break
@@ -920,11 +933,82 @@ fn parse_var(p: mut ref Parser) ref Node = trust {
         }
         return block
     }
-    val item: ref Node = parse_var_item(p)
+    val item: ref Node = parse_binding_item(p, kind)
     if cur(p).kind == TokenKind.Newline {
         advance(p)
     }
     return item
+}
+
+fn parse_var(p: mut ref Parser) ref Node = trust {
+    return parse_binding(p, NodeKind.VarDecl)
+}
+
+fn parse_const(p: mut ref Parser) ref Node = trust {
+    return parse_binding(p, NodeKind.ConstDecl)
+}
+
+fn mark_public(n: mut ref Node) void = trust {
+    if n == none {
+        return
+    }
+    if n.kind == NodeKind.Block {
+        val i: mut i64 = 0
+        for {
+            if i >= n.kids.len {
+                break
+            }
+            val kid: mut ref Node = u.vec_p(n.kids, i) as ref Node
+            kid.flags = kid.flags | 1
+            i++
+        }
+        return
+    }
+    n.flags = n.flags | 1
+}
+
+fn parse_pub(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    advance(p)
+    if keyword(cur(p), c"var") {
+        val n: mut ref Node = parse_var(p)
+        mark_public(n)
+        return n
+    }
+    if keyword(cur(p), c"const") {
+        val n: mut ref Node = parse_const(p)
+        mark_public(n)
+        return n
+    }
+    if keyword(cur(p), c"fn") {
+        val n: mut ref Node = parse_fn(p)
+        mark_public(n)
+        return n
+    }
+    set_error_span(
+        t.line,
+        t.col,
+        c"expected 'var', 'const' or 'fn' after 'pub'",
+        token_span(t)
+    )
+    return node_new(NodeKind.Pass, t.line, t.col)
+}
+
+fn parse_use(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    advance(p)
+    val path: ref Token = cur(p)
+    if path.kind != TokenKind.Str && path.kind != TokenKind.RawStr {
+        set_error_span(path.line, path.col, c"expected a module path", token_span(path))
+        return node_new(NodeKind.Pass, t.line, t.col)
+    }
+    val n: mut ref Node = node_new(NodeKind.Use, t.line, t.col)
+    n.s = u.s_dup(path.text)
+    advance(p)
+    if cur(p).kind == TokenKind.Newline {
+        advance(p)
+    }
+    return n
 }
 
 fn parse_export(p: mut ref Parser) ref Node = trust {
@@ -1246,7 +1330,7 @@ fn reserved_unparen(t: ref Token) bool = trust {
     ) || keyword(t, c"say") || keyword(t, c"defer") || keyword(t, c"export") || keyword(
         t,
         c"var"
-    )
+    ) || keyword(t, c"const") || keyword(t, c"pub") || keyword(t, c"use")
 }
 
 fn starts_unparen_arg(t: ref Token) bool = trust {

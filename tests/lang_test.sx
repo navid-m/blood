@@ -407,3 +407,32 @@ test "parser builds var declarations and bulk var blocks" {
         assert u.s_eq(kid(block, 1).s, c"b")
     }
 }
+
+test "parser builds use, pub and const declarations" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"use \"lib.bx\"\npub const PI = 3.14\npub var n = 1\npub fn f() { pass }\nconst X = 2\n")
+        assert lang.last_error() == none
+        assert prog.kids.len == 5
+
+        val use_node: ref lang.Node = kid(prog, 0)
+        assert use_node.kind == lang.NodeKind.Use
+        assert u.s_eq(use_node.s, c"lib.bx")
+
+        val pi: ref lang.Node = kid(prog, 1)
+        assert pi.kind == lang.NodeKind.ConstDecl
+        assert u.s_eq(pi.s, c"PI")
+        assert pi.flags == 1
+
+        val n: ref lang.Node = kid(prog, 2)
+        assert n.kind == lang.NodeKind.VarDecl
+        assert n.flags == 1
+
+        val f: ref lang.Node = kid(prog, 3)
+        assert f.kind == lang.NodeKind.FnDef
+        assert f.flags == 1
+
+        val x: ref lang.Node = kid(prog, 4)
+        assert x.kind == lang.NodeKind.ConstDecl
+        assert x.flags == 0
+    }
+}

@@ -19,6 +19,7 @@ pub type Value = {
 pub type Env = {
     vars: mut ref u.Map
     parent: mut ref Env
+    ns: mut ref u.Map
 }
 
 pub type Func = {
@@ -50,6 +51,8 @@ val g_depth: mut i64 = 0
 val g_run_depth: mut i64 = 0
 val g_args: mut ref u.Vec = none
 val g_script_path: mut ref u8 = none
+val g_error_label: mut ref u8 = none
+val g_modules: mut ref u.Map = none
 val g_defers: mut ref u.Vec = none
 val g_temp_seq: mut i64 = 0
 val g_workers: mut i64 = 1
@@ -145,6 +148,30 @@ fn v_namespace(m: ref u.Map) ref Value = trust {
     val v: mut ref Value = v_new(8)
     v.p = m
     return v
+}
+
+fn v_cell(inner: ref Value, is_const: bool) ref Value = trust {
+    val v: mut ref Value = v_new(9)
+    if is_const {
+        v.i = 1
+    }
+    v.p = inner
+    return v
+}
+
+fn is_cell(v: ref Value) bool = trust {
+    return v != none && v.tag == 9
+}
+
+fn cell_inner(v: ref Value) ref Value = trust {
+    if is_cell(v) {
+        return v.p as ref Value
+    }
+    return v
+}
+
+fn cell_is_const(v: ref Value) bool = trust {
+    return is_cell(v) && v.i != 0
 }
 
 fn is_nil(v: ref Value) bool = trust {
@@ -366,6 +393,7 @@ fn env_new_mode(parent: ref Env, perm: bool) ref Env = trust {
         e.vars = u.map_new()
     }
     e.parent = parent
+    e.ns = none
     return e
 }
 
@@ -389,14 +417,14 @@ fn env_lookup(e: ref Env, name: ref u8) ref Value = trust {
         }
         val raw: i64 = u.map_get(chain.vars, name)
         if raw != 0 {
-            return @bitcast(raw, ref Value)
+            return cell_inner(@bitcast(raw, ref Value))
         }
         chain = chain.parent
     }
     if g_prelude != none {
         val raw: i64 = u.map_get(g_prelude, name)
         if raw != 0 {
-            return @bitcast(raw, ref Value)
+            return cell_inner(@bitcast(raw, ref Value))
         }
     }
     return none
@@ -410,14 +438,14 @@ fn env_lookup_h(e: ref Env, name: ref u8, hash: i64) ref Value = trust {
         }
         val raw: i64 = u.map_get_h(chain.vars, name, hash)
         if raw != 0 {
-            return @bitcast(raw, ref Value)
+            return cell_inner(@bitcast(raw, ref Value))
         }
         chain = chain.parent
     }
     if g_prelude != none {
         val raw: i64 = u.map_get(g_prelude, name)
         if raw != 0 {
-            return @bitcast(raw, ref Value)
+            return cell_inner(@bitcast(raw, ref Value))
         }
     }
     return none
@@ -468,12 +496,35 @@ fn env_assign(e: mut ref Env, name: ref u8, v: ref Value) void = trust {
             break
         }
         if u.map_has(chain.vars, name) {
+            val raw: i64 = u.map_get(chain.vars, name)
+            val existing: mut ref Value = @bitcast(raw, ref Value)
+            if is_cell(existing) {
+                if existing.i == 0 {
+                    existing.p = v
+                }
+                return
+            }
             u.map_put_ref(chain.vars, name, @bitcast(v, i64))
             return
         }
         chain = chain.parent
     }
     env_define(e, name, v)
+}
+
+fn env_is_const(e: ref Env, name: ref u8) bool = trust {
+    val chain: mut ref Env = e
+    for {
+        if chain == none {
+            break
+        }
+        val raw: i64 = u.map_get(chain.vars, name)
+        if raw != 0 {
+            return cell_is_const(@bitcast(raw, ref Value))
+        }
+        chain = chain.parent
+    }
+    return false
 }
 
 /// Return a node's name. Parser-created variable nodes store an interned string.
@@ -1006,14 +1057,14 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
             val m: mut ref u.Map = obj.p as ref u.Map
             val raw: i64 = u.map_get(m, n.s)
             if raw != 0 {
-                return @bitcast(raw, ref Value)
+                return cell_inner(@bitcast(raw, ref Value))
             }
         }
         if obj != none && obj.tag == 8 {
             val m: mut ref u.Map = obj.p as ref u.Map
             val raw: i64 = u.map_get(m, n.s)
             if raw != 0 {
-                return @bitcast(raw, ref Value)
+                return cell_inner(@bitcast(raw, ref Value))
             }
         }
         return v_nil()
@@ -2489,12 +2540,12 @@ fn call_namespace(
     val m: ref u.Map = obj.p as ref u.Map
     val raw: i64 = u.map_get(m, name)
     if raw == 0 {
-        set_error(u.s_cat3(c"unknown std function '", name, c"'"), n.line, n.col)
+        set_error(u.s_cat3(c"unknown member '", name, c"'"), n.line, n.col)
         return v_nil()
     }
-    val fnval: ref Value = @bitcast(raw, ref Value)
+    val fnval: ref Value = cell_inner(@bitcast(raw, ref Value))
     if fnval == none || fnval.tag != 7 {
-        set_error(u.s_cat3(c"'std.", name, c"' is not callable"), n.line, n.col)
+        set_error(u.s_cat3(c"'", name, c"' is not callable"), n.line, n.col)
         return v_nil()
     }
     return call_func(fnval.p as ref Func, args, n)
@@ -2907,6 +2958,14 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
             )
             return
         }
+        if env_is_const(env, tname) {
+            set_error(
+                u.s_cat3(c"cannot assign to constant '", tname, c"'"),
+                target.line,
+                target.col
+            )
+            return
+        }
         val final: mut ref Value = value
         if op > 1 {
             final = bin_op(op - 2, cur, value)
@@ -2929,7 +2988,13 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
                 val m0: ref u.Map = obj.p as ref u.Map
                 val raw: i64 = u.map_get(m0, target.s)
                 if raw != 0 {
-                    cur = @bitcast(raw, ref Value)
+                    cur = cell_inner(@bitcast(raw, ref Value))
+                }
+            } elif obj != none && obj.tag == 8 {
+                val m0: ref u.Map = obj.p as ref u.Map
+                val raw: i64 = u.map_get(m0, target.s)
+                if raw != 0 {
+                    cur = cell_inner(@bitcast(raw, ref Value))
                 }
             }
             final = bin_op(op - 2, cur, value)
@@ -2937,6 +3002,33 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
         if obj != none && obj.tag == 6 {
             val m: mut ref u.Map = obj.p as ref u.Map
             u.map_put(m, target.s, @bitcast(final, i64))
+            return
+        }
+        if obj != none && obj.tag == 8 {
+            val m: mut ref u.Map = obj.p as ref u.Map
+            val raw: i64 = u.map_get(m, target.s)
+            if raw == 0 {
+                set_error(
+                    u.s_cat3(c"unknown module member '", target.s, c"'"),
+                    target.line,
+                    target.col
+                )
+                return
+            }
+            val cell: mut ref Value = @bitcast(raw, ref Value)
+            if cell_is_const(cell) {
+                set_error(
+                    u.s_cat3(c"cannot assign to constant '", target.s, c"'"),
+                    target.line,
+                    target.col
+                )
+                return
+            }
+            if is_cell(cell) {
+                cell.p = final
+            } else {
+                u.map_put(m, target.s, @bitcast(final, i64))
+            }
             return
         }
         set_error(c"value does not support attribute assignment", target.line, target.col)
@@ -3570,6 +3662,102 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
     return v_list(out)
 }
 
+fn module_path(path: ref u8) ref u8 = trust {
+    if u.path_is_abs(path) {
+        return u.absolute_path(path)
+    }
+    val base: mut ref u8 = c"."
+    if g_script_path != none {
+        base = u.path_dir(g_script_path)
+    }
+    return u.absolute_path(u.path_join(base, path))
+}
+
+fn module_name_of(path: ref u8) ref u8 = trust {
+    val base: ref u8 = u.path_base(path)
+    val n: i64 = u.s_len(base)
+    val end: mut i64 = n
+    val i: mut i64 = n - 1
+    for {
+        if i <= 0 {
+            break
+        }
+        if @load8(@ptradd(base, i)) == 46 {
+            end = i
+            break
+        }
+        i--
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val j: mut i64 = 0
+    for {
+        if j >= end {
+            break
+        }
+        val c: u8 = @load8(@ptradd(base, j))
+        if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95 {
+            u.buf_ch(b, c)
+        } else {
+            u.buf_ch(b, 95)
+        }
+        j++
+    }
+    val out: ref u8 = u.buf_take(b)
+    if u.s_len(out) == 0 {
+        return u.s_dup(c"module")
+    }
+    return out
+}
+
+fn load_module(path: ref u8, n: ref lang.Node) ref Value = trust {
+    val full: ref u8 = module_path(path)
+    val cached: i64 = u.map_get(g_modules, full)
+    if cached != 0 {
+        return @bitcast(cached, ref Value)
+    }
+    val src: ref u8 = u.read_file(full)
+    if src == none {
+        set_error(u.s_cat3(c"cannot read module '", path, c"'"), n.line, n.col)
+        return none
+    }
+    val program: ref lang.Node = lang.parse(src)
+    if lang.last_error() != none {
+        g_error_source = src
+        g_error_label = full
+        set_error(lang.last_error(), lang.last_error_line(), lang.last_error_col())
+        return none
+    }
+    val nsmap: mut ref u.Map = u.map_new()
+    val nsval: ref Value = v_namespace(nsmap)
+    u.map_put(g_modules, full, @bitcast(nsval, i64))
+    val menv: mut ref Env = new_top_env(false)
+    menv.ns = nsmap
+    env_define(menv, c"__file__", v_str(path))
+    val prev_path: ref u8 = g_script_path
+    val prev_src: ref u8 = g_error_source
+    val prev_label: ref u8 = g_error_label
+    val prev_interactive: i64 = g_interactive
+    val saved_return: ref Value = g_return
+    g_script_path = full
+    g_error_source = src
+    g_error_label = full
+    g_interactive = 0
+    g_flow = 0
+    g_return = none
+    exec_stmt(program, menv, false)
+    if g_flow == 1 || g_flow == 2 || g_flow == 3 {
+        g_flow = 0
+    }
+    g_return = saved_return
+    g_script_path = prev_path
+    g_interactive = prev_interactive
+    if g_flow == 0 {
+        g_error_source = prev_src
+        g_error_label = prev_label
+    }
+    return nsval
+}
+
 fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
     if n == none || g_flow != 0 {
         return
@@ -3620,7 +3808,7 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         }
         return
     }
-    if n.kind == lang.NodeKind.VarDecl {
+    if n.kind == lang.NodeKind.VarDecl || n.kind == lang.NodeKind.ConstDecl {
         val dname: ref u8 = intern_node_name(n)
         val dh: i64 = node_name_hash(n, dname)
         if u.map_has_h(env.vars, dname, dh) {
@@ -3642,7 +3830,26 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         if g_flow != 0 {
             return
         }
+        val is_const: bool = n.kind == lang.NodeKind.ConstDecl
+        val exported: bool = n.flags != 0 && env.ns != none
+        if is_const || exported {
+            val cell: ref Value = v_cell(value, is_const)
+            env_define_interned(env, dname, cell)
+            if exported {
+                u.map_put(env.ns, dname, @bitcast(cell, i64))
+            }
+            return
+        }
         env_define_interned(env, dname, value)
+        return
+    }
+    if n.kind == lang.NodeKind.Use {
+        val ns: ref Value = load_module(n.s, n)
+        if g_flow != 0 || ns == none {
+            return
+        }
+        val mod_name: ref u8 = module_name_of(n.s)
+        env_define_interned(env, u.s_intern(mod_name), ns)
         return
     }
     if n.kind == lang.NodeKind.Assign {
@@ -3858,6 +4065,9 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         f.body = u.vec_p(n.kids, 0) as ref lang.Node
         f.native = 0
         f.closure = none
+        if env.ns != none {
+            f.closure = env
+        }
         f.defaults = n.defaults
         f.has_defer = 0
         if node_has_defer(f.body) {
@@ -3865,6 +4075,13 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         }
         if is_prelude(fname) {
             warn_shadow(fname, n.line, n.col)
+        }
+        val exported: bool = n.flags != 0 && env.ns != none
+        if exported {
+            val cell: ref Value = v_cell(v_func(f), true)
+            env_define_interned(env, fname, cell)
+            u.map_put(env.ns, fname, @bitcast(cell, i64))
+            return
         }
         env_define_interned(env, fname, v_func(f))
         return
@@ -3996,7 +4213,7 @@ fn node_has_defer(n: ref lang.Node) bool = trust {
 fn collect_var_decls(n: ref lang.Node, out: mut ref u.Vec) void = trust {    if n == none {
         return
     }
-    if n.kind == lang.NodeKind.VarDecl && n.s != none {
+    if (n.kind == lang.NodeKind.VarDecl || n.kind == lang.NodeKind.ConstDecl) && n.s != none {
         u.vec_pushp(out, u.s_intern(n.s) as ref void)
     }
     val i: mut i64 = 0
@@ -4079,9 +4296,11 @@ pub fn script_init() void = trust {
     g_depth = 0
     g_interactive = 1
     g_script_path = none
+    g_error_label = none
     g_workers = u.cpu_count()
     g_args = u.vec_new_perm()
     g_prelude = u.map_new_perm()
+    g_modules = u.map_new_perm()
     val stdm: mut ref u.Map = u.map_new_perm()
     when darwin {
         u.map_put(stdm, c"os", @bitcast(v_str(c"darwin"), i64))
@@ -4221,6 +4440,8 @@ fn queue_value_children(v: mut ref Value, jobs: mut ref u.Vec) void = trust {
         enqueue(jobs, v.p, 4, @ptradd(v as ref void, 16))
     } elif v.tag == 8 {
         enqueue(jobs, v.p, 3, @ptradd(v as ref void, 16))
+    } elif v.tag == 9 {
+        enqueue(jobs, v.p, 1, @ptradd(v as ref void, 16))
     }
 }
 
@@ -4277,6 +4498,7 @@ fn queue_node_children(n: mut ref lang.Node, jobs: mut ref u.Vec) void = trust {
 fn queue_env_children(e: mut ref Env, jobs: mut ref u.Vec) void = trust {
     enqueue(jobs, e.vars as ref void, 3, @ptradd(e as ref void, 0))
     enqueue(jobs, e.parent as ref void, 8, @ptradd(e as ref void, 8))
+    enqueue(jobs, e.ns as ref void, 3, @ptradd(e as ref void, 16))
 }
 
 fn store_slot(slot: ref void, p: ref void) void = trust {
@@ -4382,6 +4604,7 @@ fn promote_all(jobs: mut ref u.Vec, memo: mut ref u.Vec) void = trust {
             nn.defaults = on.defaults
             nn.line = on.line
             nn.col = on.col
+            nn.flags = on.flags
             memo_put(memo, old, nn as ref void)
             store_slot(slot, nn as ref void)
             queue_node_children(nn, jobs)
@@ -4413,6 +4636,7 @@ fn promote_all(jobs: mut ref u.Vec, memo: mut ref u.Vec) void = trust {
         val ne: mut ref Env = u.xalloc_perm(@sizeof(Env) as i64) as ref Env
         ne.vars = oe.vars
         ne.parent = oe.parent
+        ne.ns = oe.ns
         memo_put(memo, old, ne as ref void)
         store_slot(slot, ne as ref void)
         queue_env_children(ne, jobs)
@@ -4428,10 +4652,12 @@ fn promote_roots() void = trust {
     val old_args: ref void = g_args as ref void
     val old_ret: ref void = g_return as ref void
     val old_err: ref void = g_error as ref void
+    val old_modules: ref void = g_modules as ref void
     enqueue(jobs, old_env, 8, none)
     enqueue(jobs, old_args, 2, none)
     enqueue(jobs, old_ret, 1, none)
     enqueue(jobs, old_err, 0, none)
+    enqueue(jobs, old_modules, 3, none)
     promote_all(jobs, memo)
     u.gc_finish()
     if old_env != none {
@@ -4451,6 +4677,12 @@ fn promote_roots() void = trust {
     }
     if old_err != none {
         g_error = memo_get(memo, @bitcast(old_err, i64)) as ref u8
+    }
+    if old_modules != none {
+        val nm: ref u.Map = memo_get(memo, @bitcast(old_modules, i64)) as ref u.Map
+        if nm != none {
+            g_modules = nm
+        }
     }
 }
 
@@ -4658,7 +4890,9 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
     u.scratch_begin()
     g_run_depth++
     val previous_source: ref u8 = g_error_source
+    val previous_label: ref u8 = g_error_label
     g_error_source = src
+    g_error_label = label
     u.script_exit_code = -1
     g_error = none
     g_flow = 0
@@ -4677,6 +4911,7 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
             lang.last_error_len()
         )
         g_error_source = previous_source
+        g_error_label = previous_label
         g_run_depth--
         u.scratch_end()
         return 2
@@ -4692,6 +4927,7 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
         g_flow = 0
         val code: i32 = u.script_exit_code as i32
         g_error_source = previous_source
+        g_error_label = previous_label
         g_run_depth--
         u.scratch_end()
         return code
@@ -4705,20 +4941,23 @@ pub fn run_text(src: ref u8, interactive: bool, label: ref u8) i32 = trust {
             g_error = none
             g_flow = 0
             g_error_source = previous_source
+            g_error_label = previous_label
             g_run_depth--
             u.scratch_end()
             return 130
         }
-        report_error(label, g_err_line, g_err_col, msg, g_err_len)
+        report_error(g_error_label, g_err_line, g_err_col, msg, g_err_len)
         g_error = none
         g_flow = 0
         g_error_source = previous_source
+        g_error_label = previous_label
         g_run_depth--
         u.scratch_end()
         return 1
     }
     g_flow = 0
     g_error_source = previous_source
+    g_error_label = previous_label
     g_run_depth--
     u.scratch_end()
     return 0
@@ -4867,6 +5106,9 @@ pub fn looks_like_script(line: ref u8) bool = trust {
         t,
         c"except"
     ) || u.s_starts(t, c"raise ") || u.s_starts(t, c"throw ") || u.s_starts(
+        t,
+        c"const "
+    ) || u.s_starts(t, c"pub ") || u.s_starts(t, c"use ") || u.s_starts(
         t,
         c"var "
     ) || u.s_starts(t, c"var\t") || u.s_eq(t, c"var") {

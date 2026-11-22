@@ -207,7 +207,10 @@ fn excluded_call(name: ref u8) bool = trust {
     ) || u.s_eq(name, c"not") || u.s_eq(name, c"and") || u.s_eq(name, c"or") || u.s_eq(
         name,
         c"in"
-    ) || u.s_eq(name, c"defer") || u.s_eq(name, c"var")
+    ) || u.s_eq(name, c"defer") || u.s_eq(name, c"var") || u.s_eq(name, c"const") || u.s_eq(
+        name,
+        c"pub"
+    ) || u.s_eq(name, c"use")
 }
 
 fn previous_nonspace(s: ref u8, at: i64) u8 = trust {
