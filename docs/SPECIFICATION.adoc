@@ -1906,6 +1906,7 @@ Method calls use the attribute syntax `value.name(arguments)`.
 |`sort()` |0 |Sort in place by string representation.
 |`sort_by(fn)` |1 |Sort in place by the key returned by `fn(x)`. Numeric keys compare numerically. Returns the list.
 |`reverse()` |0 |Reverse the list in place. Returns the list.
+|`unique()` |0 |New list with duplicate elements removed, preserving first-occurrence order. Lists and dictionaries compare by contents.
 |`dump()` |0 |Pretty-printed JSON representation.
 |`dump_compact()` |0 |Compact JSON representation.
 |`map(fn)` |1 |New list containing `fn(x)` for each element `x`.

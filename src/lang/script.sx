@@ -3192,6 +3192,9 @@ fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) 
             reverse_values(vec)
             return obj
         }
+        if u.s_eq(name, c"unique") {
+            return v_list(unique_values(vec))
+        }
         if u.s_eq(name, c"dump") {
             return v_str_own(json_dump(obj, true))
         }
@@ -3576,6 +3579,86 @@ fn reverse_values(vec: mut ref u.Vec) void = trust {
         i++
         j--
     }
+}
+
+fn unique_equal(a: ref Value, b: ref Value) bool = trust {
+    if a == none || b == none {
+        return values_equal(a, b)
+    }
+    if a.tag == 5 && b.tag == 5 {
+        val va: ref u.Vec = a.p as ref u.Vec
+        val vb: ref u.Vec = b.p as ref u.Vec
+        if va.len != vb.len {
+            return false
+        }
+        val i: mut i64 = 0
+        for {
+            if i >= va.len {
+                break
+            }
+            if !unique_equal(u.vec_p(va, i) as ref Value, u.vec_p(vb, i) as ref Value) {
+                return false
+            }
+            i++
+        }
+        return true
+    }
+    if a.tag == 6 && b.tag == 6 {
+        val ma: ref u.Map = a.p as ref u.Map
+        val mb: ref u.Map = b.p as ref u.Map
+        if ma.len != mb.len {
+            return false
+        }
+        val i: mut i64 = 0
+        for {
+            if i >= ma.cap {
+                break
+            }
+            if u.map_used_at(ma, i) {
+                val key: ref u8 = u.map_key_at(ma, i)
+                val raw: i64 = u.map_get(mb, key)
+                if raw == 0 {
+                    return false
+                }
+                val av: ref Value = @bitcast(u.map_val_at(ma, i), ref Value)
+                val bv: ref Value = @bitcast(raw, ref Value)
+                if !unique_equal(av, bv) {
+                    return false
+                }
+            }
+            i++
+        }
+        return true
+    }
+    return values_equal(a, b)
+}
+
+fn unique_values(vec: ref u.Vec) ref u.Vec = trust {
+    val out: mut ref u.Vec = list_new()
+    val i: mut i64 = 0
+    for {
+        if i >= vec.len {
+            break
+        }
+        val item: ref Value = u.vec_p(vec, i) as ref Value
+        val duplicate: mut bool = false
+        val j: mut i64 = 0
+        for {
+            if j >= out.len {
+                break
+            }
+            if unique_equal(item, u.vec_p(out, j) as ref Value) {
+                duplicate = true
+                break
+            }
+            j++
+        }
+        if !duplicate {
+            u.vec_pushp(out, item as ref void)
+        }
+        i++
+    }
+    return out
 }
 
 fn v_str_split(s: ref u8, sep: ref u8) ref Value = trust {

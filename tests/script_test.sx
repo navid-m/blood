@@ -609,6 +609,14 @@ test "script lists sort by key and reverse" {
     }
 }
 
+test "script lists remove duplicates with unique" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var xs = [1, 2, 1, 3, 2]\nif xs.unique().join(\",\") != \"1,2,3\" {\n    raise \"unique scalars\"\n}\nif xs.len() != 5 {\n    raise \"unique original\"\n}\nvar rows = [{\"file\": \"a\"}, {\"file\": \"b\"}, {\"file\": \"a\"}]\nvar unique_rows = rows.unique()\nif unique_rows.len() != 2 or unique_rows[0].file != \"a\" or unique_rows[1].file != \"b\" {\n    raise \"unique dicts\"\n}\nvar nested = [[1, 2], [1, 2], [2, 1]]\nif nested.unique().len() != 2 {\n    raise \"unique nested\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
 test "script paths report modification times" {
     trust {
         fresh()
