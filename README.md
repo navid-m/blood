@@ -15,14 +15,15 @@ for x in ["hello", "world"] {
 And another example:
 
 ```h
-say(std.glob("./src/lang/*.sx").map(|f| -> {"file": f.basename(), "modified": f.modified()}).dump().jtable())
+cd("./src/lang")
+say(std.glob("*.sx").map(|f| -> {"file": f.basename(), "mod": f.modified()}).dump().jtable())
 ```
 
 Output:
 
 ```
 ┌──────────────┬────────────┐
-│ file         │ modified   │
+│ file         │ mod        │
 ├──────────────┼────────────┤
 │ format.sx    │ 1795343823 │
 │ lang.sx      │ 1795346879 │
