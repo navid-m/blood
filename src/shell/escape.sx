@@ -7,6 +7,7 @@ val shell   = use("shell.sx")
 val script  = use("../lang/script.sx")
 val prompt  = use("prompt.sx")
 val rt      = use("std/runtime")
+val env     = use("std/env")
 
 val brand = @embed("../assets/brand.txt")
 val brand_len = @embedlen("../assets/brand.txt")
@@ -613,6 +614,13 @@ pub fn handle(line: ref u8, c: mut ref cfgmod.Config, h: mut ref histmod.History
     }
     if u.s_eq(rest, c"blood") {
         show_brand()
+        return 0
+    }
+    if u.s_eq(rest, c"version") || u.s_eq(rest, c"v") {
+        u.stdout_s(env.get(c"SPECTRE_MOD_VERSION"))
+        u.stdout_s(c" (")
+        u.stdout_s(env.get(c"GIT_HASH"))
+        u.stdout_ln(c")")
         return 0
     }
     if u.s_eq(rest, c"privacy") {

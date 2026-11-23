@@ -1,5 +1,5 @@
 #!/bin/sh
-./build.sh
+./fw/build.sh
 
 case "$(uname -s)" in
 Linux)
