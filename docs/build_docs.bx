@@ -1,6 +1,6 @@
 #!/usr/bin/env blood
 
-cd("docs")
+cd("blood-docs")
 
 var ex = 0
 
