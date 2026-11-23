@@ -1,3 +1,7 @@
+:toc: left
+:toclevels: 3
+:sectnums:
+
 = Blood Shell Specification
 
 This document specifies the Blood shell as implemented by version 0.1.0.
@@ -12,7 +16,7 @@ toolchain version recorded in `sx.mod`. The current build targets Linux with a
 POSIX-style C library and uses dynamic linking. Other operating systems are not
 supported by this build.
 
-== Conformance and terminology
+== Terminology
 
 The words *shall*, *must*, *should*, and *may* are used in their conventional
 normative sense. A *shell command* is a command entered in the interactive

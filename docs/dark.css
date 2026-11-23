@@ -1,0 +1,902 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+@import url("https://cdn.jsdelivr.net/gh/asciidoctor/asciidoctor@2.0/data/stylesheets/asciidoctor-default.css");
+
+/* ==========================================================================
+   Dark theme: near-black background, white text, subtle dark red accents
+   ========================================================================== */
+
+:root {
+  --bg: #0d0d0f;
+  --surface: #151518;
+  --surface-2: #1b1b20;
+  --border: #2a2a30;
+  --text: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --accent: #9b2733; /* borders, rules, markers */
+  --accent-dim: #4a1a20; /* backgrounds, tints */
+  --accent-link: #e07a82; /* readable on dark */
+  --accent-link-hover: #f4a3a9;
+  color-scheme: dark;
+}
+
+/* ---------- Base ---------- */
+
+html {
+  background: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, sans-serif;
+  line-height: 1.65;
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+#header,
+#content,
+#footnotes,
+#footer {
+  background: transparent;
+  color: var(--text);
+}
+
+#header > h1:first-child {
+  color: var(--text);
+  font-weight: 700;
+}
+
+#header .details,
+#header .details span,
+#header .details br + span::before {
+  color: var(--text-muted);
+}
+
+#header > h1:first-child + #toc,
+#header > .details {
+  border-bottom-color: var(--border);
+}
+
+/* ---------- Text ---------- */
+
+p,
+li,
+dd,
+dt,
+td,
+th,
+td.content,
+.paragraph,
+.ulist,
+.olist,
+.dlist,
+.hdlist,
+.admonitionblock td.content,
+.tableblock,
+p.tableblock,
+td.tableblock > .content,
+.verseblock pre,
+.exampleblock > .content,
+.sidebarblock > .content {
+  color: var(--text);
+}
+
+.paragraph.lead > p,
+#preamble > .sectionbody > [class="paragraph"]:first-of-type p {
+  color: var(--text);
+  font-size: 1.1em;
+}
+
+strong,
+b,
+dt,
+td.hdlist1 {
+  color: #fff;
+}
+
+em,
+i {
+  color: var(--text);
+}
+
+small,
+.attribution,
+.footnote,
+#footnotes,
+#footer-text {
+  color: var(--text-muted);
+}
+
+mark {
+  background: var(--accent-dim);
+  color: #fff;
+  padding: 0 0.2em;
+  border-radius: 2px;
+}
+
+/* ---------- Headings ---------- */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+#toctitle,
+.title,
+.subheading,
+.discrete {
+  color: #fff;
+  font-family: Inter, system-ui, sans-serif;
+  font-weight: 600;
+}
+
+#toctitle {
+  display: none;
+}
+
+h2 {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+}
+
+h2::before,
+.sect1 > h2::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 0.9em;
+  margin-right: 0.5em;
+  background: var(--accent);
+  border-radius: 2px;
+  vertical-align: -0.05em;
+}
+
+.sect1 + .sect1 {
+  border-top-color: var(--border);
+}
+
+.title,
+.admonitionblock td.icon .title {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.title {
+  font-style: normal;
+  font-size: 0.95em;
+}
+
+/* ---------- Links ---------- */
+
+a,
+a:visited {
+  color: var(--accent-link);
+  text-decoration: none;
+}
+
+a:hover,
+a:focus {
+  color: var(--accent-link-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+a:active {
+  color: #fff;
+}
+
+a.anchor::before,
+a.link::before {
+  color: var(--accent);
+}
+
+/* ---------- Sidebar / TOC ---------- */
+
+#toc,
+#toc.toc2,
+#toc.toc,
+.toc2 #toc {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+#toc.toc2 {
+  border-right: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+#toctitle {
+  color: #fff;
+  font-size: 1.05em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#toc ul,
+#toc li,
+#toc ul li,
+#toc.toc2 ul {
+  color: var(--text);
+  list-style: none;
+}
+
+#toc a,
+#toc a:visited,
+#toc.toc2 a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+#toc a:hover,
+#toc a:focus,
+#toc.toc2 a:hover {
+  color: #fff;
+  text-decoration: none;
+}
+
+#toc.toc2 li > a:hover {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+#toc a:active,
+#toc a.active,
+#toc li.active > a {
+  color: #fff;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* ---------- Code ---------- */
+
+pre,
+code,
+kbd,
+tt {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* inline code */
+:not(pre):not([class^="L"]) > code {
+  background: var(--surface-2);
+  color: #f1c5c8;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+  font-size: 0.88em;
+}
+
+/* blocks */
+.listingblock pre:not(.highlight),
+.literalblock pre,
+pre.highlight,
+.listingblock > .content > pre {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: none;
+  font-size: 0.88em;
+}
+
+pre code,
+pre.highlight > code,
+.listingblock pre code {
+  background: transparent;
+  color: inherit;
+  border: 0;
+  padding: 0;
+}
+
+.listingblock > .content,
+.literalblock > .content {
+  background: transparent;
+}
+
+.listingblock:hover code[data-lang]::before {
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+code[data-lang]::before {
+  color: var(--text-muted);
+}
+
+/* keyboard / menu */
+kbd {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.keyseq,
+.menuseq,
+.menuref,
+.menu {
+  color: var(--text);
+}
+
+.menuseq b:not(.caret) {
+  color: #fff;
+}
+
+/* ---------- Syntax highlighting (highlight.js / Rouge / Pygments) ---------- */
+
+.hljs {
+  background: transparent !important;
+  color: var(--text) !important;
+  padding: 0 !important;
+}
+
+.hljs-comment,
+.hljs-quote,
+.highlight .c,
+.highlight .c1,
+.highlight .cm,
+.highlight .cs {
+  color: #71717a;
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.highlight .k,
+.highlight .kd,
+.highlight .kn,
+.highlight .kr,
+.highlight .kt {
+  color: #e07a82;
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-template-variable,
+.highlight .s,
+.highlight .s1,
+.highlight .s2,
+.highlight .sb {
+  color: #e8b4a0;
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet,
+.highlight .m,
+.highlight .mi,
+.highlight .mf,
+.highlight .kc {
+  color: #d4a5ff;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title,
+.highlight .nf,
+.highlight .nc,
+.highlight .nn {
+  color: #9ecbff;
+}
+
+.hljs-variable,
+.hljs-name,
+.hljs-tag,
+.highlight .nv,
+.highlight .na,
+.highlight .nt {
+  color: #f4f4f5;
+}
+
+.hljs-meta,
+.hljs-type,
+.highlight .o,
+.highlight .p,
+.highlight .cp {
+  color: #a1a1aa;
+}
+
+/* ---------- Blocks ---------- */
+
+.exampleblock > .content {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.sidebarblock {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+}
+
+.sidebarblock > .content > .title {
+  color: #fff;
+}
+
+.quoteblock,
+.verseblock {
+  border-left: 3px solid var(--accent);
+  background: transparent;
+  color: var(--text);
+}
+
+.quoteblock blockquote,
+.quoteblock blockquote p,
+.quoteblock p,
+.verseblock pre {
+  color: var(--text);
+}
+
+.quoteblock .attribution,
+.verseblock .attribution {
+  color: var(--text-muted);
+}
+
+.quoteblock .attribution cite,
+.verseblock .attribution cite {
+  color: var(--text-muted);
+}
+
+blockquote {
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* ---------- Admonitions ---------- */
+
+.admonitionblock > table {
+  border: 0;
+  background: transparent;
+}
+
+.admonitionblock td.icon {
+  color: var(--text-muted);
+}
+
+.admonitionblock td.icon .title {
+  color: var(--text);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  font-size: 0.8em;
+}
+
+.admonitionblock > table td.content {
+  border-left: 1px solid var(--border);
+  color: var(--text);
+}
+
+.admonitionblock td.icon .icon-note::before {
+  color: #7aa7e0;
+}
+.admonitionblock td.icon .icon-tip::before {
+  color: #7fcf9b;
+}
+.admonitionblock td.icon .icon-warning::before {
+  color: #e0b46a;
+}
+.admonitionblock td.icon .icon-caution::before {
+  color: #e0875a;
+}
+.admonitionblock td.icon .icon-important::before {
+  color: var(--accent-link);
+}
+
+.admonitionblock.important > table td.content {
+  border-left: 3px solid var(--accent);
+}
+
+/* ---------- Tables ---------- */
+
+table.tableblock,
+th.tableblock,
+td.tableblock {
+  border-color: var(--border);
+}
+
+table.tableblock {
+  background: transparent;
+  color: var(--text);
+}
+
+table.tableblock > thead > tr > th,
+table.tableblock > tfoot > tr > th,
+table.tableblock thead th,
+table.tableblock tfoot th,
+table.tableblock > thead th {
+  background: var(--surface-2);
+  color: #fff;
+  font-weight: 600;
+  border-bottom: 2px solid var(--accent);
+}
+
+table.tableblock > tbody > tr > td,
+table.tableblock > tbody > tr > th,
+table.tableblock td {
+  background: transparent;
+  color: var(--text);
+}
+
+table.stripes-all > * > tr,
+table.stripes-odd > * > tr:nth-of-type(odd),
+table.stripes-even > * > tr:nth-of-type(even),
+table.stripes-hover > * > tr:hover {
+  background: var(--surface);
+}
+
+table.tableblock.grid-all > * > tr > *,
+table.tableblock.grid-rows > * > tr > *,
+table.tableblock.frame-all {
+  border-color: var(--border);
+}
+
+table.tableblock > caption.title {
+  color: var(--text-muted);
+}
+
+/* ---------- Lists ---------- */
+
+ul li::marker {
+  color: var(--accent);
+}
+
+ol li::marker {
+  color: var(--text-muted);
+}
+
+.colist > ol > li:first-child::before,
+.colist ol li::before,
+.conum[data-value] {
+  background: var(--accent);
+  color: #fff;
+}
+
+.conum[data-value] *,
+.conum[data-value] + b {
+  color: #fff;
+}
+
+.checklist,
+.checklist li {
+  color: var(--text);
+}
+
+.hdlist1,
+.hdlist tr td {
+  color: var(--text);
+}
+
+/* ---------- Images ---------- */
+
+.imageblock .title,
+.imageblock > .title {
+  color: var(--text-muted);
+}
+
+img {
+  border-radius: 4px;
+}
+
+/* ---------- Footnotes & footer ---------- */
+
+#footnotes hr {
+  border-top: 1px solid var(--border);
+}
+
+#footnotes .footnote a:first-of-type {
+  color: var(--accent-link);
+}
+
+sup.footnote a,
+sup.footnoteref a {
+  color: var(--accent-link);
+}
+
+#footer {
+  background: var(--surface);
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+
+#footer-text {
+  color: var(--text-muted);
+}
+
+/* ---------- Scrollbars ---------- */
+
+* {
+  scrollbar-color: var(--border) var(--bg);
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-dim);
+}
+
+/* ==========================================================================
+   Fixes: code block visibility + sidebar spacing
+   Placed last and using !important so highlighter themes (Rouge, Pygments,
+   highlight.js, CodeRay, prettify) and the default stylesheet can't win.
+   ========================================================================== */
+
+/* ---------- Code blocks: force dark background and light text ---------- */
+
+pre,
+pre.highlight,
+pre.rouge,
+pre.pygments,
+pre.CodeRay,
+pre.prettyprint,
+pre.hljs,
+.highlight,
+.highlight pre,
+.rouge,
+.pygments,
+.CodeRay,
+.listingblock pre,
+.literalblock pre,
+.listingblock .content,
+.literalblock .content,
+.listingblock pre code,
+.literalblock pre code,
+pre code,
+pre code.hljs,
+code.hljs {
+  background: var(--surface) !important;
+  background-color: var(--surface) !important;
+  color: var(--text) !important;
+}
+
+/* The code element inside a block shouldn't draw its own box */
+.listingblock pre code,
+.literalblock pre code,
+pre code,
+pre code.hljs,
+code.hljs,
+.highlight pre,
+.listingblock .content {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+pre,
+pre.highlight,
+pre.rouge,
+pre.pygments,
+pre.CodeRay,
+pre.prettyprint {
+  border: 1px solid var(--border) !important;
+  border-left: 3px solid var(--accent) !important;
+  border-radius: 4px;
+  padding: 1em 1.2em;
+}
+
+/* Line-number tables used by some highlighters */
+.highlight table,
+.highlight td,
+.highlight .linenos,
+table.CodeRay,
+table.CodeRay td,
+.rouge-table,
+.rouge-table td {
+  background: transparent !important;
+  color: var(--text-muted) !important;
+  border: 0 !important;
+}
+
+/* Unclassified text inside code blocks inherits the light text color */
+pre span,
+pre code span {
+  background: transparent !important;
+}
+
+/* ---------- Token colors (override light-theme highlighter colors) ---------- */
+
+pre .c,
+pre .c1,
+pre .cm,
+pre .cs,
+pre .cp,
+pre .cd,
+pre .hljs-comment,
+pre .hljs-quote,
+pre .comment {
+  color: #71717a !important;
+  font-style: italic;
+}
+
+pre .k,
+pre .kd,
+pre .kn,
+pre .kr,
+pre .kt,
+pre .kp,
+pre .kc,
+pre .ow,
+pre .hljs-keyword,
+pre .hljs-selector-tag,
+pre .hljs-built_in,
+pre .keyword,
+pre .reserved {
+  color: #e07a82 !important;
+}
+
+pre .s,
+pre .s1,
+pre .s2,
+pre .sb,
+pre .sc,
+pre .sd,
+pre .se,
+pre .sh,
+pre .si,
+pre .sx,
+pre .sr,
+pre .ss,
+pre .hljs-string,
+pre .hljs-attr,
+pre .hljs-template-variable,
+pre .string {
+  color: #e8b4a0 !important;
+}
+
+pre .m,
+pre .mi,
+pre .mf,
+pre .mh,
+pre .mo,
+pre .il,
+pre .hljs-number,
+pre .hljs-literal,
+pre .hljs-symbol,
+pre .hljs-bullet,
+pre .integer,
+pre .float {
+  color: #d4a5ff !important;
+}
+
+pre .nf,
+pre .nc,
+pre .nn,
+pre .nd,
+pre .fm,
+pre .hljs-title,
+pre .hljs-section,
+pre .hljs-function .hljs-title,
+pre .function,
+pre .class {
+  color: #9ecbff !important;
+}
+
+pre .n,
+pre .nv,
+pre .na,
+pre .nb,
+pre .nt,
+pre .ni,
+pre .ne,
+pre .no,
+pre .nx,
+pre .py,
+pre .bp,
+pre .vc,
+pre .vg,
+pre .vi,
+pre .hljs-variable,
+pre .hljs-name,
+pre .hljs-tag,
+pre .hljs-params,
+pre .variable {
+  color: var(--text) !important;
+}
+
+pre .o,
+pre .p,
+pre .cpf,
+pre .hljs-meta,
+pre .hljs-type,
+pre .hljs-operator,
+pre .hljs-punctuation,
+pre .operator {
+  color: #a1a1aa !important;
+}
+
+pre .err,
+pre .gr {
+  color: var(--accent-link) !important;
+  background: transparent !important;
+}
+pre .gd {
+  color: #e07a82 !important;
+}
+pre .gi {
+  color: #7fcf9b !important;
+}
+
+/* ---------- Sidebar / TOC: more vertical breathing room ---------- */
+
+#toc,
+#toc.toc2 {
+  padding-top: 1.25em;
+  padding-bottom: 1.5em;
+}
+
+#toc ul,
+#toc.toc2 ul,
+#toc.toc2 > ul {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#toc li,
+#toc.toc2 li,
+#toc.toc2 ul li {
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.4;
+}
+
+#toc a,
+#toc.toc2 a {
+  display: block;
+  padding: 0.55em 1em;
+  line-height: 1.4;
+}
+
+/* Nested levels: indented, with a little space before and after the group */
+#toc ul ul,
+#toc.toc2 ul ul {
+  padding-left: 0.9em !important;
+  margin: 0.1em 0 0.5em !important;
+}
+
+#toc ul ul a,
+#toc.toc2 ul ul a {
+  padding: 0.4em 1em;
+  font-size: 0.93em;
+}
+
+/* Top-level entries slightly stronger, with a gap between groups */
+#toc.toc2 > ul > li > a {
+  font-weight: 500;
+  color: var(--text);
+}
+
+#toc.toc2 > ul > li + li {
+  margin-top: 0.35em !important;
+}
+
+#toctitle {
+  margin-bottom: 0.9em;
+  padding: 0 1em;
+}

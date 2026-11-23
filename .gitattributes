@@ -1,3 +1,4 @@
+*.css linguist-vendored
 *.c linguist-vendored
 *.bx linguist-language=Blood
 *.ps1 linguist-vendored

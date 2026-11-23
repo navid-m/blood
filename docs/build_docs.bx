@@ -1,0 +1,3 @@
+#!/usr/bin/env blood
+
+asciidoctor -a stylesheet=dark.css -a linkcss docs/SPECIFICATION.adoc
