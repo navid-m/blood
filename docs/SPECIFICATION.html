@@ -500,6 +500,7 @@ blood SCRIPT.blood|SCRIPT.bx [ARG...]
 blood -init
 blood -fmt PATH...
 blood -translate-sh [-o DIR] PATH...
+blood -ref [-stdout]
 blood -version
 blood -help</code></pre>
 </div>
@@ -549,6 +550,11 @@ exists it is not overwritten.</p>
 </div>
 <div class="paragraph">
 <p><code>blood -help</code> and <code>blood -h</code> print usage information.</p>
+</div>
+<div class="paragraph">
+<p><code>blood -ref</code> writes the language reference embedded in the executable to
+<code>BLOOD_LANGUAGE_REFERENCE.adoc</code> in the current directory. With <code>-stdout</code>, the
+reference is written to standard output instead.</p>
 </div>
 <div class="paragraph">
 <p>An unrecognised flag beginning with <code>-</code> produces
@@ -1547,8 +1553,9 @@ paths.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>:ls [PATH]</code></p></td>
-<td class="tableblock halign-left valign-top"><p class="tableblock">List a directory as a Unicode table with permissions and
-human-readable sizes. Defaults to the current directory.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">List a directory as a Unicode table with permissions,
+human-readable sizes, modification times, and creation times. Defaults to the
+current directory.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>:where</code></p></td>
@@ -2183,6 +2190,16 @@ with no arguments prints all aliases. <code>unalias NAME&#8230;&#8203;</code> re
 <code>unalias -a</code> removes all aliases.</p>
 </div>
 <div class="paragraph">
+<p>Alias names may contain punctuation such as dots. A definition value may
+contain spaces without quotes: words after <code>NAME=</code> are appended until another
+<code>NAME=</code> token starts a new definition. For example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>alias cd..=cd ..</code></pre>
+</div>
+</div>
+<div class="paragraph">
 <p>Aliases are expanded by re-scanning the replacement text as a shell line with
 the original arguments appended and quoted. Expansion is recursive up to a
 depth of eight. Alias expansion is performed for single-command input. An alias
@@ -2633,6 +2650,17 @@ compound statement and the matching closing brace ends its body:</p>
 <p>Newlines and indentation are ignored inside unmatched <code>(</code> and <code>[</code> delimiters
 and inside dictionary literals. This permits multiline lists, dictionaries,
 and call arguments.</p>
+</div>
+<div class="paragraph">
+<p>A method or property chain cannot continue with <code>.</code> at the start of a new
+line. Keep the dot on the previous line or wrap the chain in parentheses:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>var files = std.glob("./*").filter(
+    |f| f.basename().like("*.txt")
+)</code></pre>
+</div>
 </div>
 <div class="paragraph">
 <p>A semicolon <code>;</code> may separate simple statements on one line. A single-line
@@ -3190,13 +3218,153 @@ caller. On platforms without <code>fork</code>, <code>pmap</code> maps the eleme
 </div>
 </div>
 <div class="sect3">
+<h4 id="_reduce_variables">Reduce variables</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>var r = std.reduce
+
+reduce(r.sum) var total = 0
+reduce(r.max) var slowest_ms = 0
+reduce(r.concat) var failures = []
+reduce(r.or) var any_crash = false
+
+reduce(r.sum) var (
+    passed = 0
+    failed = 0
+)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>reduce(COMBINER) var &#8230;&#8203;</code> declares variables whose worker-local values are
+folded back into the parent when a parallel construct completes. The combiner
+is mandatory. <code>reduce var x = 0</code> is a syntax error. The initial value is
+mandatory because it is the snapshot every worker starts from.</p>
+</div>
+<div class="paragraph">
+<p>The combiner is an ordinary expression that evaluates to a combiner value.
+Built-in combiners live in <code>std.reduce</code>:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 75%;">
+</colgroup>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.reduce.sum</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">numbers</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.reduce.product</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">numbers; the initial value must be non-zero</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.reduce.min</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">numbers and strings</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.reduce.max</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">numbers and strings</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.reduce.and</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">booleans</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.reduce.or</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">booleans</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.reduce.concat</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">lists and strings</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>std.reduce.union</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">dictionaries; the right side wins on key conflicts</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>A mismatched initial value, such as <code>sum</code> with a string, is an error at the
+declaration. <code>reduce</code> declarations may appear at file or function scope, but
+not inside a loop body.</p>
+</div>
+<div class="paragraph">
+<p>A closure with exactly three explicit parameters is also a valid combiner:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>reduce(|acc, snap, final| acc + (final - snap)) var total = 0</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>acc</code> is the running merged value, <code>snap</code> is the parent&#8217;s value at fork time,
+and <code>final</code> is the worker&#8217;s value when it finished. The closure returns the new
+<code>acc</code>. The built-ins use the following rules:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>sum</code> is <code>acc + (final - snap)</code>.</p>
+</li>
+<li>
+<p><code>product</code> is <code>acc * final / snap</code>.</p>
+</li>
+<li>
+<p><code>min</code> and <code>max</code> compare <code>acc</code> with <code>final</code>.</p>
+</li>
+<li>
+<p><code>and</code> and <code>or</code> combine <code>acc</code> with <code>final</code>.</p>
+</li>
+<li>
+<p><code>concat</code> appends only the part of <code>final</code> that extends <code>snap</code>. If <code>final</code>
+does not extend <code>snap</code>, the whole <code>final</code> value is appended.</p>
+</li>
+<li>
+<p><code>union</code> copies <code>acc</code>, then overlays every key from <code>final</code>.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Workers start with <code>snap</code> as the variable&#8217;s value. Reads and writes inside a
+worker act on the worker&#8217;s private copy; workers never see each other&#8217;s writes.
+A worker may reassign or compound-assign a reduce variable, including through
+methods such as <code>list.append</code>. Nested <code>pmap</code> calls merge into the enclosing
+worker&#8217;s copy, which then merges upward.</p>
+</div>
+<div class="paragraph">
+<p>Merging happens when <code>pmap</code> or <code>para for</code> completes, before it returns. <code>acc</code>
+starts as <code>snap</code>, and workers are folded in input order, not completion order,
+so the result is deterministic. The parent&#8217;s value is unchanged between fork
+and join. If a worker fails, that worker&#8217;s contribution is discarded; other
+workers still merge, and <code>pmap</code> still reports the error.</p>
+</div>
+<div class="paragraph">
+<p>Outside a worker, a reduce variable behaves like a normal variable.</p>
+</div>
+<div class="paragraph">
+<p>Reduce variables provide reduction, not live shared state. There is no
+cross-worker visibility and no locking. The initial value and every worker&#8217;s
+final value must be data values that can cross the process boundary. Blood
+currently has no <code>Time</code>, <code>Duration</code>, or set value types, so <code>min</code> and <code>max</code>
+accept numbers and strings, and <code>union</code> accepts dictionaries.</p>
+</div>
+</div>
+<div class="sect3">
 <h4 id="_functions">Functions</h4>
 <div class="listingblock">
 <div class="content">
 <pre class="highlight"><code>fn NAME(PARAM1, PARAM2: DEFAULT, ...) {
     BLOCK
-}</code></pre>
+}
+
+fn NAME(PARAM1, PARAM2: DEFAULT, ...) =&gt; EXPRESSION</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p>The <code>&#8658;</code> form is shorthand for a body that immediately returns <code>EXPRESSION</code>.
+The parameter list may be omitted in either form when the function takes no
+arguments.</p>
 </div>
 <div class="paragraph">
 <p>Parameters are positional unless passed by name. A parameter may declare a
@@ -3234,6 +3402,7 @@ default are null.</p>
 <div class="content">
 <pre class="highlight"><code>|l| EXPRESSION
 |a, b| EXPRESSION
+|a, b| =&gt; EXPRESSION
 |a, b| {
     BLOCK
 }</code></pre>
@@ -3251,6 +3420,15 @@ function. For example:</p>
 <div class="content">
 <pre class="highlight"><code>var lines = sh("test-suite").stdout.lines()
 var passes = lines.count(|l| l.starts_with("[pass]"))</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The <code>&#8658;</code> form forces an expression body even when the expression begins with
+<code>{</code>. This makes dictionary literals usable directly:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>var rows = files.map(|f| =&gt; {"file": f.basename(), "modified": f.modified()})</code></pre>
 </div>
 </div>
 </div>
@@ -3879,6 +4057,31 @@ the path.</p>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Sort in place by string representation.</p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sort_by(fn)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Sort in place by the key returned by <code>fn(x)</code>. Numeric keys compare numerically. Returns the list.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>reverse()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Reverse the list in place. Returns the list.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>unique()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">New list with duplicate elements removed, preserving first-occurrence order. Lists and dictionaries compare by contents.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>dump()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Pretty-printed JSON representation.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>dump_compact()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Compact JSON representation.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>map(fn)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">New list containing <code>fn(x)</code> for each element <code>x</code>.</p></td>
@@ -3953,6 +4156,16 @@ for which <code>fn(x)</code> is truthy.</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>items()</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">List of <code>[key, value]</code> pairs.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>dump()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Pretty-printed JSON representation.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>dump_compact()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Compact JSON representation.</p></td>
 </tr>
 <tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>len()</code></p></td>
@@ -4050,6 +4263,11 @@ final element; <code>\r\n</code> is accepted.</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Glob match. <code>*</code> matches any sequence and <code>?</code> matches one byte. <code>ignore_case</code> is an optional named argument.</p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>jtable()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Parse the receiver as JSON and render an array of objects (or one object) as a Unicode table.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>replace(from,to)</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Replace all occurrences.</p></td>
@@ -4090,6 +4308,31 @@ final element; <code>\r\n</code> is accepted.</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Final component of a path with its last extension removed.</p></td>
 </tr>
 <tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>modified()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">File modification time as seconds since the Unix epoch, or <code>0</code> when unavailable.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>enc_b64()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Base64-encode the string.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>dec_b64()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Decode the string as base64. Invalid input raises a catchable error.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>file_enc_b64()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Read a file and return its contents as base64.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>file_dec_b64()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Read a base64 file and return the decoded contents. Invalid input raises a catchable error.</p></td>
+</tr>
+<tr>
 <td class="tableblock halign-left valign-top"><p class="tableblock"><code>abs()</code></p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">Absolute, cleaned path. Expands <code>~</code> and resolves relative paths
@@ -4117,6 +4360,11 @@ against the current directory.</p></td>
 </tr>
 </tbody>
 </table>
+<div class="paragraph">
+<p><code>jtable()</code> accepts a JSON array of objects and returns a Unicode table whose
+columns are the sorted object keys. A single JSON object becomes a one-row
+table. Nested arrays and objects are shown as <code>[&#8230;&#8203;]</code> and <code>{&#8230;&#8203;}</code>.</p>
+</div>
 </div>
 <div class="sect3">
 <h4 id="_numeric_methods">Numeric methods</h4>
@@ -4264,7 +4512,7 @@ list-item    = [ "..." ] expression ;
 dict-literal = "{" [ expression ":" expression
                      { "," expression ":" expression } [ "," ] ] "}" ;
 lambda       = "|" [ IDENT { "," IDENT } ] "|"
-               ( expression | "{" { statement } "}" ) ;</pre>
+               ( "=&gt;" expression | expression | "{" { statement } "}" ) ;</pre>
 </div>
 </div>
 <div class="paragraph">
@@ -4786,7 +5034,7 @@ sh("true")</code></pre>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-11-22 11:09:52 UTC
+Last updated 2026-11-23 00:52:30 UTC
 </div>
 </div>
 </body>

@@ -41,6 +41,11 @@ pub type Func = {
     has_defer: mut i64
 }
 
+type ReduceSlot = {
+    name: mut ref u8
+    box: mut ref u.Vec
+}
+
 type Defer = {
     node: mut ref lang.Node
     env: mut ref Env
@@ -65,6 +70,14 @@ val g_modules: mut ref u.Map = none
 val g_defers: mut ref u.Vec = none
 val g_temp_seq: mut i64 = 0
 val g_workers: mut i64 = 1
+val REDUCE_SUM: i64 = 53
+val REDUCE_PRODUCT: i64 = 54
+val REDUCE_MIN: i64 = 55
+val REDUCE_MAX: i64 = 56
+val REDUCE_AND: i64 = 57
+val REDUCE_OR: i64 = 58
+val REDUCE_CONCAT: i64 = 59
+val REDUCE_UNION: i64 = 60
 val g_prelude: mut ref u.Map = none
 val g_nil_cache: mut ref Value = none
 val g_true_cache: mut ref Value = none
@@ -168,6 +181,15 @@ fn v_cell(inner: ref Value, is_const: bool) ref Value = trust {
     return v
 }
 
+fn v_reduce(inner: ref Value, combiner: ref Value) ref Value = trust {
+    val box: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(box, inner as ref void)
+    u.vec_pushp(box, combiner as ref void)
+    val v: mut ref Value = v_new(10)
+    v.p = box
+    return v
+}
+
 fn is_cell(v: ref Value) bool = trust {
     return v != none && v.tag == 9
 }
@@ -175,6 +197,10 @@ fn is_cell(v: ref Value) bool = trust {
 fn cell_inner(v: ref Value) ref Value = trust {
     if is_cell(v) {
         return v.p as ref Value
+    }
+    if v != none && v.tag == 10 {
+        val box: ref u.Vec = v.p as ref u.Vec
+        return u.vec_p(box, 0) as ref Value
     }
     return v
 }
@@ -507,6 +533,11 @@ fn env_assign(e: mut ref Env, name: ref u8, v: ref Value) void = trust {
         if u.map_has(chain.vars, name) {
             val raw: i64 = u.map_get(chain.vars, name)
             val existing: mut ref Value = @bitcast(raw, ref Value)
+            if existing != none && existing.tag == 10 {
+                val box: mut ref u.Vec = existing.p as ref u.Vec
+                u.vec_setp(box, 0, v as ref void)
+                return
+            }
             if is_cell(existing) {
                 if existing.i == 0 {
                     existing.p = v
@@ -3135,6 +3166,9 @@ fn call_native(id: i64, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         g_workers = requested
         return v_int(requested)
     }
+    if reduce_builtin(id) {
+        return reduce_builtin_apply(id, arg(args, 0), arg(args, 1), arg(args, 2), n)
+    }
     if id == 99 {
         return v_nil()
     }
@@ -4016,6 +4050,187 @@ fn para_reap(pids: mut ref u.Vec) i64 = trust {
     return wait_status_code(status)
 }
 
+fn wait_child_code(pid: i32) i64 = trust {
+    val status: mut i32 = 0
+    val got: mut i32 = -1
+    for {
+        got = rt.waitpid(pid, @addr(status), 0)
+        if got >= 0 || u.interrupt_flag == 0 {
+            break
+        }
+    }
+    if got < 0 {
+        return 127
+    }
+    return wait_status_code(status)
+}
+
+fn close_fd_vec(fds: ref u.Vec) void = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= fds.len {
+            break
+        }
+        ex.fd_close(num_i(u.vec_p(fds, i) as ref Value) as i32)
+        i++
+    }
+}
+
+fn para_child_code() i64 = trust {
+    val code: mut i64 = 0
+    if g_flow == 4 {
+        val msg: mut ref u8 = g_error
+        if msg == none {
+            msg = u.s_dup(c"error")
+        }
+        report_error(c"", g_err_line, g_err_col, msg, g_err_len)
+        code = 1
+    } elif g_flow == 5 {
+        code = u.script_exit_code
+    } else {
+        code = status_value()
+    }
+    if code < 0 {
+        code = 0
+    }
+    return code
+}
+
+fn exec_para_for_reduce(
+    n: ref lang.Node,
+    env: mut ref Env,
+    items: ref u.Vec,
+    body: ref lang.Node
+) i64 = trust {
+    val slots: ref u.Vec = collect_reduce_slots(env)
+    val snaps: ref u.Vec = reduce_snaps(slots)
+    val values: mut ref u.Vec = u.vec_new()
+    val oks: mut ref u.Vec = u.vec_new()
+    val fill: mut i64 = 0
+    for {
+        if fill >= items.len {
+            break
+        }
+        u.vec_pushp(values, none)
+        u.vec_push(oks, 0)
+        fill++
+    }
+    val pids: mut ref u.Vec = u.vec_new()
+    val fds: mut ref u.Vec = u.vec_new()
+    val idxs: mut ref u.Vec = u.vec_new()
+    val failed: mut i64 = 0
+    val limit: i64 = worker_limit()
+    val started: mut i64 = 0
+    val spawn_failed: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        for {
+            if i >= items.len || spawn_failed != 0 {
+                break
+            }
+            if u.interrupt_flag != 0 {
+                break
+            }
+            if pids.len >= limit {
+                break
+            }
+            val item: ref Value = u.vec_p(items, i) as ref Value
+            val p: ex.Pipe = ex.make_pipe()
+            val pid: i32 = rt.fork()
+            if pid == 0 {
+                close_fd_vec(fds)
+                ex.fd_close(p.read_fd)
+                g_error = none
+                g_flow = 0
+                g_return = none
+                env_assign(env, n.s, item)
+                set_status(0)
+                exec_block(body, env, false)
+                val worker_ok: bool = g_flow != 4 && !(g_flow == 5 && u.script_exit_code != 0)
+                val code: i64 = para_child_code()
+                val b: mut ref u.Buf = u.buf_new()
+                u.buf_ch(b, 114)
+                val pair: mut ref u.Vec = list_new()
+                val okv: mut i64 = 0
+                if worker_ok {
+                    okv = 1
+                }
+                u.vec_pushp(pair, v_int(okv) as ref void)
+                u.vec_pushp(pair, reduce_values(env) as ref void)
+                encode_value(v_list(pair), b)
+                u.write_fd(p.write_fd, u.buf_take(b))
+                ex.fd_close(p.write_fd)
+                rt.exit_now((code & 255) as i32)
+                return 0
+            }
+            ex.fd_close(p.write_fd)
+            if pid < 0 {
+                failed = 127
+                spawn_failed = 1
+                break
+            }
+            u.vec_pushp(pids, v_int(pid as i64) as ref void)
+            u.vec_pushp(fds, v_int(p.read_fd as i64) as ref void)
+            u.vec_pushp(idxs, v_int(i as i64) as ref void)
+            started++
+            i++
+        }
+        if pids.len == 0 {
+            break
+        }
+        val slot_i: mut i64 = -1
+        for {
+            val pi: mut i64 = 0
+            for {
+                if pi >= fds.len {
+                    break
+                }
+                val pfd: i32 = num_i(u.vec_p(fds, pi) as ref Value) as i32
+                if ex.fd_poll(pfd, 0) > 0 {
+                    slot_i = pi
+                    break
+                }
+                pi++
+            }
+            if slot_i >= 0 || u.interrupt_flag != 0 || pids.len == 0 {
+                break
+            }
+            val first: i32 = num_i(u.vec_p(fds, 0) as ref Value) as i32
+            ex.fd_poll(first, 10)
+        }
+        if slot_i < 0 {
+            break
+        }
+        val idx: i64 = num_i(u.vec_p(idxs, slot_i) as ref Value)
+        val fd: i32 = num_i(u.vec_p(fds, slot_i) as ref Value) as i32
+        val pid: i32 = num_i(u.vec_p(pids, slot_i) as ref Value) as i32
+        val payload: ref u8 = read_all_fd(fd)
+        ex.fd_close(fd)
+        val code: i64 = wait_child_code(pid)
+        if u.s_len(payload) > 0 && @load8(payload) == 114 {
+            val pair: ref Value = decode_value_at(payload, 1)
+            if pair != none && pair.tag == 5 {
+                val pv: ref u.Vec = pair.p as ref u.Vec
+                if pv.len >= 2 && truthy(u.vec_p(pv, 0) as ref Value) {
+                    u.vec_setp(values, idx, u.vec_p(pv, 1))
+                    u.vec_sets(oks, idx, 1)
+                }
+            }
+        }
+        if code != 0 && failed == 0 {
+            failed = code
+        }
+        u.vec_remove(pids, slot_i)
+        u.vec_remove(fds, slot_i)
+        u.vec_remove(idxs, slot_i)
+    }
+    reduce_merge(slots, snaps, values, oks, n)
+    if failed == 127 && started == 0 {
+        set_error(c"failed to start parallel iteration", n.line, n.col)
+    }
+    return failed
+}
+
 fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
     val iterable: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
     if g_flow != 0 {
@@ -4065,6 +4280,18 @@ fn exec_para_for(n: ref lang.Node, env: mut ref Env) void = trust {
             env_assign(env, n.s, u.vec_p(items, items.len - 1) as ref Value)
         }
         set_status(serial_failed)
+        if u.interrupt_flag != 0 {
+            u.interrupt_flag = 0
+            set_error(c"interrupted", n.line, n.col)
+        }
+        return
+    }
+    if collect_reduce_slots(env).len > 0 {
+        val rfailed: i64 = exec_para_for_reduce(n, env, items, body)
+        if items.len > 0 {
+            env_assign(env, n.s, u.vec_p(items, items.len - 1) as ref Value)
+        }
+        set_status(rfailed)
         if u.interrupt_flag != 0 {
             u.interrupt_flag = 0
             set_error(c"interrupted", n.line, n.col)
@@ -4353,6 +4580,419 @@ fn read_all_fd(fd: i32) ref u8 = trust {
     return u.buf_take(b)
 }
 
+fn reduce_builtin(id: i64) bool = trust {
+    return id >= REDUCE_SUM && id <= REDUCE_UNION
+}
+
+fn reduce_name(id: i64) ref u8 = trust {
+    if id == REDUCE_SUM {
+        return c"sum"
+    }
+    if id == REDUCE_PRODUCT {
+        return c"product"
+    }
+    if id == REDUCE_MIN {
+        return c"min"
+    }
+    if id == REDUCE_MAX {
+        return c"max"
+    }
+    if id == REDUCE_AND {
+        return c"and"
+    }
+    if id == REDUCE_OR {
+        return c"or"
+    }
+    if id == REDUCE_CONCAT {
+        return c"concat"
+    }
+    return c"union"
+}
+
+fn is_num(v: ref Value) bool = trust {
+    return v != none && (v.tag == 2 || v.tag == 3)
+}
+
+fn reduce_init_ok(id: i64, v: ref Value) bool = trust {
+    if v == none {
+        return false
+    }
+    if id == REDUCE_SUM || id == REDUCE_PRODUCT {
+        return is_num(v)
+    }
+    if id == REDUCE_MIN || id == REDUCE_MAX {
+        return is_num(v) || v.tag == 4
+    }
+    if id == REDUCE_AND || id == REDUCE_OR {
+        return v.tag == 1
+    }
+    if id == REDUCE_CONCAT {
+        return v.tag == 4 || v.tag == 5
+    }
+    if id == REDUCE_UNION {
+        return v.tag == 6
+    }
+    return true
+}
+
+fn reduce_validate_combiner(comb: ref Value, n: ref lang.Node) bool = trust {
+    if comb == none || comb.tag != 7 {
+        set_error(c"reduce combiner must be a function", n.line, n.col)
+        return false
+    }
+    val f: ref Func = comb.p as ref Func
+    if reduce_builtin(f.native) {
+        return true
+    }
+    val no_defaults: mut bool = true
+    if f.defaults != none {
+        val di: mut i64 = 0
+        for {
+            if di >= f.defaults.len {
+                break
+            }
+            if u.vec_p(f.defaults, di) != none {
+                no_defaults = false
+                break
+            }
+            di++
+        }
+    }
+    if f.native == 0 && f.params != none && f.params.len == 3 && no_defaults {
+        return true
+    }
+    set_error(
+        c"reduce combiner must be a std.reduce built-in or a closure with exactly three parameters",
+        n.line,
+        n.col
+    )
+    return false
+}
+
+fn reduce_validate_init(id: i64, v: ref Value, n: ref lang.Node) bool = trust {
+    if !reduce_init_ok(id, v) {
+        set_error(
+            u.s_cat3(
+                c"std.reduce.",
+                reduce_name(id),
+                c" does not accept the declared initial value"
+            ),
+            n.line,
+            n.col
+        )
+        return false
+    }
+    if id == REDUCE_PRODUCT && num_f(v) == 0.0 {
+        set_error(c"std.reduce.product requires a non-zero initial value", n.line, n.col)
+        return false
+    }
+    return true
+}
+
+fn collect_reduce_slots(env: ref Env) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val seen: mut ref u.Map = u.map_new()
+    val chain: mut ref Env = env
+    for {
+        if chain == none {
+            break
+        }
+        val vars: ref u.Map = chain.vars
+        val i: mut i64 = 0
+        for {
+            if i >= vars.cap {
+                break
+            }
+            if u.map_used_at(vars, i) {
+                val name: ref u8 = u.map_key_at(vars, i)
+                if !u.map_has(seen, name) {
+                    val raw: ref Value = @bitcast(u.map_val_at(vars, i), ref Value)
+                    if raw != none && raw.tag == 10 {
+                        val slot: mut ref ReduceSlot = u.xalloc(@sizeof(ReduceSlot) as i64) as ref ReduceSlot
+                        slot.name = name
+                        slot.box = raw.p as ref u.Vec
+                        u.vec_pushp(out, slot as ref void)
+                    }
+                    u.map_put(seen, name, 1)
+                }
+            }
+            i++
+        }
+        chain = chain.parent
+    }
+    return out
+}
+
+fn reduce_snaps(slots: ref u.Vec) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = 0
+    for {
+        if i >= slots.len {
+            break
+        }
+        val slot: ref ReduceSlot = u.vec_p(slots, i) as ref ReduceSlot
+        u.vec_pushp(out, u.vec_p(slot.box, 0))
+        i++
+    }
+    return out
+}
+
+fn reduce_values(env: ref Env) ref Value = trust {
+    val slots: ref u.Vec = collect_reduce_slots(env)
+    val m: mut ref u.Map = dict_new()
+    val i: mut i64 = 0
+    for {
+        if i >= slots.len {
+            break
+        }
+        val slot: ref ReduceSlot = u.vec_p(slots, i) as ref ReduceSlot
+        u.map_put(m, slot.name, @bitcast(u.vec_p(slot.box, 0), i64))
+        i++
+    }
+    return v_dict(m)
+}
+
+fn decode_value_at(payload: ref u8, start: i64) ref Value = trust {
+    val d: mut ref Decoder = u.xalloc(@sizeof(Decoder) as i64) as ref Decoder
+    d.s = payload
+    d.pos = start
+    d.len = u.s_len(payload)
+    return decode_value(d)
+}
+
+fn reduce_compare(a: ref Value, b: ref Value) i64 = trust {
+    if a.tag == 4 && b.tag == 4 {
+        return u.s_cmp(a.p as ref u8, b.p as ref u8)
+    }
+    val af: f64 = num_f(a)
+    val bf: f64 = num_f(b)
+    if af < bf {
+        return -1
+    }
+    if af > bf {
+        return 1
+    }
+    return 0
+}
+
+fn reduce_concat(
+    acc: ref Value,
+    snap: ref Value,
+    final: ref Value,
+    n: ref lang.Node
+) ref Value = trust {
+    if acc.tag == 4 && snap.tag == 4 && final.tag == 4 {
+        val fs: ref u8 = final.p as ref u8
+        val ss: ref u8 = snap.p as ref u8
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_add(b, acc.p as ref u8)
+        val start: mut i64 = 0
+        if u.s_starts(fs, ss) {
+            start = u.s_len(ss)
+        }
+        u.buf_addn(b, @ptradd(fs, start), u.s_len(fs) - start)
+        return v_str_own(u.buf_take(b))
+    }
+    if acc.tag == 5 && snap.tag == 5 && final.tag == 5 {
+        val av: ref u.Vec = acc.p as ref u.Vec
+        val sv: ref u.Vec = snap.p as ref u.Vec
+        val fv: ref u.Vec = final.p as ref u.Vec
+        val start: mut i64 = 0
+        if fv.len >= sv.len {
+            val same: mut bool = true
+            val j: mut i64 = 0
+            for {
+                if j >= sv.len {
+                    break
+                }
+                if !values_equal(u.vec_p(fv, j) as ref Value, u.vec_p(sv, j) as ref Value) {
+                    same = false
+                    break
+                }
+                j++
+            }
+            if same {
+                start = sv.len
+            }
+        }
+        val out: mut ref u.Vec = list_new()
+        val i: mut i64 = 0
+        for {
+            if i >= av.len {
+                break
+            }
+            u.vec_pushp(out, u.vec_p(av, i))
+            i++
+        }
+        i = start
+        for {
+            if i >= fv.len {
+                break
+            }
+            u.vec_pushp(out, u.vec_p(fv, i))
+            i++
+        }
+        return v_list(out)
+    }
+    set_error(c"std.reduce.concat requires lists or strings", n.line, n.col)
+    return v_nil()
+}
+
+fn reduce_union(acc: ref Value, final: ref Value, n: ref lang.Node) ref Value = trust {
+    if acc.tag != 6 || final.tag != 6 {
+        set_error(c"std.reduce.union requires dicts", n.line, n.col)
+        return v_nil()
+    }
+    val am: ref u.Map = acc.p as ref u.Map
+    val fm: ref u.Map = final.p as ref u.Map
+    val out: mut ref u.Map = dict_new()
+    val i: mut i64 = 0
+    for {
+        if i >= am.cap {
+            break
+        }
+        if u.map_used_at(am, i) {
+            u.map_put(out, u.map_key_at(am, i), u.map_val_at(am, i))
+        }
+        i++
+    }
+    i = 0
+    for {
+        if i >= fm.cap {
+            break
+        }
+        if u.map_used_at(fm, i) {
+            u.map_put(out, u.map_key_at(fm, i), u.map_val_at(fm, i))
+        }
+        i++
+    }
+    return v_dict(out)
+}
+
+fn reduce_builtin_apply(
+    id: i64,
+    acc: ref Value,
+    snap: ref Value,
+    final: ref Value,
+    n: ref lang.Node
+) ref Value = trust {
+    if id == REDUCE_SUM || id == REDUCE_PRODUCT {
+        if !is_num(snap) || !is_num(final) || !is_num(acc) {
+            set_error(c"std.reduce numeric combiner received a non-number", n.line, n.col)
+            return v_nil()
+        }
+        if id == REDUCE_SUM {
+            val delta: ref Value = bin_op(1, final, snap)
+            if g_flow != 0 {
+                return v_nil()
+            }
+            return bin_op(0, acc, delta)
+        }
+        if num_f(snap) == 0.0 {
+            set_error(c"std.reduce.product cannot divide by a zero snapshot", n.line, n.col)
+            return v_nil()
+        }
+        if acc.tag == 2 && snap.tag == 2 && final.tag == 2 {
+            val denom: i64 = num_i(snap)
+            val prod: i64 = num_i(acc) * num_i(final)
+            if denom != 0 && prod % denom == 0 {
+                return v_int(prod / denom)
+            }
+        }
+        return v_float(num_f(acc) * num_f(final) / num_f(snap))
+    }
+    if id == REDUCE_MIN || id == REDUCE_MAX {
+        if !((is_num(acc) && is_num(final)) || (acc.tag == 4 && final.tag == 4)) {
+            set_error(c"std.reduce.min/max received incompatible values", n.line, n.col)
+            return v_nil()
+        }
+        val cmp: i64 = reduce_compare(acc, final)
+        if id == REDUCE_MIN {
+            if cmp <= 0 {
+                return acc
+            }
+            return final
+        }
+        if cmp >= 0 {
+            return acc
+        }
+        return final
+    }
+    if id == REDUCE_AND || id == REDUCE_OR {
+        if acc.tag != 1 || final.tag != 1 {
+            set_error(c"std.reduce.and/or requires booleans", n.line, n.col)
+            return v_nil()
+        }
+        if id == REDUCE_AND {
+            return v_bool(acc.i != 0 && final.i != 0)
+        }
+        return v_bool(acc.i != 0 || final.i != 0)
+    }
+    if id == REDUCE_CONCAT {
+        return reduce_concat(acc, snap, final, n)
+    }
+    return reduce_union(acc, final, n)
+}
+
+fn reduce_combine(
+    comb: ref Value,
+    acc: ref Value,
+    snap: ref Value,
+    final: ref Value,
+    n: ref lang.Node
+) ref Value = trust {
+    val f: ref Func = comb.p as ref Func
+    if reduce_builtin(f.native) {
+        return reduce_builtin_apply(f.native, acc, snap, final, n)
+    }
+    val args: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(args, acc as ref void)
+    u.vec_pushp(args, snap as ref void)
+    u.vec_pushp(args, final as ref void)
+    return call_func(f, args, n)
+}
+
+fn reduce_merge(
+    slots: ref u.Vec,
+    snaps: ref u.Vec,
+    values: ref u.Vec,
+    oks: ref u.Vec,
+    n: ref lang.Node
+) void = trust {
+    val si: mut i64 = 0
+    for {
+        if si >= slots.len {
+            break
+        }
+        val slot: ref ReduceSlot = u.vec_p(slots, si) as ref ReduceSlot
+        val comb: ref Value = u.vec_p(slot.box, 1) as ref Value
+        val snap: ref Value = u.vec_p(snaps, si) as ref Value
+        val acc: mut ref Value = snap
+        val wi: mut i64 = 0
+        for {
+            if wi >= values.len {
+                break
+            }
+            if u.vec_gets(oks, wi) != 0 {
+                val v: ref Value = u.vec_p(values, wi) as ref Value
+                if v != none && v.tag == 6 {
+                    val m: ref u.Map = v.p as ref u.Map
+                    val raw: i64 = u.map_get(m, slot.name)
+                    if raw != 0 {
+                        acc = reduce_combine(comb, acc, snap, @bitcast(raw, ref Value), n)
+                        if g_flow == 4 {
+                            return
+                        }
+                    }
+                }
+            }
+            wi++
+        }
+        u.vec_setp(slot.box, 0, acc as ref void)
+        si++
+    }
+}
+
 fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = trust {
     when windows {
         val out: mut ref u.Vec = list_new()
@@ -4370,15 +5010,40 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
         }
         return v_list(out)
     }
+    val closure_env: mut ref Env = g_env
+    if fnv != none && fnv.tag == 7 {
+        val cf: ref Func = fnv.p as ref Func
+        if cf.closure != none {
+            closure_env = cf.closure
+        }
+    }
+    val slots: ref u.Vec = collect_reduce_slots(closure_env)
+    val has_reduce: bool = slots.len > 0
+    val snaps: ref u.Vec = reduce_snaps(slots)
+    val rvalues: mut ref u.Vec = u.vec_new()
+    val roks: mut ref u.Vec = u.vec_new()
+    if has_reduce {
+        val fill: mut i64 = 0
+        for {
+            if fill >= vec.len {
+                break
+            }
+            u.vec_pushp(rvalues, none)
+            u.vec_push(roks, 0)
+            fill++
+        }
+    }
     val out: mut ref u.Vec = list_new()
     val pids: mut ref u.Vec = u.vec_new()
     val fds: mut ref u.Vec = u.vec_new()
+    val idxs: mut ref u.Vec = u.vec_new()
     val failed: mut i64 = 0
     val limit: i64 = worker_limit()
     val head: mut i64 = 0
     val next: mut i64 = 0
     val started: mut i64 = 0
     val spawn_failed: mut i64 = 0
+    val err_info: mut ref Value = none
     for {
         for {
             if next >= vec.len || spawn_failed != 0 {
@@ -4390,6 +5055,7 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
             if pids.len - head >= limit {
                 break
             }
+            val item_index: i64 = next
             val p: ex.Pipe = ex.make_pipe()
             val pid: i32 = rt.fork()
             if pid == 0 {
@@ -4406,7 +5072,7 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
                 g_flow = 0
                 g_return = none
                 set_status(0)
-                val result: ref Value = call_one(fnv, u.vec_p(vec, next) as ref Value, n)
+                val result: ref Value = call_one(fnv, u.vec_p(vec, item_index) as ref Value, n)
                 val code: mut i64 = 0
                 if g_flow == 4 {
                     val msg: mut ref u8 = g_error
@@ -4424,10 +5090,32 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
                     code = 1
                 } elif g_flow == 5 {
                     code = u.script_exit_code
+                    if code == 0 {
+                        val b: mut ref u.Buf = u.buf_new()
+                        if has_reduce {
+                            val pair: mut ref u.Vec = list_new()
+                            u.vec_pushp(pair, v_nil() as ref void)
+                            u.vec_pushp(pair, reduce_values(closure_env) as ref void)
+                            u.buf_ch(b, 82)
+                            encode_value(v_list(pair), b)
+                        } else {
+                            u.buf_ch(b, 111)
+                            encode_value(v_nil(), b)
+                        }
+                        u.write_fd(p.write_fd, u.buf_take(b))
+                    }
                 } else {
                     val b: mut ref u.Buf = u.buf_new()
-                    u.buf_ch(b, 111)
-                    encode_value(result, b)
+                    if has_reduce {
+                        val pair: mut ref u.Vec = list_new()
+                        u.vec_pushp(pair, result as ref void)
+                        u.vec_pushp(pair, reduce_values(closure_env) as ref void)
+                        u.buf_ch(b, 82)
+                        encode_value(v_list(pair), b)
+                    } else {
+                        u.buf_ch(b, 111)
+                        encode_value(result, b)
+                    }
                     u.write_fd(p.write_fd, u.buf_take(b))
                 }
                 if code < 0 {
@@ -4446,6 +5134,7 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
             }
             u.vec_pushp(pids, v_int(pid as i64) as ref void)
             u.vec_pushp(fds, v_int(p.read_fd as i64) as ref void)
+            u.vec_pushp(idxs, v_int(item_index) as ref void)
             started++
             next++
         }
@@ -4456,6 +5145,7 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
         val payload: ref u8 = read_all_fd(fd)
         ex.fd_close(fd)
         val pid: i32 = num_i(u.vec_p(pids, head) as ref Value) as i32
+        val item_index: i64 = num_i(u.vec_p(idxs, head) as ref Value)
         val status: mut i32 = 0
         val got: mut i32 = -1
         for {
@@ -4471,34 +5161,66 @@ fn parallel_map(vec: ref u.Vec, fnv: ref Value, n: ref lang.Node) ref Value = tr
         if code != 0 && failed == 0 {
             failed = code
         }
+        val worker_ok: mut bool = code == 0
         if u.s_len(payload) == 0 {
             u.vec_pushp(out, v_nil() as ref void)
+            worker_ok = false
         } else {
             val kind: u8 = @load8(payload)
-            val d: mut ref Decoder = u.xalloc(@sizeof(Decoder) as i64) as ref Decoder
-            d.s = payload
-            d.pos = 1
-            d.len = u.s_len(payload)
             if kind == 111 {
-                u.vec_pushp(out, decode_value(d) as ref void)
-            } elif kind == 101 {
-                val info: ref Value = decode_value(d)
-                if info != none && info.tag == 5 && g_error == none {
-                    val iv: ref u.Vec = info.p as ref u.Vec
-                    if iv.len >= 3 {
-                        set_error(
-                            v_to_str(u.vec_p(iv, 2) as ref Value),
-                            num_i(u.vec_p(iv, 0) as ref Value),
-                            num_i(u.vec_p(iv, 1) as ref Value)
-                        )
+                u.vec_pushp(out, decode_value_at(payload, 1) as ref void)
+            } elif kind == 82 {
+                val pair: ref Value = decode_value_at(payload, 1)
+                if pair != none && pair.tag == 5 {
+                    val pv: ref u.Vec = pair.p as ref u.Vec
+                    if pv.len >= 2 {
+                        u.vec_pushp(out, u.vec_p(pv, 0))
+                        val rv: ref Value = u.vec_p(pv, 1) as ref Value
+                        if has_reduce {
+                            if worker_ok && rv != none && rv.tag == 6 {
+                                u.vec_setp(rvalues, item_index, rv as ref void)
+                                u.vec_sets(roks, item_index, 1)
+                            } else {
+                                worker_ok = false
+                            }
+                        }
+                    } else {
+                        u.vec_pushp(out, v_nil() as ref void)
+                        worker_ok = false
                     }
+                } else {
+                    u.vec_pushp(out, v_nil() as ref void)
+                    worker_ok = false
+                }
+            } elif kind == 101 {
+                val info: ref Value = decode_value_at(payload, 1)
+                if err_info == none && info != none && info.tag == 5 {
+                    err_info = info
                 }
                 u.vec_pushp(out, v_nil() as ref void)
+                worker_ok = false
             } else {
                 u.vec_pushp(out, v_nil() as ref void)
+                worker_ok = false
             }
         }
+        if !worker_ok && code == 0 && failed == 0 {
+            failed = 1
+        }
         head++
+    }
+    if has_reduce {
+        reduce_merge(slots, snaps, rvalues, roks, n)
+    }
+    if err_info != none && g_error == none {
+        val iv: ref u.Vec = err_info.p as ref u.Vec
+        if iv.len >= 3 {
+            set_error(
+                v_to_str(u.vec_p(iv, 2) as ref Value),
+                num_i(u.vec_p(iv, 0) as ref Value),
+                num_i(u.vec_p(iv, 1) as ref Value)
+            )
+        }
     }
     set_status(failed)
     if u.interrupt_flag != 0 {
@@ -4802,6 +5524,47 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
             return
         }
         env_define_interned(env, dname, value)
+        return
+    }
+    if n.kind == lang.NodeKind.ReduceDecl {
+        if n.kids.len == 0 {
+            return
+        }
+        val comb: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        if g_flow != 0 {
+            return
+        }
+        if !reduce_validate_combiner(comb, n) {
+            return
+        }
+        val fid: i64 = (comb.p as ref Func).native
+        val i: mut i64 = 0
+        for {
+            if i >= n.params.len {
+                break
+            }
+            val name: ref u8 = u.vec_p(n.params, i) as ref u8
+            if u.map_has(env.vars, name) {
+                set_error(
+                    u.s_cat3(c"variable '", name, c"' is already declared"),
+                    n.line,
+                    n.col
+                )
+                return
+            }
+            if i + 1 >= n.kids.len {
+                return
+            }
+            val init: ref Value = eval(u.vec_p(n.kids, i + 1) as ref lang.Node, env)
+            if g_flow != 0 {
+                return
+            }
+            if !reduce_validate_init(fid, init, n) {
+                return
+            }
+            env_define_interned(env, name, v_reduce(init, comb))
+            i++
+        }
         return
     }
     if n.kind == lang.NodeKind.Use {
@@ -5226,16 +5989,20 @@ fn exec_block(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
 // Builtin bindings and entry points
 // ---------------------------------------------------------------------------
 
-fn native_value(name: ref u8) ref Value = trust {
+fn native_value_id(name: ref u8, id: i64) ref Value = trust {
     val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
     f.name = u.s_dup(name)
     f.params = none
     f.body = none
-    f.native = native_id(name)
+    f.native = id
     f.closure = none
     f.defaults = none
     f.has_defer = 0
     return v_func(f)
+}
+
+fn native_value(name: ref u8) ref Value = trust {
+    return native_value_id(name, native_id(name))
 }
 
 fn define_std_native(stdm: mut ref u.Map, name: ref u8) void = trust {
@@ -5327,6 +6094,16 @@ pub fn script_init() void = trust {
     define_std_native(stdm, c"cd")
     define_std_native(stdm, c"unified_diff")
     define_std_native(stdm, c"set_workers")
+    val redm: mut ref u.Map = u.map_new_perm()
+    u.map_put_ref(redm, c"sum", @bitcast(native_value_id(c"sum", REDUCE_SUM), i64))
+    u.map_put_ref(redm, c"product", @bitcast(native_value_id(c"product", REDUCE_PRODUCT), i64))
+    u.map_put_ref(redm, c"min", @bitcast(native_value_id(c"min", REDUCE_MIN), i64))
+    u.map_put_ref(redm, c"max", @bitcast(native_value_id(c"max", REDUCE_MAX), i64))
+    u.map_put_ref(redm, c"and", @bitcast(native_value_id(c"and", REDUCE_AND), i64))
+    u.map_put_ref(redm, c"or", @bitcast(native_value_id(c"or", REDUCE_OR), i64))
+    u.map_put_ref(redm, c"concat", @bitcast(native_value_id(c"concat", REDUCE_CONCAT), i64))
+    u.map_put_ref(redm, c"union", @bitcast(native_value_id(c"union", REDUCE_UNION), i64))
+    u.map_put_ref(stdm, c"reduce", @bitcast(v_namespace(redm), i64))
     define_prelude(c"say")
     define_prelude(c"print")
     define_prelude(c"eprint")
@@ -5410,6 +6187,8 @@ fn queue_value_children(v: mut ref Value, jobs: mut ref u.Vec) void = trust {
         enqueue(jobs, v.p, 3, @ptradd(v as ref void, 16))
     } elif v.tag == 9 {
         enqueue(jobs, v.p, 1, @ptradd(v as ref void, 16))
+    } elif v.tag == 10 {
+        enqueue(jobs, v.p, 2, @ptradd(v as ref void, 16))
     }
 }
 
@@ -6079,7 +6858,7 @@ pub fn looks_like_script(line: ref u8) bool = trust {
     ) || u.s_starts(t, c"pub ") || u.s_starts(t, c"use ") || u.s_starts(
         t,
         c"var "
-    ) || u.s_starts(t, c"var\t") || u.s_eq(t, c"var") {
+    ) || u.s_starts(t, c"var\t") || u.s_eq(t, c"var") || u.s_starts(t, c"reduce") {
         return true
     }
     if @load8(t) == 91 || @load8(t) == 123 {

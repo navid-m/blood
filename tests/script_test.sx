@@ -65,6 +65,32 @@ test "script supports parallel map with lambdas" {
     }
 }
 
+test "script merges reduce variables after parallel work" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var r = std.reduce\nreduce(r.sum) var (\n    total = 0\n    passed = 0\n)\nreduce(r.max) var highest = 0\nreduce(r.concat) var seen = []\nreduce(r.or) var any_even = false\nvar xs = [1, 2, 3, 4]\nvar doubled = xs.pmap(|x| {\n    total += 1\n    highest = x\n    seen.append(x)\n    if x % 2 == 0 {\n        any_even = true\n    }\n    return x * 2\n})\nif doubled.join(\",\") != \"2,4,6,8\" { raise \"pmap result\" }\nif total != 4 { raise \"sum\" }\nif highest != 4 { raise \"max\" }\nif seen.join(\",\") != \"1,2,3,4\" { raise \"concat\" }\nif not any_even { raise \"or\" }\npara for x in [1, 2, 3] {\n    total += 1\n    if x == 2 { passed += 1 }\n}\nif total != 7 or passed != 1 { raise \"para sum\" }\nsay(\"ok\")\n"
+        assert run(src) == 0
+    }
+}
+
+test "script supports custom reduce combiners and failure discards" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var r = std.reduce\nreduce(|acc, snap, final| acc + (final - snap)) var total = 0\nvar xs = [1, 2, 3]\nxs.pmap(|x| {\n    total += x\n    return x\n})\nif total != 6 { raise \"custom\" }\ntry {\n    xs.pmap(|x| {\n        total += x\n        if x == 2 { raise \"boom\" }\n        return x\n    })\n} catch err {\n    if \"boom\" not in err { raise \"error\" }\n}\nif total != 10 { raise \"discard\" }\npara for x in [1, 2, 3] {\n    if x == 2 { exit(4) }\n    total += x\n}\nif total != 14 or status != 4 { raise \"para discard\" }\npara for x in [1, 2] {\n    total += 1\n    status = 7\n}\nif total != 16 { raise \"para nonzero status\" }\nsay(\"ok\")\n"
+        assert run(src) == 0
+    }
+}
+
+test "script rejects invalid reduce declarations" {
+    trust {
+        fresh()
+        assert run(c"var r = std.reduce\nreduce(r.sum) var s = \"x\"\n") != 0
+        assert run(c"var r = std.reduce\nreduce(r.product) var p = 0\n") != 0
+        assert run(c"var r = std.reduce\nfor x in [1] {\n    reduce(r.sum) var t = 0\n}\n") != 0
+        assert run(c"reduce var t = 0\n") != 0
+    }
+}
+
 test "script sets the worker limit for parallel operations" {
     trust {
         fresh()

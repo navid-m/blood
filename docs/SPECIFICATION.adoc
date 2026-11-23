@@ -1592,6 +1592,86 @@ process boundary. Keep callbacks pure when output ordering matters, because
 child output may interleave. An uncaught callback error propagates to the
 caller. On platforms without `fork`, `pmap` maps the elements serially.
 
+==== Reduce variables
+
+[source]
+----
+var r = std.reduce
+
+reduce(r.sum) var total = 0
+reduce(r.max) var slowest_ms = 0
+reduce(r.concat) var failures = []
+reduce(r.or) var any_crash = false
+
+reduce(r.sum) var (
+    passed = 0
+    failed = 0
+)
+----
+
+`reduce(COMBINER) var ...` declares variables whose worker-local values are
+folded back into the parent when a parallel construct completes. The combiner
+is mandatory. `reduce var x = 0` is a syntax error. The initial value is
+mandatory because it is the snapshot every worker starts from.
+
+The combiner is an ordinary expression that evaluates to a combiner value.
+Built-in combiners live in `std.reduce`:
+
+[cols="1,3"]
+|===
+|`std.reduce.sum` |numbers
+|`std.reduce.product` |numbers; the initial value must be non-zero
+|`std.reduce.min` |numbers and strings
+|`std.reduce.max` |numbers and strings
+|`std.reduce.and` |booleans
+|`std.reduce.or` |booleans
+|`std.reduce.concat` |lists and strings
+|`std.reduce.union` |dictionaries; the right side wins on key conflicts
+|===
+
+A mismatched initial value, such as `sum` with a string, is an error at the
+declaration. `reduce` declarations may appear at file or function scope, but
+not inside a loop body.
+
+A closure with exactly three explicit parameters is also a valid combiner:
+
+[source]
+----
+reduce(|acc, snap, final| acc + (final - snap)) var total = 0
+----
+
+`acc` is the running merged value, `snap` is the parent's value at fork time,
+and `final` is the worker's value when it finished. The closure returns the new
+`acc`. The built-ins use the following rules:
+
+* `sum` is `acc + (final - snap)`.
+* `product` is `acc * final / snap`.
+* `min` and `max` compare `acc` with `final`.
+* `and` and `or` combine `acc` with `final`.
+* `concat` appends only the part of `final` that extends `snap`. If `final`
+  does not extend `snap`, the whole `final` value is appended.
+* `union` copies `acc`, then overlays every key from `final`.
+
+Workers start with `snap` as the variable's value. Reads and writes inside a
+worker act on the worker's private copy; workers never see each other's writes.
+A worker may reassign or compound-assign a reduce variable, including through
+methods such as `list.append`. Nested `pmap` calls merge into the enclosing
+worker's copy, which then merges upward.
+
+Merging happens when `pmap` or `para for` completes, before it returns. `acc`
+starts as `snap`, and workers are folded in input order, not completion order,
+so the result is deterministic. The parent's value is unchanged between fork
+and join. If a worker fails, that worker's contribution is discarded; other
+workers still merge, and `pmap` still reports the error.
+
+Outside a worker, a reduce variable behaves like a normal variable.
+
+Reduce variables provide reduction, not live shared state. There is no
+cross-worker visibility and no locking. The initial value and every worker's
+final value must be data values that can cross the process boundary. Blood
+currently has no `Time`, `Duration`, or set value types, so `min` and `max`
+accept numbers and strings, and `union` accepts dictionaries.
+
 ==== Functions
 
 [source]

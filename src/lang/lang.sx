@@ -31,6 +31,7 @@ pub enum NodeKind = {
     Assign
     VarDecl
     ConstDecl
+    ReduceDecl
     Use
     If
     While
@@ -117,6 +118,7 @@ pub type Parser = {
     toks: mut ref u.Vec
     src: mut ref u8
     i: mut i64
+    loop_depth: mut i64
 }
 
 val g_error: mut ref u8 = none
@@ -760,6 +762,9 @@ fn parse_suite(p: mut ref Parser, line: i64, col: i64) ref Node = trust {
         if s != none {
             u.vec_pushp(block.kids, s)
         }
+        if g_error != none {
+            break
+        }
     }
     skip_newlines(p)
     return block
@@ -868,6 +873,9 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
     if keyword(t, c"const") {
         return parse_const(p)
     }
+    if keyword(t, c"reduce") {
+        return parse_reduce(p)
+    }
     if keyword(t, c"pub") {
         return parse_pub(p)
     }
@@ -975,6 +983,114 @@ fn parse_var(p: mut ref Parser) ref Node = trust {
 
 fn parse_const(p: mut ref Parser) ref Node = trust {
     return parse_binding(p, NodeKind.ConstDecl)
+}
+
+fn reduce_loop_check(t: ref Token, illegal: bool) void = trust {
+    if illegal {
+        set_error_span(
+            t.line,
+            t.col,
+            c"reduce declarations are not allowed inside a loop body",
+            token_span(t)
+        )
+    }
+}
+
+fn parse_reduce(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    val illegal: bool = p.loop_depth > 0
+    advance(p)
+    val n: mut ref Node = node_new(NodeKind.ReduceDecl, t.line, t.col)
+    if !expect_op(p, c"(") {
+        reduce_loop_check(t, illegal)
+        return n
+    }
+    u.vec_pushp(n.kids, parse_expr(p) as ref void)
+    if !expect_op(p, c")") {
+        reduce_loop_check(t, illegal)
+        return n
+    }
+    if !keyword(cur(p), c"var") {
+        set_error_span(
+            cur(p).line,
+            cur(p).col,
+            c"expected 'var' after reduce combiner",
+            cur_span(p)
+        )
+        reduce_loop_check(t, illegal)
+        return n
+    }
+    advance(p)
+    if cur(p).kind == TokenKind.Op && text_is(cur(p), c"(") {
+        advance(p)
+        for {
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c")") {
+                advance(p)
+                break
+            }
+            if cur(p).kind == TokenKind.Eof {
+                set_error_span(
+                    cur(p).line,
+                    cur(p).col,
+                    c"expected ')' after reduce declarations",
+                    cur_span(p)
+                )
+                break
+            }
+            if cur(p).kind == TokenKind.Op && (text_is(
+                    cur(p),
+                    c","
+                ) || text_is(cur(p), c";")) {
+                advance(p)
+                continue
+            }
+            val name: ref Token = cur(p)
+            if name.kind != TokenKind.Ident {
+                set_error_span(
+                    name.line,
+                    name.col,
+                    c"expected a variable name",
+                    token_span(name)
+                )
+                break
+            }
+            advance(p)
+            u.vec_pushp(n.params, u.s_intern(name.text) as ref void)
+            if !expect_op(p, c"=") {
+                break
+            }
+            u.vec_pushp(n.kids, parse_expr(p) as ref void)
+            if cur(p).kind == TokenKind.Op && (text_is(
+                    cur(p),
+                    c","
+                ) || text_is(cur(p), c";")) {
+                advance(p)
+            }
+        }
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+        reduce_loop_check(t, illegal)
+        return n
+    }
+    val name: ref Token = cur(p)
+    if name.kind != TokenKind.Ident {
+        set_error_span(name.line, name.col, c"expected a variable name", token_span(name))
+        reduce_loop_check(t, illegal)
+        return n
+    }
+    advance(p)
+    u.vec_pushp(n.params, u.s_intern(name.text) as ref void)
+    if !expect_op(p, c"=") {
+        reduce_loop_check(t, illegal)
+        return n
+    }
+    u.vec_pushp(n.kids, parse_expr(p) as ref void)
+    if cur(p).kind == TokenKind.Newline {
+        advance(p)
+    }
+    reduce_loop_check(t, illegal)
+    return n
 }
 
 fn mark_public(n: mut ref Node) void = trust {
@@ -1118,7 +1234,9 @@ fn parse_while(p: mut ref Parser) ref Node = trust {
     advance(p)
     val cond: ref Node = parse_expr(p)
     u.vec_pushp(n.kids, cond)
+    p.loop_depth++
     u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
+    p.loop_depth--
     return n
 }
 
@@ -1175,7 +1293,9 @@ fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = tr
     }
     val iter: ref Node = parse_expr(p)
     u.vec_pushp(n.kids, iter)
+    p.loop_depth++
     u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
+    p.loop_depth--
     return n
 }
 
@@ -1292,7 +1412,10 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
         u.vec_pushp(n.kids, body as ref void)
         return n
     }
+    val saved_depth: i64 = p.loop_depth
+    p.loop_depth = 0
     val body: ref Node = parse_suite(p, t.line, t.col)
+    p.loop_depth = saved_depth
     u.vec_pushp(n.kids, body)
     return n
 }
@@ -2150,7 +2273,10 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
             advance(p)
         }
         if !arrow && cur(p).kind == TokenKind.Op && text_is(cur(p), c"{") {
+            val saved_depth: i64 = p.loop_depth
+            p.loop_depth = 0
             u.vec_pushp(n.kids, parse_suite(p, t.line, t.col) as ref void)
+            p.loop_depth = saved_depth
         } else {
             val body: mut ref Node = node_new(NodeKind.Block, t.line, t.col)
             val ret: mut ref Node = node_new(NodeKind.Return, t.line, t.col)
@@ -2172,6 +2298,7 @@ pub fn parse(src: ref u8) ref Node = trust {
     p.toks = toks
     p.src = src
     p.i = 0
+    p.loop_depth = 0
     val program: mut ref Node = node_new(NodeKind.Program, 1, 1)
     for {
         skip_newlines(p)

@@ -483,6 +483,15 @@ fn collect_symbols(n: ref lang.Node, out: mut ref u.Vec) void = trust {
         add_symbol(out, n.s, 12, n.line, n.col, n.params)
     } elif n.kind == lang.NodeKind.VarDecl {
         add_symbol(out, n.s, 13, n.line, n.col, none)
+    } elif n.kind == lang.NodeKind.ReduceDecl {
+        val k: mut i64 = 0
+        for {
+            if k >= n.params.len {
+                break
+            }
+            add_symbol(out, u.vec_p(n.params, k) as ref u8, 13, n.line, n.col, none)
+            k++
+        }
     } elif n.kind == lang.NodeKind.For || n.kind == lang.NodeKind.ParaFor {
         add_symbol(out, n.s, 13, n.line, n.col, none)
     }

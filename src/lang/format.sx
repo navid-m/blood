@@ -540,22 +540,34 @@ fn valid_lhs(s: ref u8) bool = trust {
 fn is_var_block_open(s: ref u8) bool = trust {
     val t: ref u8 = u.s_trim(s)
     val n: i64 = u.s_len(t)
-    if n < 4 || !u.s_starts(t, c"var") {
+    if n < 4 || @load8(@ptradd(t, n - 1)) != 40 {
         return false
     }
-    val i: mut i64 = 3
+    val i: mut i64 = n - 2
     for {
-        if i >= n {
+        if i < 0 {
             return false
         }
         val c: u8 = @load8(@ptradd(t, i))
         if c == 32 || c == 9 {
-            i++
+            i--
             continue
         }
         break
     }
-    return i == n - 1 && @load8(@ptradd(t, i)) == 40
+    if i < 2 {
+        return false
+    }
+    if @load8(@ptradd(t, i)) != 114 || @load8(@ptradd(t, i - 1)) != 97 || @load8(@ptradd(t, i - 2)) != 118 {
+        return false
+    }
+    if i >= 3 {
+        val before: u8 = @load8(@ptradd(t, i - 3))
+        if (before >= 65 && before <= 90) || (before >= 97 && before <= 122) || (before >= 48 && before <= 57) || before == 95 {
+            return false
+        }
+    }
+    return true
 }
 
 fn align_assignments(codes: mut ref u.Vec, indents: ref u.Vec) void = trust {
