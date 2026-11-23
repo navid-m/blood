@@ -1,8 +1,3 @@
-warning: unused function 'add32_6'
- --> spectrelib/crypto/core.sx:202:4
-    |
-202 | fn add32_6(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) u64 = {
-    |    ^^^^^^^
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
 #endif
@@ -1591,7 +1586,7 @@ static char sx__str1213[]="show this help message";
 static char sx__str1214[]="-h, -help";
 static char sx__str1215[]="blood ";
 static char sx__str1216[]="v0.1.5";
-static char sx__str1217[]="913abdb";
+static char sx__str1217[]="e928801";
 static char sx__str1218[]="usage: blood [options] [script.blood|script.bx [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  -init            write a default configuration file\n  -login           initialize a login-shell environment\n  -translate-sh    translate .sh/.bash files or directories to .bx\n  -fmt             format Blood scripts or directories in place\n  -lsp             run the Blood language server over stdio\n  -ref             write the language reference to BLOOD_LANGUAGE_REFERENCE.adoc\n  -stdout          print -ref output to stdout\n  -o DIR           write translated files under DIR\n  -version, -v     print the version\n  -help, -h        show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n";
 static char sx__str1219[]=" — type ";
 static char sx__str1220[]=" for commands, ";
