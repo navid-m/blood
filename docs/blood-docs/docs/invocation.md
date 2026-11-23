@@ -1,5 +1,7 @@
 # Invocation
 
+### Overview of invocation modes
+
 The executable is invoked in one of the following forms.
 
 ```text

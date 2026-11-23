@@ -1,0 +1,86 @@
+[project]
+site_name = "bloodshell"
+site_description = "The observable behaviour of the Blood shell, its command language, configuration system, and scripting language."
+site_author = "Navid Momtahen"
+copyright = "Copyright &copy; 2026 Navid Momtahen. Licensed under GPL-3.0-only."
+docs_dir = "docs"
+
+extra_css = ["stylesheets/extra.css"]
+
+# Grouped so the top bar has ~6 entries instead of 16
+nav = [
+  { "Home" = "index.md" },
+  { "Basics" = [
+    { "Terminology" = "terminology.md" },
+    { "Invocation" = "invocation.md" },
+    { "Bash translation" = "bash-translation.md" },
+  ] },
+  { "Shell" = [
+    { "Configuration" = "configuration.md" },
+    { "Interactive terminal" = "interactive-terminal.md" },
+    { "Prompt" = "prompt.md" },
+    { "History" = "history.md" },
+    { "Completion" = "completion.md" },
+  ] },
+  { "Language" = [
+    { "Command language" = "command-language.md" },
+    { "Scripting language" = "scripting-language.md" },
+  ] },
+  { "Reference" = [
+    { "Diagnostics" = "diagnostics.md" },
+    { "Performance characteristics" = "performance.md" },
+    { "Known deviations" = "limitations.md" },
+  ] },
+  { "Appendix: Default Settings" = "appendix-defaults.md" },
+]
+repo_url = "https://github.com/navid-m/blood"
+repo_name = "navid-m/blood"
+
+[project.extra]
+generator = false
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/navid-m/blood"
+
+[[project.extra.social]]
+icon = "fontawesome/solid/globe"
+link = "https://bloodshell.pages.dev"
+[project.theme]
+logo = "assets/blood.png"
+favicon = "assets/blood.png"
+features = [
+  "navigation.indexes",
+  "navigation.sections", # render top-level groups as headed sections in the sidebar
+  "navigation.expand",   # keep all groups expanded
+  "navigation.path",     # breadcrumbs above the page title
+  "navigation.top",      # back-to-top button
+]
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "custom"
+
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.def_list]
+[project.markdown_extensions.md_in_html]
+[project.markdown_extensions.tables]
+
+[project.markdown_extensions.toc]
+permalink = true
+toc_depth = 3
+
+[project.markdown_extensions.pymdownx.details]
+
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = false
+
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.superfences]
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+
+[project.markdown_extensions.pymdownx.tasklist]
+custom_checkbox = false
