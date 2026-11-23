@@ -6923,6 +6923,7 @@ pub fn needs_continuation(line: ref u8) bool = trust {
     }
     // Unbalanced quotes or brackets.
     val quote: mut u8 = 0
+    val triple: mut bool = false
     val depth: mut i64 = 0
     val i: mut i64 = 0
     for {
@@ -6935,7 +6936,14 @@ pub fn needs_continuation(line: ref u8) bool = trust {
                 i += 2
                 continue
             }
-            if c == quote {
+            if triple {
+                if c == quote && i + 2 < n && @load8(@ptradd(t, i + 1)) == quote && @load8(@ptradd(t, i + 2)) == quote {
+                    quote = 0
+                    triple = false
+                    i += 3
+                    continue
+                }
+            } elif c == quote {
                 quote = 0
             }
             i++
@@ -6943,6 +6951,11 @@ pub fn needs_continuation(line: ref u8) bool = trust {
         }
         if c == 39 || c == 34 {
             quote = c
+            if i + 2 < n && @load8(@ptradd(t, i + 1)) == c && @load8(@ptradd(t, i + 2)) == c {
+                triple = true
+                i += 3
+                continue
+            }
         } elif c == 40 || c == 91 || c == 123 {
             depth++
         } elif c == 41 || c == 93 || c == 125 {

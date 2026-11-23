@@ -205,6 +205,145 @@ fn emit(
     u.vec_pushp(lx.tokens, tok_new(kind, text, line, col, start, end) as ref void)
 }
 
+fn is_hspace(c: u8) bool = trust {
+    return c == 32 || c == 9
+}
+
+/// Normalize the body of a triple-quoted string. The opening delimiter must be
+/// followed by a line feed; that first line feed is dropped. When the closing
+/// delimiter sits on its own line, the final line feed and the indentation
+/// before the delimiter are dropped too. The indentation shared by the
+/// remaining non-blank lines is then removed.
+fn dedent_multiline(s: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(s)
+    if n == 0 || @load8(s) != 10 {
+        return s
+    }
+    val start: i64 = 1
+    if start >= n {
+        return u.s_dup(c"")
+    }
+    val last_nl: mut i64 = -1
+    val i: mut i64 = start
+    for {
+        if i >= n {
+            break
+        }
+        if @load8(@ptradd(s, i)) == 10 {
+            last_nl = i
+        }
+        i++
+    }
+    val end: mut i64 = n
+    if last_nl >= start {
+        val trailing_indent: mut bool = true
+        val j: mut i64 = last_nl + 1
+        for {
+            if j >= n {
+                break
+            }
+            if !is_hspace(@load8(@ptradd(s, j))) {
+                trailing_indent = false
+                break
+            }
+            j++
+        }
+        if trailing_indent {
+            end = last_nl
+        }
+    }
+    if end <= start {
+        return u.s_dup(c"")
+    }
+    val common: mut i64 = -1
+    val line_start: mut i64 = start
+    for {
+        if line_start >= end {
+            break
+        }
+        val line_end: mut i64 = line_start
+        for {
+            if line_end >= end {
+                break
+            }
+            if @load8(@ptradd(s, line_end)) == 10 {
+                break
+            }
+            line_end++
+        }
+        val content: mut i64 = line_start
+        for {
+            if content >= line_end {
+                break
+            }
+            if !is_hspace(@load8(@ptradd(s, content))) {
+                break
+            }
+            content++
+        }
+        if content < line_end {
+            val indent: i64 = content - line_start
+            if common < 0 || indent < common {
+                common = indent
+            }
+        }
+        if line_end >= end {
+            break
+        }
+        line_start = line_end + 1
+    }
+    if common < 0 {
+        common = 0
+    }
+    val out: mut ref u.Buf = u.buf_new()
+    line_start = start
+    for {
+        if line_start >= end {
+            break
+        }
+        val line_end: mut i64 = line_start
+        for {
+            if line_end >= end {
+                break
+            }
+            if @load8(@ptradd(s, line_end)) == 10 {
+                break
+            }
+            line_end++
+        }
+        val content: mut i64 = line_start
+        for {
+            if content >= line_end {
+                break
+            }
+            if !is_hspace(@load8(@ptradd(s, content))) {
+                break
+            }
+            content++
+        }
+        val from: mut i64 = line_end
+        if content < line_end {
+            val indent: i64 = content - line_start
+            val strip: i64 = common
+            if strip < indent {
+                from = line_start + strip
+            } else {
+                from = content
+            }
+        }
+        if line_end > from {
+            u.buf_addn(out, @ptradd(s, from), line_end - from)
+        }
+        if line_end < end {
+            u.buf_ch(out, 10)
+            line_start = line_end + 1
+        } else {
+            break
+        }
+    }
+    return u.buf_take(out)
+}
+
 pub fn lex(src: ref u8) ref u.Vec = trust {
     val lx: mut ref Lexer = u.xalloc(@sizeof(Lexer) as i64) as ref Lexer
     lx.src = src
@@ -405,8 +544,14 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
             val quote: u8 = c
             val sline: i64 = lx.line
             val scol: i64 = lx.col
-            lx.pos++
-            lx.col++
+            val triple: bool = lx.pos + 2 < lx.len && @load8(@ptradd(lx.src, lx.pos + 1)) == quote && @load8(@ptradd(lx.src, lx.pos + 2)) == quote
+            if triple {
+                lx.pos += 3
+                lx.col += 3
+            } else {
+                lx.pos++
+                lx.col++
+            }
             val b: mut ref u.Buf = u.buf_new()
             val closed: mut bool = false
             for {
@@ -414,11 +559,27 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
                     break
                 }
                 val d: u8 = @load8(@ptradd(lx.src, lx.pos))
-                if d == quote {
+                if triple {
+                    if d == quote && lx.pos + 2 < lx.len && @load8(@ptradd(lx.src, lx.pos + 1)) == quote && @load8(@ptradd(lx.src, lx.pos + 2)) == quote {
+                        lx.pos += 3
+                        lx.col += 3
+                        closed = true
+                        break
+                    }
+                } else {
+                    if d == quote {
+                        lx.pos++
+                        lx.col++
+                        closed = true
+                        break
+                    }
+                }
+                if d == 10 {
+                    u.buf_ch(b, 10)
                     lx.pos++
-                    lx.col++
-                    closed = true
-                    break
+                    lx.line++
+                    lx.col = 1
+                    continue
                 }
                 if d == 92 {
                     lx.pos++
@@ -448,6 +609,10 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
                     } else {
                         u.buf_ch(b, e)
                     }
+                    if e == 10 {
+                        lx.line++
+                        lx.col = 1
+                    }
                     continue
                 }
                 u.buf_ch(b, d)
@@ -455,9 +620,17 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
                 lx.col++
             }
             if !closed {
-                set_error(sline, scol, c"unterminated string")
+                if triple {
+                    set_error(sline, scol, c"unterminated multiline string")
+                } else {
+                    set_error(sline, scol, c"unterminated string")
+                }
             }
-            emit(lx, TokenKind.Str, u.buf_take(b), start, lx.pos, sline, scol)
+            val text: mut ref u8 = u.buf_take(b)
+            if triple {
+                text = dedent_multiline(text)
+            }
+            emit(lx, TokenKind.Str, text, start, lx.pos, sline, scol)
             continue
         }
         if c == 96 {

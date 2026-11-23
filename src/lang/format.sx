@@ -40,6 +40,25 @@ fn expand_tabs(s: ref u8) ref u8 = trust {
 fn skip_string(s: ref u8, i: i64) i64 = trust {
     val n: i64 = u.s_len(s)
     val quote: u8 = @load8(@ptradd(s, i))
+    if i + 2 < n && @load8(@ptradd(s, i + 1)) == quote && @load8(@ptradd(s, i + 2)) == quote {
+        val j: mut i64 = i + 3
+        for {
+            if j >= n {
+                break
+            }
+            val c: u8 = @load8(@ptradd(s, j))
+            if c == 92 {
+                j += 2
+                continue
+            }
+            if c == quote && j + 2 < n && @load8(@ptradd(s, j + 1)) == quote && @load8(@ptradd(s, j + 2)) == quote {
+                j += 3
+                break
+            }
+            j++
+        }
+        return j
+    }
     val j: mut i64 = i + 1
     for {
         if j >= n {
@@ -103,15 +122,29 @@ fn split_comment(line: ref u8) i64 = trust {
     return -1
 }
 
-fn nesting_delta(s: ref u8) i64 = trust {
+fn nesting_delta_from(s: ref u8, entering: u8) i64 = trust {
     val n: i64 = u.s_len(s)
     val i: mut i64 = 0
     val delta: mut i64 = 0
+    val quote: mut u8 = entering
     for {
         if i >= n {
             break
         }
         val c: u8 = @load8(@ptradd(s, i))
+        if quote != 0 {
+            if c == 92 {
+                i += 2
+                continue
+            }
+            if c == quote && i + 2 < n && @load8(@ptradd(s, i + 1)) == quote && @load8(@ptradd(s, i + 2)) == quote {
+                quote = 0
+                i += 3
+                continue
+            }
+            i++
+            continue
+        }
         if c == 114 && i + 1 < n {
             val q: u8 = @load8(@ptradd(s, i + 1))
             if q == 34 || q == 39 {
@@ -120,6 +153,11 @@ fn nesting_delta(s: ref u8) i64 = trust {
             }
         }
         if c == 34 || c == 39 {
+            if i + 2 < n && @load8(@ptradd(s, i + 1)) == c && @load8(@ptradd(s, i + 2)) == c {
+                quote = c
+                i += 3
+                continue
+            }
             i = skip_string(s, i)
             continue
         }
@@ -131,6 +169,56 @@ fn nesting_delta(s: ref u8) i64 = trust {
         i++
     }
     return delta
+}
+
+fn nesting_delta(s: ref u8) i64 = trust {
+    return nesting_delta_from(s, 0)
+}
+
+/// State after scanning one source line: 0 outside a triple-quoted string, or
+/// the quote byte while inside one. This is used by the line-oriented formatter
+/// to leave multiline string bodies untouched.
+fn triple_state_after(s: ref u8, entering: u8) u8 = trust {
+    val n: i64 = u.s_len(s)
+    val quote: mut u8 = entering
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if quote != 0 {
+            if c == 92 {
+                i += 2
+                continue
+            }
+            if c == quote && i + 2 < n && @load8(@ptradd(s, i + 1)) == quote && @load8(@ptradd(s, i + 2)) == quote {
+                quote = 0
+                i += 3
+                continue
+            }
+            i++
+            continue
+        }
+        if c == 114 && i + 1 < n {
+            val q: u8 = @load8(@ptradd(s, i + 1))
+            if q == 34 || q == 39 {
+                i = skip_raw_string(s, i)
+                continue
+            }
+        }
+        if c == 34 || c == 39 {
+            if i + 2 < n && @load8(@ptradd(s, i + 1)) == c && @load8(@ptradd(s, i + 2)) == c {
+                quote = c
+                i += 3
+                continue
+            }
+            i = skip_string(s, i)
+            continue
+        }
+        i++
+    }
+    return quote
 }
 
 fn leading_closers(s: ref u8) i64 = trust {
@@ -570,11 +658,15 @@ fn is_var_block_open(s: ref u8) bool = trust {
     return true
 }
 
-fn align_assignments(codes: mut ref u.Vec, indents: ref u.Vec) void = trust {
+fn align_assignments(codes: mut ref u.Vec, indents: ref u.Vec, raws: ref u.Vec) void = trust {
     val i: mut i64 = 0
     for {
         if i >= codes.len {
             break
+        }
+        if u.vec_gets(raws, i) != 0 {
+            i++
+            continue
         }
         val code: ref u8 = u.vec_p(codes, i) as ref u8
         val at: i64 = find_assign(code)
@@ -594,7 +686,7 @@ fn align_assignments(codes: mut ref u.Vec, indents: ref u.Vec) void = trust {
             if j >= codes.len {
                 break
             }
-            if u.vec_gets(indents, j) != indent {
+            if u.vec_gets(raws, j) != 0 || u.vec_gets(indents, j) != indent {
                 break
             }
             val line: ref u8 = u.vec_p(codes, j) as ref u8
@@ -836,11 +928,15 @@ fn add_call_parens(src: ref u8) ref u8 = trust {
     return apply_edits(src, positions, texts, cuts)
 }
 
-fn parenthesize_say(codes: mut ref u.Vec) void = trust {
+fn parenthesize_say(codes: mut ref u.Vec, raws: ref u.Vec) void = trust {
     val i: mut i64 = 0
     for {
         if i >= codes.len {
             break
+        }
+        if u.vec_gets(raws, i) != 0 {
+            i++
+            continue
         }
         val code: ref u8 = u.vec_p(codes, i) as ref u8
         if u.s_eq(code, c"say") {
@@ -856,19 +952,32 @@ fn parenthesize_say(codes: mut ref u.Vec) void = trust {
     }
 }
 
-fn join_codes(codes: ref u.Vec, comments: ref u.Vec, indents: ref u.Vec) ref u8 = trust {
+fn join_codes(
+    codes: ref u.Vec,
+    comments: ref u.Vec,
+    indents: ref u.Vec,
+    raws: ref u.Vec
+) ref u8 = trust {
     val b: mut ref u.Buf = u.buf_new()
     val k: mut i64 = 0
     for {
         if k >= codes.len {
             break
         }
-        output_line(
-            b,
-            u.vec_gets(indents, k),
-            u.vec_p(codes, k) as ref u8,
-            u.vec_p(comments, k) as ref u8
-        )
+        val code: ref u8 = u.vec_p(codes, k) as ref u8
+        if u.vec_gets(raws, k) != 0 {
+            if u.s_len(code) > 0 {
+                u.buf_add(b, code)
+            }
+            u.buf_ch(b, 10)
+        } else {
+            output_line(
+                b,
+                u.vec_gets(indents, k),
+                code,
+                u.vec_p(comments, k) as ref u8
+            )
+        }
         k++
     }
     return u.buf_take(b)
@@ -880,10 +989,12 @@ pub fn format_text(src: ref u8) ref u8 = trust {
     val codes: mut ref u.Vec = u.vec_new()
     val comments: mut ref u.Vec = u.vec_new()
     val indents: mut ref u.Vec = u.vec_new()
+    val raws: mut ref u.Vec = u.vec_new()
     val depth: mut i64 = 0
     val var_depth: mut i64 = 0
     val start: mut i64 = 0
     val i: mut i64 = 0
+    val triple: mut u8 = 0
     for {
         if i > n {
             break
@@ -893,54 +1004,90 @@ pub fn format_text(src: ref u8) ref u8 = trust {
         }
         if i == n || @load8(@ptradd(text, i)) == 10 {
             val raw: ref u8 = u.s_substr(text, start, i)
-            val line: ref u8 = u.s_trim(raw)
-            if u.s_len(line) == 0 {
-                u.vec_pushp(codes, c"" as ref void)
+            if triple != 0 {
+                u.vec_pushp(codes, raw as ref void)
                 u.vec_pushp(comments, c"" as ref void)
                 u.vec_push(indents, 0)
+                u.vec_push(raws, 1)
+                depth += nesting_delta_from(raw, triple)
+                if depth < 0 {
+                    depth = 0
+                }
+                triple = triple_state_after(raw, triple)
             } else {
-                val at: i64 = split_comment(line)
-                val code: mut ref u8 = c""
-                val comment: mut ref u8 = c""
-                if at < 0 {
-                    code = u.s_trim(line)
-                } else {
-                    code = u.s_trim(u.s_substr(line, 0, at))
-                    comment = u.s_trim(u.s_substr(line, at, u.s_len(line)))
-                }
-                if var_depth > 0 && u.s_eq(code, c")") {
-                    var_depth--
-                }
-                if u.s_len(code) == 0 {
+                val line: ref u8 = u.s_trim(raw)
+                if u.s_len(line) == 0 {
                     u.vec_pushp(codes, c"" as ref void)
-                    u.vec_pushp(comments, comment as ref void)
-                    u.vec_push(indents, depth + var_depth)
-                } elif u.s_eq(code, c"{") && codes.len > 0 {
-                    val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
-                    if u.s_len(prev) > 0 && !u.s_starts(prev, c"#") && can_open_block(prev) {
-                        val merged: ref u8 = u.s_cat(prev, c" {")
-                        u.vec_setp(codes, codes.len - 1, merged as ref void)
-                        depth++
+                    u.vec_pushp(comments, c"" as ref void)
+                    u.vec_push(indents, 0)
+                    u.vec_push(raws, 0)
+                } else {
+                    val at: i64 = split_comment(line)
+                    val code: mut ref u8 = c""
+                    val comment: mut ref u8 = c""
+                    if at < 0 {
+                        code = u.s_trim(line)
                     } else {
-                        u.vec_pushp(codes, code as ref void)
-                        u.vec_pushp(comments, comment as ref void)
-                        u.vec_push(indents, depth)
-                        depth += nesting_delta(code)
+                        code = u.s_trim(u.s_substr(line, 0, at))
+                        comment = u.s_trim(u.s_substr(line, at, u.s_len(line)))
                     }
-                } elif (u.s_starts(
-                        code,
-                        c"else"
-                    ) || u.s_starts(
-                        code,
-                        c"catch"
-                    ) || u.s_starts(code, c"except")) && codes.len > 0 {
-                    val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
-                    if u.s_eq(u.s_trim(prev), c"}") {
-                        val merged: ref u8 = u.s_cat3(prev, c" ", code)
-                        u.vec_setp(codes, codes.len - 1, merged as ref void)
-                        depth += nesting_delta(code)
-                        if depth < 0 {
-                            depth = 0
+                    val next_triple: u8 = triple_state_after(code, 0)
+                    if var_depth > 0 && u.s_eq(code, c")") {
+                        var_depth--
+                    }
+                    if u.s_len(code) == 0 {
+                        u.vec_pushp(codes, c"" as ref void)
+                        u.vec_pushp(comments, comment as ref void)
+                        u.vec_push(indents, depth + var_depth)
+                        u.vec_push(raws, 0)
+                    } elif u.s_eq(code, c"{") && codes.len > 0 && u.vec_gets(
+                            raws,
+                            codes.len - 1
+                        ) == 0 {
+                        val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
+                        if u.s_len(prev) > 0 && !u.s_starts(prev, c"#") && can_open_block(prev) {
+                            val merged: ref u8 = u.s_cat(prev, c" {")
+                            u.vec_setp(codes, codes.len - 1, merged as ref void)
+                            depth++
+                        } else {
+                            u.vec_pushp(codes, code as ref void)
+                            u.vec_pushp(comments, comment as ref void)
+                            u.vec_push(indents, depth)
+                            u.vec_push(raws, 0)
+                            depth += nesting_delta(code)
+                        }
+                    } elif (u.s_starts(
+                            code,
+                            c"else"
+                        ) || u.s_starts(
+                            code,
+                            c"catch"
+                        ) || u.s_starts(code, c"except")) && codes.len > 0 && u.vec_gets(
+                            raws,
+                            codes.len - 1
+                        ) == 0 {
+                        val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
+                        if u.s_eq(u.s_trim(prev), c"}") {
+                            val merged: ref u8 = u.s_cat3(prev, c" ", code)
+                            u.vec_setp(codes, codes.len - 1, merged as ref void)
+                            depth += nesting_delta(code)
+                            if depth < 0 {
+                                depth = 0
+                            }
+                        } else {
+                            val alloc: i64 = leading_closers(code)
+                            val level: mut i64 = depth - alloc + var_depth
+                            if level < 0 {
+                                level = 0
+                            }
+                            u.vec_pushp(codes, code as ref void)
+                            u.vec_pushp(comments, comment as ref void)
+                            u.vec_push(indents, level)
+                            u.vec_push(raws, 0)
+                            depth += nesting_delta(code)
+                            if depth < 0 {
+                                depth = 0
+                            }
                         }
                     } else {
                         val alloc: i64 = leading_closers(code)
@@ -951,36 +1098,25 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                         u.vec_pushp(codes, code as ref void)
                         u.vec_pushp(comments, comment as ref void)
                         u.vec_push(indents, level)
+                        u.vec_push(raws, 0)
                         depth += nesting_delta(code)
                         if depth < 0 {
                             depth = 0
                         }
                     }
-                } else {
-                    val alloc: i64 = leading_closers(code)
-                    val level: mut i64 = depth - alloc + var_depth
-                    if level < 0 {
-                        level = 0
+                    if is_var_block_open(code) {
+                        var_depth++
                     }
-                    u.vec_pushp(codes, code as ref void)
-                    u.vec_pushp(comments, comment as ref void)
-                    u.vec_push(indents, level)
-                    depth += nesting_delta(code)
-                    if depth < 0 {
-                        depth = 0
-                    }
-                }
-                if is_var_block_open(code) {
-                    var_depth++
+                    triple = next_triple
                 }
             }
             start = i + 1
         }
         i++
     }
-    parenthesize_say(codes)
-    align_assignments(codes, indents)
-    val out: ref u8 = join_codes(codes, comments, indents)
+    parenthesize_say(codes, raws)
+    align_assignments(codes, indents, raws)
+    val out: ref u8 = join_codes(codes, comments, indents, raws)
     return add_call_parens(out)
 }
 

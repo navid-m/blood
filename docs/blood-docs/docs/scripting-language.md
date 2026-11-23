@@ -59,6 +59,15 @@ Interpolation errors use the location information of the inner expression and ma
 
 A raw string is written `r"..."` or `r'...'`. Raw strings perform no escape processing and no `{...}` interpolation, so backslashes and braces are taken literally. This is useful for regular expressions and other patterns that are dense in backslashes.
 
+A multiline string is delimited by three matching quotes, `"""..."""` or `'''...'''`. Escape processing and interpolation apply as for other quoted strings, and line feeds inside the literal are preserved. Triple quotes may contain unescaped single and double quotes. When the opening delimiter is followed by a line feed, that first line feed is ignored. When the closing delimiter is also on a line by itself, the line feed before it and the indentation shared by the content lines are removed.
+
+```blood
+sh("""
+cat first.txt
+cat second.txt
+""")
+```
+
 ### Command substitution literals
 
 Outside strings, `` `COMMANDS` `` and `$(COMMANDS)` denote command substitution. They are lexed as a single expression token. The commands are executed by the shell in a child process, trailing newlines are removed, and the result is a string value. The completion status becomes the value of the script variable `status`.
@@ -700,7 +709,9 @@ FLOAT        = digit { digit }
                ( "." digit { digit } [ exponent ] | exponent ) ;
 exponent     = ( "e" | "E" ) [ "+" | "-" ] digit { digit } ;
 STRING       = "'" { string-byte } "'"
-             | '"' { string-byte } '"' ;
+             | '"' { string-byte } '"'
+             | "'''" { any-byte } "'''"
+             | '"""' { any-byte } '"""' ;
 RAWSTRING    = ( "r'" { any-byte } "'" | 'r"' { any-byte } '"' ) ;
 CMDSUB       = "`" { any-byte } "`"
              | "$(" { any-byte } ")" ;

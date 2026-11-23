@@ -1,0 +1,2513 @@
+:toc: left
+:toclevels: 3
+:sectnums:
+
+= Blood Shell Specification
+
+This document specifies the Blood shell as implemented by version 0.1.0.
+It describes the observable behaviour of the interactive shell, its command
+language, its configuration system, and the Blood scripting language. It is a
+specification of the implementation rather than a statement of future intent.
+Where the implementation is deliberately permissive or incomplete, that is
+stated explicitly.
+
+The implementation is written in Spectre and is built with the Spectre
+toolchain version recorded in `sx.mod`. The current build targets Linux with a
+POSIX-style C library and uses dynamic linking. Other operating systems are not
+supported by this build.
+
+== Terminology
+
+The words *shall*, *must*, *should*, and *may* are used in their conventional
+normative sense. A *shell command* is a command entered in the interactive
+shell or executed by the command interpreter. A *script* is a sequence of
+Blood language statements. A *line* is a sequence of bytes terminated by a
+line feed or by end of input.
+
+The shell has two execution domains:
+
+* The command domain, described in <<command-language>>.
+* The scripting domain, described in <<scripting-language>>.
+
+Both domains share the same process, working directory, environment, and file
+descriptors. A script may execute shell commands and a shell command may run a
+script.
+
+== Invocation
+
+The executable is invoked as one of:
+
+[source]
+----
+blood
+blood -c COMMAND
+blood SCRIPT.blood|SCRIPT.bx [ARG...]
+blood -init
+blood -fmt PATH...
+blood -translate-sh [-o DIR] PATH...
+blood -ref [-stdout]
+blood -version
+blood -help
+----
+
+`blood` with no operands starts an interactive shell when standard input is a
+terminal. If standard input is not a terminal, Blood reads standard input to
+end of file and executes it.
+
+`blood -c COMMAND` executes `COMMAND` and exits. If the first non-empty line
+of `COMMAND` has the shape of a scripting statement, the command is executed
+as a script. Otherwise it is executed as a shell command.
+
+`blood SCRIPT.blood ARG...` or `blood SCRIPT.bx ARG...` reads and executes the
+named script. Remaining arguments are exposed to the script as the list
+variable `args`. The script name is exposed as `__file__`.
+
+`blood -translate-sh PATH...` translates bash scripts to Blood scripts. Each
+`PATH` may be a `.sh` or `.bash` file or a directory. Directories are walked
+recursively and every bash script below them is translated. By default the
+translated file is written beside its source with the extension replaced by
+`.bx`; `-o DIR` (also `-out DIR`) writes the results below `DIR`, preserving
+the directory structure relative to the translated directory. The command
+prints one `SOURCE -> TARGET` line per translated file and exits with status 1
+when an input cannot be read or written.
+
+`blood -fmt PATH...` formats Blood scripts in place. Each `PATH` may be a
+file or a directory. Directories are walked recursively and every `.bx` or
+`.blood` file below them is formatted. The formatter normalises indentation to
+four spaces, places opening braces on the same line as their header, removes
+Allman-style brace lines, aligns consecutive assignments and var declarations
+(including bulk `var` blocks), and writes calls
+with parentheses where the call is unambiguous. Files that cannot be read or
+written are reported and produce status 1.
+
+`blood -init` writes a default configuration file at the configuration path
+if no file exists there. Parent directories are created. If the file already
+exists it is not overwritten.
+
+`blood -version` and `blood -v` print the version line.
+
+`blood -help` and `blood -h` print usage information.
+
+`blood -ref` writes the language reference embedded in the executable to
+`BLOOD_LANGUAGE_REFERENCE.adoc` in the current directory. With `-stdout`, the
+reference is written to standard output instead.
+
+An unrecognised flag beginning with `-` produces
+`blood: unknown flag 'OPTION'` and status 2. Command-line options use the
+Plan 9 single-dash form. Parsing stops at the first positional argument, so
+script arguments beginning with `-` are passed through unchanged.
+
+=== Process model
+
+The shell does not replace itself when executing a command. External commands
+are children created with `fork` and replaced with `execvp`. Pipelines create
+one child per stage. Background commands create a wrapper child. Builtins run
+in the shell process unless they occur in a pipeline or a background command,
+in which case they run in the child.
+
+The shell never invokes `/bin/sh` for ordinary command execution. A shell
+command is parsed and executed directly. `/bin/sh` is used only by external
+programs that choose to invoke it.
+
+=== Exit status
+
+[cols="1,3",options="header"]
+|===
+|Status |Meaning
+|0 |Success.
+|1 |General failure, including failed redirection, failed `cd`, a runtime
+script error, or a failed `source`.
+|2 |Command syntax error, script syntax error, or invalid `exit` argument.
+|126 |Reserved for a non-executable command when reported by the platform.
+|127 |Command not found, or `exit` with a failed process launch.
+|128+N |Command terminated by signal N.
+|130 |Interrupted by SIGINT.
+|===
+
+A pipeline returns the status of its last stage. `&&` and `||` use the status
+of the previous segment. A background command returns 0 in the parent.
+
+=== Environment
+
+The shell inherits the process environment. Shell variables and exported
+environment variables are related but distinct:
+
+* A plain assignment such as `NAME=value` creates or updates a shell variable.
+* `export NAME=value` creates or updates a shell variable and the process
+  environment.
+* A command prefix such as `NAME=value command` sets the variable in the
+  child environment for that command. For builtins the assignment is applied
+  temporarily and then restored.
+* `unset NAME` removes the shell variable and the environment variable.
+
+Variable lookup first checks shell variables and then the process
+environment.
+
+=== Signals
+
+The interactive shell installs a SIGINT handler that sets an interrupt flag.
+SIGQUIT, SIGTERM, and SIGTSTP are ignored by the shell process. External
+children restore the default dispositions for SIGINT, SIGQUIT, SIGTERM,
+SIGTSTP, SIGTTIN, and SIGTTOU before `exec`.
+
+While the line editor is active the terminal is in raw mode and the ISIG flag
+is disabled, so Ctrl-C and Ctrl-Z arrive as ordinary bytes. While a command is
+executing the original terminal settings are restored, so Ctrl-C is delivered
+to the foreground child. When the child terminates, the shell resumes editing
+with a new prompt.
+
+A script can be interrupted at a loop boundary or before or after a shell
+command. An external command interrupted by Ctrl-C normally produces status
+130.
+
+== Bash translation
+
+`-translate-sh` converts the common bash scripting constructs into their
+Blood equivalents while keeping the result ordinary, editable Blood source.
+Translation is deliberately conservative: a construct that has no faithful
+Blood equivalent is retained as a `shell` statement or emitted as a comment.
+
+The following constructs are translated:
+
+* Variable assignment (`NAME=VALUE`, `NAME+=VALUE`, arrays, `local`,
+  `declare`, `readonly`, and `export`) becomes a Blood assignment. Assigned
+  names are seeded from the environment before the script body runs and are
+  mirrored into the shell variable table so later commands can still use
+  `$NAME`. Array variables become Blood lists.
+* `echo` becomes `say` when the arguments can be expressed as Blood values.
+* `if`, `elif`, `else`, `while`, `until`, `for NAME in LIST`, C-style
+  `for ((...))`, `case`, and function declarations become brace-delimited
+  Blood statements. `case` clauses become an `if`/`elif` chain.
+* `[ ... ]`, `[[ ... ]]`, and `test ...` conditions become Blood expressions.
+  String tests, numeric tests, boolean operators, and common file tests are
+  supported. File tests use the platform `test` utility through `shell`.
+* `$(...)` and backtick command substitution become `sh(...)`.
+  `$((...))` arithmetic becomes a Blood arithmetic expression.
+* `$NAME`, `${NAME}`, `${NAME:-default}`, `${#NAME}`, positional parameters,
+  `$?`, `$#`, and `$@` are mapped to Blood variables and the standard `args`,
+  `status`, and `__file__` values.
+* `read -r NAME` becomes `NAME = std.input()`. Later commands are wrapped in
+  `sh(...)` so arbitrary command lines, pipelines, and redirections keep
+  working even when the script parser would otherwise read them as
+  expressions.
+
+The translator does not implement heredocs, process substitution, traps,
+bash `set` options, `BASH_SOURCE`, associative arrays, or arbitrary parameter
+expansion modifiers. These are preserved as comments or ordinary shell
+statements and may need manual adjustment.
+
+== Configuration
+
+=== Location and lifecycle
+
+The configuration file is:
+
+[source]
+----
+$XDG_CONFIG_HOME/blood/blood.ini
+----
+
+when `XDG_CONFIG_HOME` is set and non-empty, and otherwise:
+
+[source]
+----
+$HOME/.config/blood/blood.ini
+----
+
+The configuration directory and the directory containing the history file are
+created at startup if they do not exist. The configuration file itself is not
+created automatically; use `blood -init`.
+
+Configuration is loaded once at process startup. It is not reloaded while the
+shell is running.
+
+A missing configuration file is not an error. Every setting has a default.
+
+=== File syntax
+
+The file uses a sectioned INI syntax:
+
+[source,ini]
+----
+# comment
+[section]
+key = value
+----
+
+* Leading and trailing whitespace is removed from keys and values.
+* A line whose first non-whitespace byte is `#` or `;` is a comment.
+* Inline comments are not recognised.
+* Section headers have the form `[name]`.
+* Keys before the first section are interpreted as belonging to the
+  `prompt` section.
+* A value may be enclosed in matching single or double quotation marks; those
+  marks are removed.
+* Blank lines are ignored.
+* Unknown keys are ignored.
+* Unknown sections are ignored except for `aliases` and `env`.
+* A line without `=` in a non-`aliases`, non-`env` section produces a
+  diagnostic and is skipped.
+
+Boolean values are `true`, `yes`, `on`, and `1` for true, and `false`, `no`,
+`off`, and `0` for false. Boolean and integer keys are case sensitive.
+
+A malformed line, an invalid boolean, or an invalid integer produces a
+diagnostic on standard error and the shell continues with the default or
+previously assigned value.
+
+=== Settings
+
+==== `[prompt]`
+
+[cols="1,1,3",options="header"]
+|===
+|Key |Type |Default and effect
+|`theme` |string |`default`. Selects a prompt preset. Available presets are
+`default`, `plain`, `lambda`, `powerline`, `right`, `right_time`, `hacker`,
+`dots`, `compact`, `iconified`, `timestamped`, and `doubleline`. An
+unrecognised value behaves as `default`.
+|`show_username` |boolean |`true`. Includes the user name.
+|`show_hostname` |boolean |`true`. Includes the host name, normally with `@`
+between username and host.
+|`show_directory` |boolean |`true`. Includes the current directory.
+|`show_git` |boolean |`true`. Includes Git branch and dirty state when a Git
+repository is found.
+|`show_time` |boolean |`false`. Includes the time. The default layout uses
+`HH:MM:SS`; presets that show time use `HH:MM`.
+|`show_exit_status` |boolean |`true`. Includes a failure marker and status when
+the previous status is non-zero.
+|`show_duration` |boolean |`true`. Includes the duration of the previous
+command when it is at least 500 milliseconds.
+|`show_jobs` |boolean |`true`. Includes the number of running background jobs
+when non-zero.
+|`show_mode` |boolean |`false`. Accepted but currently not rendered.
+|`two_line` |boolean |`true`. Selects the two-line box layout. Ignored when
+`theme` is `plain`.
+|`symbol` |string |`❯`. Sets both `prompt_symbol` and `prompt_char`.
+|`prompt_symbol` |string |`❯`. Alias for `symbol`.
+|`prompt_char` |string |`❯`. The character printed before the cursor.
+|`separator` |string |`─`. Accepted but currently not rendered.
+|`directory_style` |string |`full`. One of `full`, `short`, or `basename`.
+|===
+
+`full` shows the complete directory with the home directory abbreviated to
+`~`. `short` shows the final two path components. `basename` shows only the
+final component. An unrecognised value behaves as `full`.
+
+==== `[colors]`
+
+[cols="1,1,2",options="header"]
+|===
+|Key |Default |Use
+|`primary` |`cyan` |Username and prompt character.
+|`secondary` |`magenta` |Host name.
+|`success` |`green` |Accepted for compatibility; currently not rendered.
+|`error` |`red` |Failure status.
+|`directory` |`blue` |Directory.
+|`git_clean` |`green` |Clean Git branch.
+|`git_dirty` |`yellow` |Dirty Git branch and dirty marker.
+|`muted` |`bright_black` |Separators, box drawing, time, duration.
+|`warning` |`yellow` |Background job count.
+|`accent` |`bright_cyan` |Accent text in the login banner.
+|===
+
+Colour values may be:
+
+* A name: `default`, `black`, `red`, `green`, `yellow`, `blue`, `magenta`,
+  `cyan`, `white`, `bright_black` (also `gray` and `grey`), `bright_red`,
+  `bright_green`, `bright_yellow`, `bright_blue`, `bright_magenta`,
+  `bright_cyan`, or `bright_white`.
+* A decimal 256-colour index.
+* A `#RRGGBB` value, rendered as a 24-bit foreground colour.
+
+An unrecognised colour produces no escape sequence. Styles such as bold or
+underline cannot be selected independently.
+
+==== `[history]`
+
+[cols="1,1,3",options="header"]
+|===
+|Key |Type |Default and effect
+|`enabled` |boolean |`true`. Enables loading, recording, and saving history.
+|`file` |string |`~/.local/share/blood/history`. Leading `~` is expanded.
+|`max_entries` |integer |`10000`. The maximum number of retained entries.
+|`ignore_duplicates` |boolean |`true`. Suppresses a command identical to the
+immediately preceding command.
+|===
+
+`history_max` is accepted as an alias for `max_entries`.
+
+==== `[completion]`
+
+[cols="1,1,3",options="header"]
+|===
+|Key |Type |Default and effect
+|`enabled` |boolean |`true`. Enables Tab completion.
+|`case_sensitive` |boolean |`false`. Controls prefix matching.
+|`history_suggestions` |boolean |`false`. Enables inline history suggestions.
+|`external` |boolean |`false`. Enables application completion through
+installed Bash completion definitions.
+|===
+
+==== `[shell]`
+
+[cols="1,1,3",options="header"]
+|===
+|Key |Type |Default and effect
+|`default_editor` |string |`nano`. Accepted and stored; no builtin currently
+uses it.
+|`editor` |string |Alias for `default_editor`.
+|`login_message` |boolean |`true`. Prints a one-line banner when an interactive
+session starts.
+|`startup_file` |string |Empty. A script to execute before the interactive
+loop. Leading `~` is expanded.
+|===
+
+In addition, `~/.config/blood/init.blood` is executed before the interactive
+loop when it exists. If both `startup_file` and the default startup file
+exist, both are executed in that order. Startup scripts run after
+configuration and history loading.
+
+==== `.bloodrc`
+
+Blood creates and runs `~/.config/blood/.bloodrc` for every interactive
+session. When `XDG_CONFIG_HOME` is set, the file lives beside `blood.ini`
+under that directory. The file is a normal Blood script and is created with a
+prelude stub when missing:
+
+[source]
+----
+# Aliases:
+# alias ll='ls -l'
+# alias gs='git status'
+
+fn prelude() {
+    # Session setup goes here.
+}
+
+prelude()
+----
+
+Aliases and functions defined in `.bloodrc` are available in the interactive
+shell. The file runs at the start of an interactive session, before
+`startup_file` and `init.blood`. `:rla` reloads the file.
+
+==== `[aliases]`
+
+Each key is an alias name and each value is its replacement text:
+
+[source,ini]
+----
+[aliases]
+ll = ls -l
+gs = git status
+----
+
+Aliases defined here are installed before the interactive loop and before
+`startup_file` is executed.
+
+==== `[env]`
+
+Each key is an environment variable name and each value is its value:
+
+[source,ini]
+----
+[env]
+EDITOR = vim
+PAGER = less
+----
+
+These variables are passed to the process environment before the shell
+initialises its variable table.
+
+=== Default configuration file
+
+`blood -init` writes the following content when the file does not exist:
+
+[source,ini]
+----
+# Blood shell configuration
+# See `blood help config` for the available keys.
+
+[prompt]
+theme = default
+show_username = true
+show_hostname = true
+show_directory = true
+show_git = true
+show_time = false
+show_exit_status = true
+show_duration = true
+two_line = true
+
+[colors]
+primary = cyan
+secondary = magenta
+success = green
+error = red
+directory = blue
+git_clean = green
+git_dirty = yellow
+muted = bright_black
+
+[history]
+enabled = true
+file = ~/.local/share/blood/history
+max_entries = 10000
+ignore_duplicates = true
+
+[completion]
+enabled = true
+case_sensitive = false
+
+[shell]
+default_editor = nano
+login_message = true
+----
+
+== Interactive terminal
+
+=== Terminal selection
+
+The interactive line editor is enabled only when `tcgetattr` succeeds on
+standard input. If standard input is not a terminal, Blood reads lines without
+prompt editing and without a prompt.
+
+The terminal size is queried with `TIOCGWINSZ`. The fallback size is 80
+columns by 24 rows.
+
+=== Raw mode
+
+When the line editor is entered, Blood saves the current terminal settings and
+switches to a raw-like mode:
+
+* `ECHO`, `ICANON`, `IEXTEN`, and `ISIG` are cleared from the local flags.
+* `IXON` and `ICRNL` are cleared from the input flags.
+* `VMIN` is 1 and `VTIME` is 0.
+
+The original settings are restored before any command is executed and when
+the shell exits. This makes Ctrl-C and Ctrl-Z work normally for external
+programs.
+
+The editor assumes an ANSI-compatible terminal and emits ANSI CSI sequences for
+clearing, cursor movement, scrolling, and menu drawing. No terminfo database
+is used.
+
+=== Rendering model
+
+The prompt is rendered once per command line, not once per keystroke. Each
+keystroke redraws the prompt text, the current line, and any open completion
+menu in a single buffered write. Long lines are horizontally scrolled so that
+the cursor remains visible.
+
+Newline bytes stored in a recalled history entry are displayed as `⏎` in the
+line editor. Cursor movement traverses UTF-8 code points. Display width is
+counted in code points, not in terminal cells, so wide East Asian characters
+and combining marks are not width-corrected.
+
+The completion menu is drawn as a bordered rectangle below the prompt line.
+Its height is capped at ten rows and it never fills the terminal. The cursor
+is repositioned to the insertion point after each redraw.
+
+=== Key bindings
+
+[cols="1,3",options="header"]
+|===
+|Key |Action
+|Printable character |Insert at the cursor.
+|Enter |Accept the current line. While a history search is active, accept the
+matched line.
+|Ctrl-A |Move to the beginning of the line.
+|Ctrl-E |Move to the end of the line.
+|Ctrl-B |Move one code point left.
+|Ctrl-F |Move one code point right.
+|Ctrl-K |Delete from the cursor to the end of the line.
+|Ctrl-U |Delete from the beginning of the line to the cursor.
+|Ctrl-W |Delete the previous word.
+|Ctrl-L |Clear the screen and redraw.
+|Ctrl-P |Recall the previous history entry.
+|Ctrl-N |Recall the next history entry.
+|Ctrl-R |Start or advance reverse incremental history search.
+|Ctrl-C |Cancel the current line. Prints `^C` and returns to a fresh prompt.
+|Ctrl-D |On an empty line, end the session. Otherwise delete at the cursor.
+|Ctrl-Z |Ignored by the editor; the signal is ignored by the shell.
+|Backspace |Delete the previous code point.
+|Delete |Delete the code point at the cursor.
+|Left / Right |Move by one code point.
+|Up / Down |Navigate history.
+|Home / End |Move to the beginning or end of the line.
+|Tab |Complete at the cursor, or advance the completion menu.
+|Shift-Tab |Move backwards through the completion menu.
+|Esc |Close the completion menu. A lone Esc is ignored.
+|Alt-b / Alt-f |Move one code point left or right.
+|===
+
+Unrecognised control bytes are ignored.
+
+=== Completion menu
+
+Completion is opened with Tab. If there is one candidate, it is inserted
+immediately. If there are multiple candidates and they share a longer common
+prefix than the current word, that prefix is inserted and the menu is opened.
+Otherwise the menu is opened without changing the line.
+
+While the menu is open:
+
+* Tab selects the next candidate and previews it in the line.
+* Shift-Tab selects the previous candidate and previews it.
+* Enter accepts the line as previewed.
+* Any ordinary editing key closes the menu and acts on the previewed line.
+* Esc closes the menu and restores the line to the state it had when the menu
+  opened. A lone Esc with no menu open is ignored.
+
+The menu is drawn as a bordered rectangle with a title, in row-major order.
+At most ten rows, including the border, are used; longer candidate lists
+scroll as the selection moves. The selected candidate is highlighted with
+reverse video. Items that are wider than the menu are clipped with `…`.
+
+=== Escape commands
+
+A line beginning with `:` at the interactive prompt is an escape command. It
+is not passed to the shell or scripting language.
+
+[cols="1,3",options="header"]
+|===
+|Command |Effect
+|`:blood` |Print the embedded Blood brand art.
+|`:cfg.SECTION.KEY` |Show the current value and, for enumerated keys, all accepted
+values. Enumerated keys include `prompt.theme`, `prompt.directory_style`,
+boolean settings, and colours.
+|`:cfg.SECTION.KEY = VALUE` |Update a configuration key in the running session
+and immediately rewrite the corresponding line in `blood.ini`. Supports
+`prompt`, `colors`, `history`, `completion`, `shell`, `aliases`, and `env`.
+|`:rla` |Reload `blood.ini`, re-seed aliases and environment variables, and
+run `.bloodrc` again. The prompt and colours update immediately.
+|`:ft SEARCH` |Recursively find files whose name contains `SEARCH`
+(case-insensitively) under the current directory and print their absolute
+paths.
+|`:ls [PATH]` |List a directory as a Unicode table with permissions,
+human-readable sizes, modification times, and creation times. Defaults to the
+current directory.
+|`:where` |Print the paths of `blood.ini` and `.bloodrc`.
+|`:help` or `:` |Print the escape-command summary.
+|===
+
+Examples:
+
+[source]
+----
+:cfg.prompt.theme
+:cfg.prompt.theme = hacker
+:cfg.colors.primary = red
+:cfg.history.max_entries = 500
+:cfg.aliases.ll = ls -l
+:ft foo bar
+----
+
+Saving a key creates the `blood.ini` file and the containing section when
+needed. Existing comments and unrelated lines are preserved.
+
+=== Reverse incremental search
+
+Ctrl-R enters reverse incremental search. The prompt becomes:
+
+[source]
+----
+(reverse-i-search) `QUERY': MATCH
+----
+
+Characters extend the query. Ctrl-R searches for the next older match.
+Backspace removes a query character. Enter accepts the matched line.
+Ctrl-C or Esc abandons the search and restores the line that was being edited
+when the search started.
+
+Search is case-insensitive and matches substrings of history entries. It
+searches from newest to oldest.
+
+=== Multiline input
+
+The interactive shell collects input in three situations:
+
+* A script line that begins a block, recognised by a trailing `{` on a line
+  that has the shape of a scripting statement. Subsequent lines are collected
+  until the block is balanced.
+* A line with unbalanced parentheses, brackets, braces, or quotes. Lines are
+  collected until balance is restored.
+* A line ending in a backslash. The backslash-newline sequence is removed by
+  the command scanner.
+
+The continuation prompt is a dim `  … ` marker. A cancelled continuation
+abandons the whole pending command. A complete multiline command is recorded
+as one history entry.
+
+== Prompt
+
+=== Default two-line layout
+
+The default prompt has the form:
+
+[source]
+----
+┌─ USER@HOST DIRECTORY on BRANCH *
+└─ ❯
+----
+
+The first line begins with a muted `┌─ `. The second line begins with a muted
+`└─ ` followed by the prompt character in the primary colour.
+
+Components are emitted in this order:
+
+. User name, when enabled.
+. `@` and host name, when both user name and host name are enabled, or the
+  host name alone when only the host name is enabled.
+. Directory, when enabled.
+. Git branch, when enabled and a repository is found.
+. Time, when enabled.
+. Background-job count, when enabled and non-zero.
+. Failure status, when enabled and the previous status is non-zero.
+. Previous command duration, when enabled and at least 500 ms.
+
+Failure status is rendered as a red `✘ N`. Duration is rendered as a muted
+`took Nms`, `took N.Ns`, or `took NmNs`. Background jobs are rendered as a
+yellow `⚙ N`.
+
+=== Plain theme
+
+`theme = plain` selects a single-line prompt of the form:
+
+[source]
+----
+USER@HOST DIRECTORY (BRANCH) >
+----
+
+The plain theme always uses `>` and does not print a box. It honours the
+username, hostname, directory, and Git settings. It does not render time,
+status, duration, job count, or the configured prompt character.
+
+=== Prompt presets
+
+A preset is selected with `[prompt] theme = NAME`. Every preset honours the
+`show_*` toggles and the `[colors]` settings. Presets define their own glyphs
+and path style.
+
+[cols="1,2",options="header"]
+|===
+|Theme |Layout
+|`lambda` |`λ DIRECTORY BRANCH ›`
+|`powerline` |Coloured powerline segments for user, host, directory, branch,
+time, and indicators, followed by a second `❯` line.
+|`right` (also `right1`, `right_aligned`) |`DIRECTORY>` followed by a
+right-aligned `USER@HOST`. The cursor stays after the left part.
+|`right_time` (also `right2`, `right_aligned_time`) |`DIRECTORY ❯` followed by
+a right-aligned branch, clean/dirty mark, and `HH:MM` time.
+|`hacker` |`USER :: HOST :: DIRECTORY :: BRANCH` followed by a `>>>` line.
+|`dots` |`● USER  ● DIRECTORY  ● BRANCH` followed by a `❯` line.
+|`compact` (also `compact_path`) |A compacted home path such as
+`~/D/p/blood`, the branch, and `❯`.
+|`iconified` (also `icons`) |A three-line `╭─ ☼ USER on HOST`,
+`├─ ⌂ DIRECTORY`, `╰─ ⎇ BRANCH ➜` block.
+|`timestamped` (also `timestamp`) |`[HH:MM] USER@HOST DIRECTORY (BRANCH)`
+followed by a `$` line.
+|`doubleline` (also `double`) |A three-line `╔═ USER@HOST`,
+`╠═ DIRECTORY`, `╚═ BRANCH ═▶` block.
+|===
+
+The `powerline` preset converts the configured foreground colours into
+segment backgrounds and uses `` separators. It requires a font with
+Powerline glyphs.
+
+The two right-aligned presets draw their right-hand text at the terminal edge
+and then return the cursor to the end of the left-hand prompt. When the
+terminal is too narrow for both parts, the right-hand text is omitted and the
+input uses the full remaining line.
+
+=== Directory formatting
+
+The home directory prefix is replaced by `~` when it matches a complete path
+component. `full` preserves the remaining path. `short` keeps the last two
+components. `basename` keeps only the last component. When the home directory
+itself is displayed, it is shown as `~`.
+
+=== Git information
+
+Git discovery walks from the current directory toward the filesystem root. At
+each level it checks for a `.git` directory. If `.git` is a file, a
+`gitdir: PATH` line is followed.
+
+The branch is read from `HEAD`:
+
+* A symbolic reference `ref: refs/heads/NAME` yields `NAME`.
+* Another symbolic reference yields the text after `ref: `.
+* A detached HEAD yields the first seven characters of the commit hash.
+
+Dirty state is obtained by running:
+
+[source]
+----
+git -C ROOT status --porcelain --untracked-files=no
+----
+
+A non-empty result marks the branch dirty. Untracked files are therefore not
+considered. If `git` is unavailable or fails, the repository is treated as
+clean. Git information is cached for 1500 milliseconds for the current
+directory; the prompt does not spawn `git` on every keystroke.
+
+== History
+
+History is stored one entry per line. The file format is not intended to be
+edited by hand, although ordinary single-line commands appear verbatim.
+
+Within an entry:
+
+* A backslash is encoded as `\\`.
+* A line feed is encoded as `\n`.
+* A carriage return is encoded as `\r`.
+
+History is loaded at startup, appended as commands are accepted, and rewritten
+in full when the shell exits. Entries beyond `max_entries` are removed from the
+oldest end. Consecutive duplicates are suppressed when `ignore_duplicates` is
+true.
+
+The `history` builtin prints entries with one-based indices:
+
+[source]
+----
+ 1  echo one
+ 2  echo two
+----
+
+`history -c` clears both memory and file. `history -w` rewrites the file.
+`history N` prints the last N entries. A non-numeric argument is treated as a
+request for all entries.
+
+When `enabled` is false, the history list is neither loaded nor recorded, and
+the `history` builtin reports an empty list.
+
+== Completion
+
+Completion is computed for the token containing the cursor. The token starts
+after whitespace or one of `|`, `&`, `;`, `<`, `>`, `(`, or `)`.
+
+Completion is selected as follows:
+
+* If no earlier word occurs in the current command segment, completion is for
+  command names. A word that contains `/` or begins with `.` or `~` is
+  completed as a path instead.
+* If the command is `cd`, `pushd`, or `popd`, completion is for directories.
+* If the command is `export`, `unset`, or `set`, completion is for shell
+  variable names.
+* Otherwise completion is for filesystem entries.
+
+Command completion considers:
+
+* Builtin command names.
+* Alias names.
+* Executables found in the directories of `PATH`.
+
+The `PATH` scan is performed lazily on the first command completion and cached
+for the life of the process. Only entries that are not directories and that
+pass the executable access check are included.
+
+When `[completion] external` is enabled, argument completion for a non-builtin
+command is delegated to the Bash programmable-completion engine. Blood loads
+the command's `complete` definition from the standard Bash completion
+directories and from `~/.bash_completion`, evaluates it in a child Bash
+process, and uses the resulting `COMPREPLY` candidates. Path-like words and
+commands with no matching Bash definition continue to use Blood's filesystem
+completion. Bash does not provide completion descriptions, so externally
+completed candidates are displayed without them.
+
+Filesystem completion splits the word at its final `/`. The directory portion
+is expanded for `~` and listed. Entries whose names begin with `.` are offered
+only when the typed basename begins with `.`. Directories receive a trailing
+`/`. Candidates preserve the typed directory prefix. Typing `./some/path/`
+and pressing Tab therefore lists the contents of that directory in the
+completion menu.
+
+Completion inside a quoted word is not attempted when the character before the
+cursor is `"` or `'`.
+
+Completion results are sorted lexicographically. Duplicate candidates are
+removed.
+
+== Command language
+
+=== Input decomposition
+
+A shell input is split into segments at top-level occurrences of:
+
+* `;` and line feed, which are unconditional separators.
+* `&&`, which executes the next segment only when the previous status is zero.
+* `||`, which executes the next segment only when the previous status is
+  non-zero.
+* `&`, which executes the segment in the background.
+
+Splitting respects single quotes, double quotes, backslash escapes, backticks,
+and `$(...)`. A `#` that begins a word starts a comment that extends to the end
+of the line.
+
+A segment is split into a pipeline at top-level `|` characters. A pipeline is
+a sequence of commands. Consecutive pipelines form a command list.
+
+=== Words and quoting
+
+A word is a maximal sequence of bytes not containing unquoted whitespace or one
+of the metacharacters `|`, `&`, `;`, `<`, `>`.
+
+Within an unquoted word:
+
+* A backslash quotes the next byte. A backslash followed by a line feed is a
+  line continuation and both bytes are removed.
+* Single quotes preserve every byte until the next single quote.
+* Double quotes preserve every byte until the next double quote, except that
+  backslash escapes `"`, `\`, `$`, and backtick, and line continuations are
+  removed.
+* `$` and backtick introduce expansions.
+* A leading `~` introduces tilde expansion.
+
+An empty quoted word is a valid empty argument.
+
+=== Expansions
+
+==== Variables
+
+[cols="1,2",options="header"]
+|===
+|Form |Meaning
+|`$NAME` |Value of shell variable or environment variable `NAME`.
+|`${NAME}` |Same, with explicit delimiters.
+|`$?` |Status of the previous command.
+|`$$` |Process ID of the shell.
+|`$!` |Process ID of the most recent background command.
+|`$#` |Number of script arguments.
+|`$0` |Program name, normally `blood`.
+|===
+
+An undefined variable expands to the empty string. `$@`, `$*`, and array or
+positional expansion are not implemented and are left literal or partially
+expanded as ordinary text.
+
+Variable expansion is performed before field splitting. A variable whose value
+contains spaces expands to a single word; the shell does not perform word
+splitting on expansion results.
+
+==== Tilde expansion
+
+A word that begins with `~` has the `~` replaced by the value of `HOME`.
+`~user` is not resolved through the user database; any `~` followed by
+characters other than `/` or the end of the word is left unchanged.
+
+==== Command substitution
+
+Command substitution has two forms:
+
+[source]
+----
+$(COMMANDS)
+`COMMANDS`
+----
+
+The commands are executed in a child process with standard output captured.
+Trailing line feeds and carriage returns are removed from the result. The
+result is inserted into the current word as a single field; it is not split on
+whitespace. The status of the substitution becomes the shell's previous status.
+
+The child runs Blood's own command interpreter, not `/bin/sh`.
+
+==== Globbing
+
+An unquoted word containing `*`, `?`, or `[` is treated as a pathname pattern.
+The pattern is expanded against the filesystem. If no match exists, the word is
+left unchanged.
+
+Supported pattern elements are:
+
+* `*` matches any sequence of bytes.
+* `?` matches one byte.
+* `[abc]` matches one byte in the set.
+* `[a-z]` matches one byte in the range.
+* `[!abc]` and `[^abc]` match one byte not in the set.
+
+A leading dot in a filename is matched only when the pattern component also
+begins with a dot. Glob results are sorted lexicographically. Brace expansion,
+recursive `**`, and extglob are not implemented. Assignment words are not
+globbed.
+
+=== Assignments
+
+An assignment word has the form:
+
+[source]
+----
+NAME=VALUE
+----
+
+where `NAME` begins with an ASCII letter or underscore and continues with
+letters, digits, or underscores.
+
+If assignments occur before the command name and no command name is present,
+the assignments update shell variables. If a command follows, the assignments
+are placed in the child environment for that command. For builtins, the
+assignments are temporarily applied and then restored.
+
+`export NAME=VALUE` updates both the shell variable and the environment.
+`export NAME` exports the current value.
+
+=== Aliases
+
+`alias NAME=VALUE` defines an alias. `alias NAME` prints one alias. `alias`
+with no arguments prints all aliases. `unalias NAME...` removes aliases.
+`unalias -a` removes all aliases.
+
+Alias names may contain punctuation such as dots. A definition value may
+contain spaces without quotes: words after `NAME=` are appended until another
+`NAME=` token starts a new definition. For example:
+
+[source]
+----
+alias cd..=cd ..
+----
+
+Aliases are expanded by re-scanning the replacement text as a shell line with
+the original arguments appended and quoted. Expansion is recursive up to a
+depth of eight. Alias expansion is performed for single-command input. An alias
+used as a stage of a multi-command pipeline is currently not expanded and is
+looked up as an external command.
+
+Aliases defined in configuration are loaded before startup scripts.
+
+=== Redirections
+
+[cols="1,2",options="header"]
+|===
+|Form |Meaning
+|`< FILE` |Redirect standard input from `FILE`.
+|`> FILE` |Truncate `FILE` and redirect standard output.
+|`>> FILE` |Append standard output to `FILE`.
+|`2> FILE` |Truncate `FILE` and redirect standard error.
+|`2>> FILE` |Append standard error to `FILE`.
+|`&> FILE` |Truncate `FILE` and redirect both standard output and error.
+|`&>> FILE` |Append both standard output and error to `FILE`.
+|`2>&N` |Duplicate file descriptor N onto standard error.
+|===
+
+A redirection target is a word and undergoes normal expansion. Redirections
+apply left to right. A failed open reports an error and the command is not run
+or runs with status 1. Redirections on a builtin are applied in the shell
+process and the original descriptors are restored afterwards.
+
+Heredocs, here-strings, process substitution, and arbitrary `N>` forms other
+than the listed forms are not implemented.
+
+=== Pipelines and background execution
+
+`A | B` creates a pipe between A and B. Commands in a pipeline run
+concurrently. Builtins in a pipeline run in their stage child. The pipeline
+status is the status of its last stage.
+
+`COMMAND &` runs the entire pipeline in a wrapper child. The wrapper's process
+ID is recorded as a background job. `$!` is set to that ID. `jobs` lists
+running jobs and `wait` waits for all recorded jobs.
+
+An unquoted `time` at the beginning of a pipeline is a shell keyword. It runs
+the pipeline and then writes timings to standard error in the same shape as
+`bash`:
+
+[source]
+----
+
+real    0m1.201s
+user    0m1.067s
+sys     0m0.133s
+----
+
+The pipeline's output is not delayed or captured. Redirections on the pipeline
+do not redirect the timing report. To run the external `time` utility, quote
+the name or use its path, for example `'time'` or `/usr/bin/time`.
+
+=== Command resolution
+
+A command name containing `/` is passed directly to `execvp`.
+
+A command name without `/` is resolved by `execvp` using `PATH`. Builtins are
+checked before `execvp`.
+
+If execution fails, the child writes:
+
+[source]
+----
+blood: NAME: command not found
+----
+
+and exits with status 127.
+
+=== Builtin commands
+
+[cols="1,3",options="header"]
+|===
+|Command |Behaviour
+|`cd [DIR]` |Change directory. With no argument, use `HOME`. `cd -` returns to
+`OLDPWD` and prints the new directory. Updates `PWD` and `OLDPWD`.
+|`pwd` |Print the current working directory.
+|`exit [CODE]` |Terminate the shell with `CODE`, or with the previous status
+when `CODE` is omitted. A non-numeric code prints an error and uses 2.
+|`quit` |Alias for `exit`.
+|`history [-c\|-w\|N]` |Show or manage history as described above.
+|`clear` |Write the ANSI clear-screen sequence.
+|`cls` |Alias for `clear`.
+|`export [NAME=VALUE...] [NAME...]` |Export variables. With no arguments,
+print shell variables.
+|`unset NAME...` |Remove shell and environment variables.
+|`alias [NAME=VALUE...] [NAME...]` |Define or print aliases.
+|`unalias NAME...` |Remove aliases. `-a` removes all.
+|`help [TOPIC]` |Print help. Topics: `config`, `script`, `language`.
+|`source FILE` |Execute a Blood script in the current shell state.
+|`.` |Alias for `source`.
+|`echo [-n] ARG...` |Print arguments separated by spaces. `-n` suppresses the
+trailing newline.
+|`say ARG...` |Print arguments separated by spaces and a newline.
+|`set [NAME=VALUE...]` |With no arguments, print shell variables. Otherwise
+assign values.
+|`type NAME` |Resolve a shell keyword, builtin, alias, or `PATH` entry.
+|`which NAME` |Same as `type`.
+|`jobs` |Reap finished jobs and print running background jobs.
+|`wait` |Wait for all recorded background jobs and clear the job list.
+|`true` |Return 0.
+|`false` |Return 1.
+|`:` |Return 0.
+|===
+
+`type` checks shell keywords first, then builtins, then aliases, then `PATH`.
+It does not verify that a `PATH` candidate is executable. Only the first
+argument is used.
+`source` and `cd` use only their first argument.
+
+=== Shell grammar
+
+The following grammar describes the command language accepted by the
+implementation. `WORD` is a word after quoting and expansion; `SEP` is a
+top-level separator.
+
+....
+shell-input  = { shell-list } ;
+shell-list   = segment { connector segment } ;
+connector    = ";" | NEWLINE | "&&" | "||" | "&" ;
+segment      = pipeline ;
+pipeline     = [ "time" ] command { "|" command } ;
+command      = { assignment } { WORD | redirection } ;
+assignment   = NAME "=" WORD ;
+redirection  = "<" WORD
+             | ">" WORD
+             | ">>" WORD
+             | "2>" WORD
+             | "2>>" WORD
+             | "&>" WORD
+             | "&>>" WORD
+             | "2>&" DIGITS ;
+NAME         = ( letter | "_" ) { letter | digit | "_" } ;
+DIGITS       = digit { digit } ;
+....
+
+The scanner removes comments beginning with `#` at a word boundary, performs
+quote removal, variable expansion, tilde expansion, command substitution, and
+globbing, and then yields `WORD` tokens plus operator tokens. The parser groups
+these tokens into the structures above.
+
+== Scripting language
+
+=== Source files
+
+A Blood script is a sequence of bytes. The conventional extensions are
+`.blood` and `.bx`. Extensions are not enforced. A leading shebang line is
+treated as a comment because it begins with `#`.
+
+Scripts are executed by `blood SCRIPT.blood` or `blood SCRIPT.bx`, by the
+`source` shell builtin, by the script `source` function, by `startup_file`,
+and by the interactive shell when a submitted line has the shape of a script
+statement.
+
+Interactive submissions retain their global variables and function definitions
+for the lifetime of the shell. `source` and script files executed from the
+shell share the same global environment.
+
+=== Lexical structure
+
+==== Encoding and identifiers
+
+Source is a byte sequence. Identifiers are ASCII:
+
+....
+IDENT = ( letter | "_" ) { letter | digit | "_" } ;
+letter = "A".."Z" | "a".."z" ;
+digit  = "0".."9" ;
+....
+
+Identifiers are case sensitive. Keyword matching is case sensitive.
+
+==== Whitespace and comments
+
+Spaces and tabs separate tokens. A `#` outside a string begins a comment that
+extends to the next line feed. Blank lines and comment-only lines do not affect
+block structure.
+
+==== Numeric literals
+
+....
+INT   = digit { digit } ;
+FLOAT = digit { digit } ( "." digit { digit } [ exponent ] | exponent ) ;
+exponent = ( "e" | "E" ) [ "+" | "-" ] digit { digit } ;
+....
+
+Integer literals are decimal signed 64-bit values. Floating-point literals use
+the platform double representation. Hexadecimal, binary, octal, digit
+separators, and suffixes are not implemented. A leading decimal point is not
+part of a numeric literal; `.5` is not a float.
+
+==== String literals
+
+Strings are delimited by either single or double quotation marks. Both forms
+behave identically: escape processing and interpolation apply to both.
+
+Recognised escapes are:
+
+[cols="1,2",options="header"]
+|===
+|Escape |Meaning
+|`\n` |Line feed.
+|`\t` |Horizontal tab.
+|`\r` |Carriage return.
+|`\0` |NUL byte.
+|`\xHH` |Byte with hexadecimal value HH.
+|`\"` |Double quote.
+|`\'` |Single quote.
+|`\\` |Backslash.
+|===
+
+A backslash before any other byte yields that byte. A literal line feed is
+accepted inside a string.
+
+String interpolation occurs for both quote forms. `{` begins an interpolation
+field. The field ends at the matching `}`. Braces and quotes inside the field
+are balanced by the interpolation scanner. `{{` produces a literal `{` and
+`}}` produces a literal `}`. The text between the braces is parsed as a Blood
+expression and evaluated in the current environment; its value is converted to
+a string and inserted.
+
+Interpolation errors use the location information of the inner expression and
+may not reflect the outer source line.
+
+A raw string is written `r"..."` or `r'...'`. Raw strings perform no escape
+processing and no `{...}` interpolation, so backslashes and braces are taken
+literally. This is useful for regular expressions and other patterns that are
+dense in backslashes.
+
+A multiline string is delimited by three matching quotes, `"""..."""` or
+`'''...'''`. Escape processing and interpolation apply as for other quoted
+strings, and line feeds inside the literal are preserved. Triple quotes may
+contain unescaped single and double quotes. When the opening delimiter is
+followed by a line feed, that first line feed is ignored. When the closing
+delimiter is also on a line by itself, the line feed before it and the
+indentation shared by the content lines are removed.
+
+....
+sh("""
+cat first.txt
+cat second.txt
+""")
+....
+
+==== Command substitution literals
+
+Outside strings, `` `COMMANDS` `` and `$(COMMANDS)` denote command
+substitution. They are lexed as a single expression token. The commands are
+executed by the shell in a child process, trailing newlines are removed, and
+the result is a string value. The completion status becomes the value of the
+script variable `status`.
+
+==== Blocks
+
+Blocks are introduced by braces. The opening brace follows the header of a
+compound statement and the matching closing brace ends its body:
+
+[source]
+----
+if CONDITION {
+    BLOCK
+}
+----
+
+Newlines and indentation are ignored inside unmatched `(` and `[` delimiters
+and inside dictionary literals. This permits multiline lists, dictionaries,
+and call arguments.
+
+A method or property chain cannot continue with `.` at the start of a new
+line. Keep the dot on the previous line or wrap the chain in parentheses:
+
+[source]
+----
+var files = std.glob("./*").filter(
+    |f| f.basename().like("*.txt")
+)
+----
+
+A semicolon `;` may separate simple statements on one line. A single-line
+suite may also follow the opening brace.
+
+A trailing colon does not introduce a block. Python-like suites are rejected
+with a syntax error.
+
+==== Keywords
+
+The following identifiers are treated as keywords at the start of a statement
+or in expression position:
+
+....
+if elif else while for in fn return break continue pass
+try catch except raise throw say defer export true false null none
+not and or var const pub use
+....
+
+`none` is accepted as an alias for `null`.
+
+=== Values
+
+The runtime value types are:
+
+[cols="1,3",options="header"]
+|===
+|Type |Representation and behaviour
+|null |The absence of a value. Written `null` or `none`.
+|bool |`true` or `false`. Integers and floats are truthy when non-zero.
+|int |Signed 64-bit integer.
+|float |IEEE 754 double.
+|string |Byte string. Strings are immutable; operations produce new strings.
+|list |Ordered, mutable sequence of values.
+|dict |Mutable string-keyed map. Iteration order is unspecified.
+|function |User-defined or native callable.
+|namespace |Named bindings exposed by a module or by `std`.
+|===
+
+Lists and dictionaries are reference values. Assigning a list or dictionary
+to another variable aliases the same object; there is no implicit copy.
+
+=== Expressions
+
+==== Precedence
+
+From lowest to highest:
+
+[cols="1,2",options="header"]
+|===
+|Level |Operators
+|1 |`??`
+|2 |`or`
+|3 |`and`
+|4 |`not` (prefix)
+|5 |`==` `!=` `<` `>` `<=` `>=` `in` `not in`
+|6 |`..` `..=`
+|7 |`+` `-`
+|8 |`*` `/` `%`
+|9 |unary `-` and unary `+`
+|10 |call `(...)`, index `[...]`, attribute `.NAME`
+|===
+
+Only one comparison operator is accepted at a given level; chained
+comparisons such as `a < b < c` are not supported. Parentheses override
+precedence.
+
+`??` returns its left operand unless that operand is null, in which case it
+evaluates and returns the right operand. It does not treat false or empty
+values as missing.
+
+`a..b` produces the list of integers from `a` up to but not including `b`.
+`a..=b` includes `b`. A range whose start is greater than its end is empty.
+
+==== Primary expressions
+
+* Integer, float, and string literals.
+* `true`, `false`, `null`, and `none`.
+* Variable references.
+* Parenthesised expressions.
+* List literals: `[e1, e2, ...]`. A leading `...` spreads a list into the
+literal: `[first, ...rest]`.
+* Dictionary literals: `key1: value1, key2: value2, ...` inside braces.
+* Conditional expressions: `if CONDITION { ... } elif CONDITION { ... }
+else { ... }`.
+* Command substitutions.
+
+==== Calls, indexing, and attributes
+
+Calls have the form `callee(arg1, arg2, ...)`. A trailing comma is permitted.
+Arguments may be named as `name: value`; named arguments bind to the parameter
+with that name. User-defined functions, lambdas, and native functions all
+accept named arguments. Missing arguments use the parameter default when one is
+declared, and are otherwise bound as null. Extra arguments are ignored by
+user-defined functions.
+
+Parentheses may be omitted when the call is unambiguous, as in
+`sh "echo hi"`, `say "hello"`, or `x = len args`. A command-shaped
+statement whose first word names a function is called as a function with the
+remaining text as its arguments; if no such function exists, the line is run
+as a shell command. Parentheses are still required for method calls,
+zero-argument calls, and calls whose arguments contain top-level operators.
+
+Indexing has the form `container[index]`. Lists accept integers, including
+negative indices from the end. Dictionaries accept string keys; non-string
+keys are converted to strings. Strings accept a byte offset, including negative
+offsets, and return the UTF-8 sequence beginning at that offset.
+
+Attribute access has the form `container.name`. On a dictionary it reads the
+value for key `name`; a missing key yields null. On a namespace it reads the
+exported binding named `name`; a missing name yields null. On other values,
+plain attribute access yields null. Attribute assignment `dict.name = value` is
+supported for dictionaries and for mutable exported module variables.
+
+==== Operators
+
+[cols="1,3",options="header"]
+|===
+|Operator |Semantics
+|`+` |Numeric addition. If either operand is a string, concatenate their string
+representations. If both operands are lists, produce a new concatenated list.
+|`-` |Numeric subtraction.
+|`*` |Numeric multiplication.
+|`/` |Division. Integer division truncates when both operands are non-float.
+Division by zero raises a catchable error.
+|`%` |Integer remainder. Division by zero raises a catchable error.
+|`==`, `!=` |Equality. Nulls are equal. Numeric values compare across int,
+float, and bool. Strings compare by content. Lists compare deeply. Dictionaries
+and functions compare by identity.
+|`<`, `>`, `<=`, `>=` |If either operand is a string, compare string
+representations lexicographically. Otherwise compare numerically.
+|`and` |Short-circuit conjunction. Returns the left operand when it is falsy;
+otherwise returns the right operand.
+|`or` |Short-circuit disjunction. Returns the left operand when it is truthy;
+otherwise returns the right operand.
+|`not` |Logical negation, producing a bool.
+|`in` |Membership. Lists use equality. Dictionaries test keys. Strings test
+substrings.
+|`not in` |Negated membership.
+|===
+
+Unary `-` negates numerically. Unary `+` is accepted and has no effect.
+
+==== Truthiness
+
+`null` and `false` are false. Numeric zero is false. The empty string, empty
+list, and empty dictionary are false. All other values are true.
+
+==== Interpolation
+
+String interpolation is equivalent to evaluating each `{...}` field and
+concatenating its string representation. Each field is a complete expression,
+so calls, indexing, arithmetic, ranges, and null coalescing all work directly:
+
+[source]
+----
+say "args: {args.len()}"
+say "score: {scores[key] ?? 0}"
+say "inclusive: {1..=5}"
+----
+
+The current lexical environment is used, including function parameters and
+local variables.
+
+=== Statements
+
+==== Assignment and declaration
+
+[source]
+----
+var NAME = expression
+var (
+    NAME = expression
+    OTHER = expression
+)
+const NAME = expression
+NAME = expression
+PLACE += expression
+PLACE -= expression
+PLACE *= expression
+PLACE /= expression
+PLACE %= expression
+----
+
+Variables must be introduced with `var` or `const` before they can be assigned.
+A `var` declaration creates a mutable binding in the current scope and reports
+an error if the name is already declared there. A `const` declaration creates a
+read-only binding; assigning to it, including with a compound assignment,
+reports an error. The value stored by a constant may still be a mutable list or
+dictionary. The bulk form declares several variables at once. Declarations in a
+bulk block are separated by newlines or commas. Declarations made inside a
+`for` or `while` body are local to that body and are reset on each iteration.
+
+Plain assignments do not create bindings. If the target variable does not exist
+in the current environment chain, evaluation reports `undefined variable`. If
+it exists in an enclosing scope, that binding is updated.
+
+`PLACE` may be a variable, an index expression, or a dictionary attribute for
+plain and compound assignments. Assignments are statements, not expressions.
+Chained assignment is not supported.
+
+Prefixing a variable assignment with `export` also writes the value to the
+process environment:
+
+[source]
+----
+export PATH = (user_paths + [std.env("PATH")]).join(":")
+----
+
+The variable remains available as an ordinary script binding.
+
+==== Modules
+
+[source]
+----
+use "some_file.bx"
+
+say(some_file.PI)
+some_file.some_function()
+----
+
+A `use` statement loads another Blood source file as a module. The module name
+is the file name without its final extension. A relative path is resolved
+against the directory of the file containing the `use` statement. Loaded
+modules are cached by absolute path, so repeated imports share the same module
+state.
+
+Only top-level declarations marked `pub` are visible through the module
+namespace. Private variables and functions remain accessible inside the module
+but are not exported:
+
+[source]
+----
+# some_file.bx
+pub const PI = 3.14
+pub var some_changeable_thing = 200
+
+fn private_function() {
+    say "hehe"
+}
+
+pub fn some_function() {
+    private_function()
+}
+----
+
+`pub` may prefix `var`, `const`, or `fn`. Exported mutable variables may be
+assigned through the namespace, and the change is visible to the module's
+functions. Exported constants and functions are read-only. A module is executed
+once, in its own top-level environment, when it is first imported.
+
+==== `say`
+
+[source]
+----
+say [expression {, expression}]
+----
+
+Evaluates each expression, converts each to a string, joins them with a single
+space, and writes the result followed by a newline to standard output. With no
+expressions, writes a newline.
+
+`say` is a statement, not a function.
+
+==== Conditionals
+
+[source]
+----
+if CONDITION {
+    BLOCK
+} elif CONDITION {
+    BLOCK
+} else {
+    BLOCK
+}
+----
+
+The first true branch is executed. `elif` is the only spelling for an
+additional condition; `else if` is not part of the language. A single-line
+suite after the opening brace is accepted.
+
+A conditional is also an expression. In expression position it yields the
+value of the selected branch, defined as the value of that suite's final
+expression statement. A branch ending in any other statement, and a
+conditional where no branch matches, yields `null`. This allows conditionals
+to be used as arguments, initializers, and return values:
+
+[source]
+----
+var label = if count > 1 { "items" } else { "item" }
+exit(if failed.len() > 0 { 1 } else { 0 })
+----
+
+==== Loops
+
+[source]
+----
+while CONDITION {
+    BLOCK
+}
+
+for NAME in EXPRESSION {
+    BLOCK
+}
+
+for KEY, VALUE in EXPRESSION {
+    BLOCK
+}
+----
+
+`while` reevaluates its condition before each iteration. The single-variable
+form of `for` iterates over the elements of a list, the UTF-8 code points of a
+string, or the keys of a dictionary. The two-variable form iterates a
+dictionary, binding the key to `KEY` and the corresponding value to `VALUE`;
+dictionary iteration order is unspecified. Use `.sorted()` or `.sorted_keys()`
+when deterministic key order is needed. `break` and `continue` affect the
+innermost loop.
+
+`for` binds its loop variables in the current environment, and they remain
+visible after the loop.
+
+There is no C-style `for`, no `do`, and no `loop` statement.
+
+==== Parallel loops
+
+[source]
+----
+para for NAME in EXPRESSION {
+    BLOCK
+}
+----
+
+`para for` evaluates `EXPRESSION` once and runs the body for each element in a
+separate child process. Iterations run concurrently. Each child starts from a
+copy of the parent's variables, with `NAME` bound to its element and `status`
+reset to `0`; assignments made inside the body are visible only within that
+child and do not propagate back to the parent. Output from iterations may
+interleave.
+
+After every iteration has finished, the loop waits for all children and
+assigns the first non-zero iteration status to `status`. An iteration's status
+is its final `status` value, or the argument passed to `exit`. An uncaught
+error in an iteration reports the error and makes that iteration fail without
+aborting the remaining iterations. `para for` does not support `break` or
+`continue`. On platforms without `fork`, the statement reports an error.
+
+==== Parallel map
+
+[source]
+----
+var results = values.pmap(|x| f(x))
+----
+
+`pmap` is the parallel counterpart of `map`. It starts a child process for each
+element and returns a new list with the callback results in the original input
+order. Assignments and other side effects inside the callback stay in the child
+process; only the returned value is sent back to the parent. Values are copied
+between processes, so results must be data values: null, booleans, numbers,
+strings, lists, and dictionaries. Functions and namespaces cannot cross the
+process boundary. Keep callbacks pure when output ordering matters, because
+child output may interleave. An uncaught callback error propagates to the
+caller. On platforms without `fork`, `pmap` maps the elements serially.
+
+==== Reduce variables
+
+[source]
+----
+var r = std.reduce
+
+reduce(r.sum) var total = 0
+reduce(r.max) var slowest_ms = 0
+reduce(r.concat) var failures = []
+reduce(r.or) var any_crash = false
+
+reduce(r.sum) var (
+    passed = 0
+    failed = 0
+)
+----
+
+`reduce(COMBINER) var ...` declares variables whose worker-local values are
+folded back into the parent when a parallel construct completes. The combiner
+is mandatory. `reduce var x = 0` is a syntax error. The initial value is
+mandatory because it is the snapshot every worker starts from.
+
+The combiner is an ordinary expression that evaluates to a combiner value.
+Built-in combiners live in `std.reduce`:
+
+[cols="1,3"]
+|===
+|`std.reduce.sum` |numbers
+|`std.reduce.product` |numbers; the initial value must be non-zero
+|`std.reduce.min` |numbers and strings
+|`std.reduce.max` |numbers and strings
+|`std.reduce.and` |booleans
+|`std.reduce.or` |booleans
+|`std.reduce.concat` |lists and strings
+|`std.reduce.union` |dictionaries; the right side wins on key conflicts
+|===
+
+A mismatched initial value, such as `sum` with a string, is an error at the
+declaration. `reduce` declarations may appear at file or function scope, but
+not inside a loop body.
+
+A closure with exactly three explicit parameters is also a valid combiner:
+
+[source]
+----
+reduce(|acc, snap, final| acc + (final - snap)) var total = 0
+----
+
+`acc` is the running merged value, `snap` is the parent's value at fork time,
+and `final` is the worker's value when it finished. The closure returns the new
+`acc`. The built-ins use the following rules:
+
+* `sum` is `acc + (final - snap)`.
+* `product` is `acc * final / snap`.
+* `min` and `max` compare `acc` with `final`.
+* `and` and `or` combine `acc` with `final`.
+* `concat` appends only the part of `final` that extends `snap`. If `final`
+  does not extend `snap`, the whole `final` value is appended.
+* `union` copies `acc`, then overlays every key from `final`.
+
+Workers start with `snap` as the variable's value. Reads and writes inside a
+worker act on the worker's private copy; workers never see each other's writes.
+A worker may reassign or compound-assign a reduce variable, including through
+methods such as `list.append`. Nested `pmap` calls merge into the enclosing
+worker's copy, which then merges upward.
+
+Merging happens when `pmap` or `para for` completes, before it returns. `acc`
+starts as `snap`, and workers are folded in input order, not completion order,
+so the result is deterministic. The parent's value is unchanged between fork
+and join. If a worker fails, that worker's contribution is discarded; other
+workers still merge, and `pmap` still reports the error.
+
+Outside a worker, a reduce variable behaves like a normal variable.
+
+Reduce variables provide reduction, not live shared state. There is no
+cross-worker visibility and no locking. The initial value and every worker's
+final value must be data values that can cross the process boundary. Blood
+currently has no `Time`, `Duration`, or set value types, so `min` and `max`
+accept numbers and strings, and `union` accepts dictionaries.
+
+==== Functions
+
+[source]
+----
+fn NAME(PARAM1, PARAM2: DEFAULT, ...) {
+    BLOCK
+}
+
+fn NAME(PARAM1, PARAM2: DEFAULT, ...) => EXPRESSION
+----
+
+The `=>` form is shorthand for a body that immediately returns `EXPRESSION`.
+The parameter list may be omitted in either form when the function takes no
+arguments.
+
+Parameters are positional unless passed by name. A parameter may declare a
+default after `:`, which is used when the caller omits that argument:
+
+[source]
+----
+fn greet(name, sep: ", ") {
+    return "Hello" + sep + name
+}
+
+greet("Ada", sep: ": ")
+----
+
+Type annotations such as `fn f(x: i64)` remain accepted and ignored. A token
+that looks like a type name is treated as an annotation; any other expression
+after `:` is a default. Use a named argument at the call site when the name is
+also a type word.
+
+A named function body uses the global environment as its parent, not the
+environment of its definition. Functions may be recursive. The recursion depth
+is limited to 200 nested user-function calls.
+
+`return` with no value returns null. A function that reaches the end of its
+body returns null. Extra arguments are ignored; missing arguments without a
+default are null.
+
+==== Lambdas
+
+[source]
+----
+|l| EXPRESSION
+|a, b| EXPRESSION
+|a, b| => EXPRESSION
+|a, b| {
+    BLOCK
+}
+----
+
+A lambda is an anonymous function value. The parameter list is enclosed by
+pipes, and the body is either a single expression or a braced block. An
+expression body is returned automatically; a block body returns when it reaches
+`return`, and otherwise returns null. Lambdas capture the environment in which
+they are defined, so they may refer to local variables of an enclosing
+function. For example:
+
+[source]
+----
+var lines = sh("test-suite").stdout.lines()
+var passes = lines.count(|l| l.starts_with("[pass]"))
+----
+
+The `=>` form forces an expression body even when the expression begins with
+`{`. This makes dictionary literals usable directly:
+
+[source]
+----
+var rows = files.map(|f| => {"file": f.basename(), "modified": f.modified()})
+----
+
+
+==== Exceptions
+
+[source]
+----
+try {
+    BLOCK
+} catch NAME {
+    BLOCK
+}
+----
+
+`except` may be used in place of `catch`. The catch variable is optional and
+receives the error message as a string. A caught error clears the error state
+and execution continues after the `try` statement.
+
+[source]
+----
+raise EXPRESSION
+throw EXPRESSION
+----
+
+Both spellings raise a runtime error whose message is the string
+representation of the expression. If the expression is omitted, the message is
+the string representation of null, namely `null`.
+
+==== `defer`
+
+[source]
+----
+defer EXPRESSION
+defer {
+    ...
+}
+----
+
+Deferred statements run in last-in-first-out order when the enclosing function
+returns, when the script finishes, or when `exit()` is called. Pending defers
+also run while an uncaught runtime error unwinds. A deferred block runs in the
+environment where it was registered.
+
+A single-expression defer is evaluated when it runs, not when it is
+registered. Function arguments are therefore read at defer time, and variables
+changed after the `defer` statement are seen in their final state. Use a block
+form when the timing of side effects matters.
+
+==== Other statements
+
+* `pass` does nothing.
+* `break` exits the innermost loop.
+* `continue` begins the next iteration of the innermost loop.
+* Shell command statements execute the command line in the shell and assign
+  the resulting status to `status`.
+
+==== Shell command statements
+
+A statement that does not match a scripting statement is treated as a shell
+command when it has a command-like shape. The current implementation uses a
+lookahead heuristic:
+
+* A leading identifier followed by an opening parenthesis, bracket, dot, or an
+  assignment operator is an expression or assignment.
+* A leading identifier followed by another identifier, literal, or most
+  operators is a shell command.
+* A statement beginning with `/`, `.`, or `~` is a shell command.
+* Lines beginning with `if`, `while`, `for`, `fn`, `try`, `catch`, `except`,
+  `raise`, `throw`, `say`, `return`, `break`, `continue`, `pass`, `defer`, or
+  `export` are scripting statements.
+
+The entire remaining source line is passed to the shell command interpreter.
+This permits pipelines, redirections, and command substitution without a
+wrapper.
+
+=== Scoping and environment
+
+Each function call creates a new environment. The global environment is the
+shared script state. A name lookup proceeds from the current environment
+through parent environments. Because function environments have the global
+environment as their parent, a function can read and update global variables
+but cannot capture local variables of a caller.
+
+A binding created by `for` is assigned in the current environment and is
+visible after the loop.
+
+Executing a script file as a command runs it in a fresh top-level environment.
+Its `var` and `fn` declarations do not leak into the interactive session, so
+the same script can be run repeatedly. `source` and startup files execute in
+the current environment instead, so their declarations remain visible.
+
+The working directory is process-global, not scoped. `cd(path)` calls `chdir`
+in the interpreter process, updates `PWD`, and affects all later shell
+commands, `run` calls, and file operations. There is no automatic restoration
+on function return.
+
+=== Error handling and diagnostics
+
+Syntax errors are detected before execution. A syntax error prints:
+
+[source]
+----
+blood: LABEL:LINE:COL: MESSAGE
+----
+
+where `LABEL` is the script path, `stdin`, or `-c`, and execution of the script
+aborts with status 2.
+
+Runtime errors print the same form and abort the script with status 1 unless
+caught by `try`. An interactive script interrupted by SIGINT is reported as
+status 130 without printing the message `interrupted`.
+
+Runtime error messages include, among others:
+
+* `undefined variable 'NAME'`
+* `attempt to call a non-function value`
+* `list index out of range`
+* `string index out of range`
+* `value is not indexable`
+* `value does not support attribute assignment`
+* `division by zero`
+* `unknown method 'NAME'`
+* `recursion limit exceeded`
+* `interrupted`
+
+=== Standard variables
+
+[cols="1,3",options="header"]
+|===
+|Name |Meaning
+|`status` |Status of the most recent shell command, command substitution, or
+shell-valued operation in the script. Initialised to 0.
+|`args` |List of command-line arguments passed after the script name.
+|`__file__` |Path of the currently executing script, set by script file
+execution.
+|`null` |The null value.
+|`true`, `false` |Boolean values.
+|===
+
+`status` is also updated after a command substitution and after a shell
+command statement. A failed shell command does not raise a script error; it
+sets `status`.
+
+`status` is deprecated for new scripts. `sh` and `run` return a result
+dictionary with `status`, `stdout`, `stderr`, and `ok` fields; use those
+fields instead. `status` remains available while existing scripts are
+migrated.
+
+=== Builtin functions
+
+Builtins are grouped in the `std` namespace. They are ordinary function values
+and can be called as `std.len(x)`, `std.read_file(path)`, and so on.
+
+A small bare-name prelude is also available: the `say` statement and the
+functions `print`, `eprint`, `exit`, `cd`, `run`, `len`, `str`, `range`, and
+`sh`. These names may be shadowed by user definitions; a warning is written to
+standard error when that happens. The `std.` forms are always available and
+never shadowed, so `std.print(...)`, `std.len(...)`, and `std.sh(...)` are the
+unambiguous spellings.
+
+The `std.os` value is the host platform name, either `darwin` or `linux`:
+
+[source]
+----
+if std.os == "darwin" {
+    say "hi macos"
+}
+----
+
+[cols="1,1,3",options="header"]
+|===
+|Function |Arity |Behaviour
+|`std.say(...)` |variadic |Join arguments with spaces, append newline, write to
+standard output. Equivalent to the `say` statement. Returns null.
+|`std.len(x)` |1 |Length of a list, dictionary, or string. String length is bytes.
+For other values, length of the string representation.
+|`std.str(x)` |1 |String representation.
+|`std.int(x)` |1 |Convert to integer.
+|`std.float(x)` |1 |Convert to float.
+|`std.bool(x)` |1 |Truthiness as a boolean.
+|`std.range(a)` / `std.range(a,b)` |1 or 2 |List of integers from `a` (inclusive) to
+`b` (exclusive). With one argument, starts at 0.
+|`std.print(...)` |variadic |Join arguments with spaces, append newline, write to
+standard output. Returns null.
+|`std.input([prompt])` |0 or 1 |Write prompt if supplied, read one line from
+standard input. Returns a string, or null on end of input.
+|`std.sleep(ms)` |1 |Sleep for the given number of milliseconds.
+|`std.exit([code])` |0 or 1 |Request shell exit with the given status. Default 0.
+|`sh(command, check: bool)` |1 |Execute a command line and return a result
+dictionary with `status`, `stdout`, `stderr`, and `ok`. Both output streams are
+captured. With `check: true`, a non-zero status raises a runtime error.
+|`std.run(argv, merge_stderr: bool, cwd: string)` |1 |Execute a list of arguments
+directly without a shell and return a result dictionary. `merge_stderr`
+combines stderr into `stdout`; `cwd` sets the child working directory.
+|`std.eprint(...)` |variadic |Like `print`, but writes to standard error.
+|`std.indent(text, n)` |2 |Prefix every line in `text` with `n` spaces.
+|`std.exists(path)` |1 |Whether a path exists.
+|`std.is_file(path)` |1 |Whether a path exists and is not a directory.
+|`std.is_dir(path)` |1 |Whether a path is a directory.
+|`std.is_executable(path)` |1 |Whether a path is executable.
+|`std.which(name)` |1 |Search `PATH` and return the executable path, or null.
+|`std.mktemp_dir(prefix)` |1 |Create and return a unique temporary directory.
+|`std.mkdir_p(path)` |1 |Create a directory and any missing parent directories.
+Returns a boolean.
+|`std.remove_file(path)` |1 |Remove one file. Returns a boolean.
+|`std.remove_all(path_or_list)` |1 |Recursively remove paths. Returns a boolean.
+|`std.parent(path)` |1 |Directory component of a path.
+|`std.basename(path)` |1 |Final component of a path.
+|`std.stem(path)` |1 |Final component with its last extension removed.
+|`std.join(a, b)` |2 |Join two path components.
+|`std.cd(path)` |1 |Change the interpreter working directory. Affects later shell
+and `run` calls and file operations.
+|`std.unified_diff(expected, actual)` |2 |Line-oriented diagnostic diff for test
+harnesses.
+|`std.source(path)` |1 |Execute a Blood script file and return its status.
+|`std.this()` |0 |Name and absolute path of the executing script as a dictionary
+with keys `name` (the final path component) and `path` (absolute). Returns null
+when no script file is executing.
+|`std.this_dir()` |0 |Absolute path of the directory containing the executing
+script. Returns null when no script file is executing.
+|`std.abs(x)` |1 |Absolute numeric value, returned as a float.
+|`std.min(x)` / `std.min(a,b)` |1 or 2 |Minimum of a list, or of two values. With a
+list, returns the smallest element.
+|`std.max(x)` / `std.max(a,b)` |1 or 2 |Maximum of a list, or of two values.
+|`std.sum(list)` |1 |Sum of numeric elements, returned as a float.
+|`std.type(x)` |1 |Type name: `null`, `bool`, `int`, `float`, `string`, `list`,
+`dict`, `function`, or `namespace`.
+|`std.keys(dict)` |1 |List of dictionary keys.
+|`std.values(dict)` |1 |List of dictionary values.
+|`std.items(dict)` |1 |List of `[key, value]` pairs.
+|`std.glob(pattern)` |1 |Expand a pathname pattern and return a sorted list of
+matching paths. An unmatched pattern yields an empty list. A leading `~` is
+expanded.
+|`std.rename(from, to)` |2 |Rename or move a path. Returns a boolean. A leading `~` is expanded in both paths.
+|`std.read_file(path, default: x)` |1 |Read a file. Returns a string, or `x` when
+`default:` is given and the file cannot be read. Without a default, returns
+null.
+|`std.write_file(path, data)` |2 |Write a file. Returns a boolean.
+|`std.append_file(path, data)` |2 |Append to a file. Returns a boolean.
+|`std.env(name, default: x)` |1 |Read an environment variable. Returns `x` when
+`default:` is given and the variable is unset or empty; otherwise returns a
+string or null.
+|`std.clock()` |0 |Milliseconds since the Unix epoch.
+|`std.chr(n)` |1 |One-byte string containing the low byte of `n`.
+|`std.ord(s)` |1 |Integer value of the first byte of `s`, or 0 for the empty
+string.
+|===
+
+`std.keys`, `std.values`, and `std.items` return empty lists when applied to a
+non-dict value. `std.read_file` and `std.write_file` expand a leading `~` in
+the path.
+
+=== Methods
+
+Method calls use the attribute syntax `value.name(arguments)`.
+
+==== List methods
+
+[cols="1,1,2",options="header"]
+|===
+|Method |Arity |Behaviour
+|`append(x)` |1 |Append x. Returns null.
+|`pop()` |0 |Remove and return the last element, or null when empty.
+|`last()` |0 |Return the last element, or null when empty.
+|`len()` |0 |Number of elements.
+|`insert(i,x)` |2 |Insert x at index i.
+|`remove(i)` |1 |Remove the element at index i.
+|`contains(x)` |1 |Membership by equality.
+|`join(sep)` |1 |Join string representations with separator `sep`.
+|`sort()` |0 |Sort in place by string representation.
+|`sort_by(fn)` |1 |Sort in place by the key returned by `fn(x)`. Numeric keys compare numerically. Returns the list.
+|`reverse()` |0 |Reverse the list in place. Returns the list.
+|`unique()` |0 |New list with duplicate elements removed, preserving first-occurrence order. Lists and dictionaries compare by contents.
+|`dump()` |0 |Pretty-printed JSON representation.
+|`dump_compact()` |0 |Compact JSON representation.
+|`map(fn)` |1 |New list containing `fn(x)` for each element `x`.
+|`pmap(fn)` |1 |Like `map(fn)`, but calls run concurrently in child processes.
+Results keep the original input order.
+|`filter(fn)` |1 |New list of elements for which `fn(x)` is truthy.
+|`count([fn])` |0 or 1 |Number of elements. With `fn`, the number of elements
+for which `fn(x)` is truthy.
+|===
+
+==== Dictionary methods
+
+[cols="1,1,2",options="header"]
+|===
+|Method |Arity |Behaviour
+|`get(key[, default: x])` |1 or 2 |Value for key, or the supplied default/null.
+|`set(key, value)` |2 |Set a key.
+|`contains(key)` |1 |Key membership.
+|`keys()` |0 |List of keys.
+|`sorted()` / `sorted_keys()` |0 |New list of keys sorted by string value.
+|`values()` |0 |List of values.
+|`items()` |0 |List of `[key, value]` pairs.
+|`dump()` |0 |Pretty-printed JSON representation.
+|`dump_compact()` |0 |Compact JSON representation.
+|`len()` |0 |Number of keys.
+|`remove(key)` |1 |Remove a key.
+|===
+
+Any other method call on a dictionary inserts the first argument as the value
+for the method name and returns null. This is an implementation quirk; named
+keys should normally be accessed with indexing or assignment.
+
+==== String methods
+
+[cols="1,1,2",options="header"]
+|===
+|Method |Arity |Behaviour
+|`upper()` |0 |ASCII uppercase.
+|`lower()` |0 |ASCII lowercase.
+|`strip()` |0 |Remove leading and trailing ASCII whitespace.
+|`split(sep)` |1 |Split on `sep`. An empty separator splits UTF-8 code points.
+|`lines()` |0 |Split into lines. A trailing newline does not add an empty
+final element; `\r\n` is accepted.
+|`split_words()` |0 |Split on whitespace, honouring single and double quotes.
+|`startswith(prefix)` / `starts_with(prefix)` |1 |Prefix test.
+|`endswith(suffix)` / `ends_with(suffix)` |1 |Suffix test.
+|`strip_suffix(suffix)` |1 |Remove one trailing suffix when present.
+|`contains(needle)` |1 |Substring test.
+|`matches(pattern)` |1 |Regular-expression search.
+|`like(pattern, ignore_case: BOOL)` |1 |Glob match. `*` matches any sequence and `?` matches one byte. `ignore_case` is an optional named argument.
+|`jtable()` |0 |Parse the receiver as JSON and render an array of objects (or one object) as a Unicode table.
+|`replace(from,to)` |2 |Replace all occurrences.
+|`last()` |0 |Return the last UTF-8 code point, or null when empty.
+|`len()` |0 |Byte length.
+|`chars()` |0 |List of UTF-8 code points as strings.
+|`join(list)` |1 |Join a list with the receiver as separator.
+|`parent()` |0 |Directory component of a path.
+|`basename()` |0 |Final component of a path.
+|`stem()` |0 |Final component of a path with its last extension removed.
+|`modified()` |0 |File modification time as seconds since the Unix epoch, or `0` when unavailable.
+|`enc_b64()` |0 |Base64-encode the string.
+|`dec_b64()` |0 |Decode the string as base64. Invalid input raises a catchable error.
+|`file_enc_b64()` |0 |Read a file and return its contents as base64.
+|`file_dec_b64()` |0 |Read a base64 file and return the decoded contents. Invalid input raises a catchable error.
+|`abs()` |0 |Absolute, cleaned path. Expands `~` and resolves relative paths
+against the current directory.
+|`exists()` |0 |Whether the path exists.
+|`is_file()` |0 |Whether the path exists and is not a directory.
+|`is_dir()` |0 |Whether the path is a directory.
+|`is_executable()` |0 |Whether the path is executable.
+|===
+
+`jtable()` accepts a JSON array of objects and returns a Unicode table whose
+columns are the sorted object keys. A single JSON object becomes a one-row
+table. Nested arrays and objects are shown as `[...]` and `{...}`.
+
+==== Numeric methods
+
+Integers and floats provide `abs()`, returning a float.
+
+=== Script grammar
+
+The following grammar describes the scripting language accepted by the
+implementation. `NEWLINE` and `EOF` are produced by the lexer as described
+above. `SHELL` is a statement produced
+by the heuristic described in <<shell-command-statements>>. `STRING` is a
+string literal, including interpolation text. `CMDSUB` is a command
+substitution token.
+
+==== Lexical grammar
+
+....
+letter       = "A".."Z" | "a".."z" ;
+digit        = "0".."9" ;
+IDENT        = ( letter | "_" ) { letter | digit | "_" } ;
+INT          = digit { digit } ;
+FLOAT        = digit { digit }
+               ( "." digit { digit } [ exponent ] | exponent ) ;
+exponent     = ( "e" | "E" ) [ "+" | "-" ] digit { digit } ;
+STRING       = "'" { string-byte } "'"
+             | '"' { string-byte } '"'
+             | "'''" { any-byte } "'''"
+             | '"""' { any-byte } '"""' ;
+RAWSTRING    = ( "r'" { any-byte } "'" | 'r"' { any-byte } '"' ) ;
+CMDSUB       = "`" { any-byte } "`"
+             | "$(" { any-byte } ")" ;
+....
+
+The lexer emits `NEWLINE` and `EOF`. Indentation carries no meaning. Newlines
+are ignored while the delimiter depth of parentheses or brackets is greater
+than zero, and newlines separate statements inside braces.
+
+==== Syntactic grammar
+
+....
+program      = { NEWLINE | statement } EOF ;
+
+statement    = say-stmt
+             | return-stmt
+             | break-stmt
+             | continue-stmt
+             | pass-stmt
+             | raise-stmt
+             | if-stmt
+             | while-stmt
+             | for-stmt
+             | para-for-stmt
+             | fn-stmt
+             | try-stmt
+             | var-stmt
+             | assignment
+             | export-stmt
+             | defer-stmt
+             | expression-stmt
+             | SHELL ;
+
+suite        = "{" { NEWLINE | ";" | statement } "}" ;
+
+inline-stmt  = say-stmt | return-stmt | break-stmt | continue-stmt
+             | pass-stmt | raise-stmt | var-stmt | assignment | export-stmt
+             | defer-stmt | expression-stmt ;
+
+say-stmt     = "say" [ expression { "," expression } ] [ NEWLINE ] ;
+return-stmt  = "return" [ expression ] [ NEWLINE ] ;
+break-stmt   = "break" [ NEWLINE ] ;
+continue-stmt= "continue" [ NEWLINE ] ;
+pass-stmt    = "pass" [ NEWLINE ] ;
+raise-stmt   = ( "raise" | "throw" ) [ expression ] [ NEWLINE ] ;
+
+if-stmt      = if-expr ;
+
+if-expr      = "if" expression suite
+               { "elif" expression suite }
+               [ "else" suite ] ;
+
+while-stmt   = "while" expression suite ;
+
+for-stmt     = "for" IDENT [ "," IDENT ] "in" expression suite ;
+
+para-for-stmt = "para" "for" IDENT "in" expression suite ;
+
+fn-stmt      = "fn" IDENT "(" [ param { "," param } [ "," ] ] ")" suite ;
+param        = IDENT [ ":" ( type-text | expression ) ] ;
+
+try-stmt     = "try" suite ( "catch" | "except" ) [ IDENT ] suite ;
+
+var-stmt     = "var" ( var-item
+                     | "(" { NEWLINE | "," | ";" | var-item } ")"
+                     ) [ NEWLINE ] ;
+var-item     = IDENT "=" expression ;
+assignment   = expression assign-op expression [ NEWLINE ] ;
+export-stmt  = "export" IDENT assign-op expression [ NEWLINE ] ;
+defer-stmt   = "defer" expression [ NEWLINE ] | "defer" suite ;
+assign-op    = "=" | "+=" | "-=" | "*=" | "/=" ;
+
+expression-stmt = expression [ NEWLINE ] ;
+
+expression   = coalesce-expr ;
+coalesce-expr = or-expr [ "??" coalesce-expr ] ;
+or-expr      = and-expr { "or" and-expr } ;
+and-expr     = not-expr { "and" not-expr } ;
+not-expr     = "not" not-expr | comparison ;
+comparison   = range-expr
+               [ ( "==" | "!=" | "<" | ">" | "<=" | ">="
+                 | "in" | "not" "in" ) range-expr ] ;
+range-expr   = additive [ ( ".." | "..=" ) additive ] ;
+additive     = multiplicative { ( "+" | "-" ) multiplicative } ;
+multiplicative = unary { ( "*" | "/" | "%" ) unary } ;
+unary        = ( "-" | "+" ) unary | postfix ;
+postfix      = primary { call | index | attribute } ;
+call         = "(" [ argument { "," argument } [ "," ] ] ")" ;
+argument     = [ IDENT ":" ] expression ;
+index        = "[" expression "]" ;
+attribute    = "." IDENT ;
+
+primary      = INT
+             | FLOAT
+             | STRING
+             | RAWSTRING
+             | CMDSUB
+             | "true"
+             | "false"
+             | "null"
+             | "none"
+             | IDENT
+             | "(" expression ")"
+             | list-literal
+             | dict-literal
+             | if-expr
+             | lambda ;
+
+list-literal = "[" [ list-item { "," list-item } [ "," ] ] "]" ;
+list-item    = [ "..." ] expression ;
+dict-literal = "{" [ expression ":" expression
+                     { "," expression ":" expression } [ "," ] ] "}" ;
+lambda       = "|" [ IDENT { "," IDENT } ] "|"
+               ( "=>" expression | expression | "{" { statement } "}" ) ;
+....
+
+`type-text` is accepted and skipped by the parser; type annotations have no
+runtime effect. Any other expression after a parameter's `:` is a default
+value. A `SHELL` statement is recognised by the statement-start heuristic and
+consumes the remainder of the source line.
+
+=== Evaluation order
+
+Expressions are evaluated left to right except where short-circuit operators
+skip the right operand. Function arguments are evaluated left to right.
+Dictionary literal entries are evaluated in source order; iteration order after
+construction is unspecified.
+
+A runtime error sets the error state and stops normal evaluation. `try` catches
+the error at the nearest enclosing `try` statement. A `return`, `break`,
+`continue`, or `exit` is not an error and is not caught by `try`.
+
+=== Limits
+
+* Maximum user-function recursion depth: 200.
+* Maximum displayed completion candidates: 200.
+* History maximum: controlled by configuration.
+* Integer arithmetic is signed 64-bit and is not overflow checked.
+* Floating-point arithmetic follows the platform double implementation.
+* Strings are byte strings; UTF-8 is handled specially only by code-point
+  iteration, string indexing boundaries, and the line editor.
+
+== Diagnostics
+
+=== Configuration diagnostics
+
+Configuration diagnostics are written to standard error and do not stop the
+shell:
+
+[source]
+----
+blood: config: /path/to/blood.ini
+  line N: expected key = value
+blood: config: invalid boolean 'VALUE'
+blood: config: invalid integer for KEY
+----
+
+=== Shell diagnostics
+
+Shell diagnostics are written to standard error:
+
+[source]
+----
+blood: NAME: command not found
+blood: PATH: cannot open for reading
+blood: PATH: cannot open for writing
+blood: cd: PATH: no such directory
+blood: source: PATH: no such file
+blood: alias: NAME: not found
+blood: fork failed
+----
+
+Syntax errors in the command language produce status 2. Unknown commands
+produce status 127. Failed redirections and failed builtins produce status 1.
+
+=== Script diagnostics
+
+Script syntax and runtime diagnostics have the form:
+
+[source]
+----
+blood: LABEL:LINE:COL: MESSAGE
+----
+
+For interactive submissions the label is empty, yielding:
+
+[source]
+----
+blood: LINE:COL: MESSAGE
+----
+
+=== Interactive messages
+
+Ctrl-C while editing prints `^C` and returns to a new prompt. Ctrl-D on an
+empty line ends the session. A cancelled completion menu or search does not
+execute a command.
+
+== Performance characteristics
+
+The implementation is designed to avoid unnecessary process creation:
+
+* Builtins execute in the shell process outside pipelines.
+* Simple external commands fork and exec directly; `/bin/sh` is not used as
+  an intermediary.
+* Pipelines fork only the stages that are required.
+* Command substitution uses the Blood parser in a child process.
+* Prompt Git information is cached for 1500 milliseconds.
+* The `PATH` executable index used by completion is built lazily and cached.
+* Prompt text is rendered once per command, not once per keystroke.
+* The line editor is byte-oriented and redraws only the prompt line and menu.
+* History appends one entry per command and rewrites the file on exit.
+
+The implementation does not use an arena for shell command parsing. Temporary
+command structures and script values are allocated from the C heap and are not
+generally reclaimed during the lifetime of the process. This is a known
+limitation of version 0.1.0.
+
+== Known limitations and deviations
+
+The following behaviours are intentional or currently unimplemented and are
+part of the implemented contract:
+
+* The build targets Linux with a POSIX-style C library. The directory-entry
+  layout and terminal handling are Linux-oriented.
+* The prompt has two effective layouts: the default box layout and the `plain`
+  layout. Other `theme` values are treated as default.
+* `show_mode`, `separator`, `color_success`, and `default_editor` are parsed and
+  stored but have no current rendering or builtin effect.
+* `$@`, `$*`, positional parameters beyond `$0`, arrays, and associative shell
+  arrays are not implemented.
+* `~user` is not resolved.
+* Glob expansion does not support brace expansion, recursive `**`, or extglob.
+* Aliases are expanded for single-command input and not as stages of a
+  multi-command pipeline.
+* There are no heredocs, here-strings, process substitution, `|&`, or
+  arbitrary descriptor redirections beyond `2>&N`.
+* The scripting language has no classes, modules, imports, comprehensions,
+  generators, decorators, slicing, varargs, `with`, `assert`, `del`, `global`,
+  or `is`.
+* Type annotations on function parameters are syntactically accepted but
+  ignored.
+* Single-quoted and double-quoted strings both interpolate.
+* Integer division truncates toward zero. There is no floor-division operator.
+* Dictionaries are unordered. Dictionary and function equality is identity
+  equality.
+* List and dictionary assignment aliases the object; there is no copy-on-write
+  or deep copy.
+* String length and `ord`/`chr` are byte-oriented. String indexing advances by
+  UTF-8 code points only at index boundaries.
+* The line editor counts display width in code points, not terminal cells.
+
+== Examples
+
+=== Interactive shell
+
+[source]
+----
+$ blood
+╭─ blood 0.1.0 — type help for commands, help script for the language.
+┌─ user@host ~/src (main *)
+└─ ❯ echo hello | tr a-z A-Z
+HELLO
+┌─ user@host ~/src (main *)
+└─ ❯ for item in ["one", "two"] {
+  …     say item
+  … }
+----
+
+=== Command language
+
+[source]
+----
+# Pipelines
+ls -l | grep '\.sx$'
+
+# Redirection
+echo hello > out.txt
+cat out.txt >> all.txt
+command 2> errors.txt
+
+# Command substitution
+echo "time is $(date +%H:%M)"
+
+# Background execution
+sleep 5 &
+jobs
+
+# Environment assignment
+EDITOR=vim command
+export EDITOR=vim
+unset EDITOR
+----
+
+=== Scripting language
+
+[source]
+----
+var name = "Blood"
+var version = 1
+
+say "Welcome to {name} {version}"
+
+for item in ["one", "two", "three"] {
+    say item
+}
+
+fn greet(person) {
+    return "Hello, " + person
+}
+
+say greet("world")
+
+if version > 0 {
+    say "positive"
+} elif version == 0 {
+    say "zero"
+} else {
+    say "negative"
+}
+
+try {
+    raise "example failure"
+} catch message {
+    say "caught: {message}"
+}
+
+var output = `printf "a\nb\n"`
+say output
+say "status is {status}"
+
+sh("true")
+----
+
+== Appendix: default settings
+
+[cols="1,1,1",options="header"]
+|===
+|Section |Key |Default
+|prompt |theme |`default`
+|prompt |show_username |`true`
+|prompt |show_hostname |`true`
+|prompt |show_directory |`true`
+|prompt |show_git |`true`
+|prompt |show_time |`false`
+|prompt |show_exit_status |`true`
+|prompt |show_duration |`true`
+|prompt |show_jobs |`true`
+|prompt |show_mode |`false`
+|prompt |two_line |`true`
+|prompt |directory_style |`full`
+|prompt |prompt_symbol |`❯`
+|prompt |prompt_char |`❯`
+|prompt |separator |`─`
+|colors |primary |`cyan`
+|colors |secondary |`magenta`
+|colors |success |`green`
+|colors |error |`red`
+|colors |directory |`blue`
+|colors |git_clean |`green`
+|colors |git_dirty |`yellow`
+|colors |muted |`bright_black`
+|colors |warning |`yellow`
+|colors |accent |`bright_cyan`
+|history |enabled |`true`
+|history |file |`~/.local/share/blood/history`
+|history |max_entries |`10000`
+|history |ignore_duplicates |`true`
+|completion |enabled |`true`
+|completion |case_sensitive |`false`
+|shell |default_editor |`nano`
+|shell |login_message |`true`
+|shell |startup_file |empty
+|===

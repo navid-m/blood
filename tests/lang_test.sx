@@ -60,6 +60,37 @@ test "lexer handles strings, escapes and command substitutions" {
     }
 }
 
+test "lexer supports multiline triple-quoted strings" {
+    trust {
+        lang.clear_error()
+        val toks: ref u.Vec = lang.lex(c"x = \"\"\"\n    alpha\n    beta\n    \"\"\"\n")
+        assert lang.last_error() == none
+        assert toks.len == 5
+        assert token_at(toks, 2).kind == lang.TokenKind.Str
+        assert u.s_eq(token_at(toks, 2).text, c"alpha\nbeta")
+        assert token_at(toks, 2).line == 1
+        assert token_at(toks, 3).kind == lang.TokenKind.Newline
+        assert token_at(toks, 4).kind == lang.TokenKind.Eof
+
+        val inline_toks: ref u.Vec = lang.lex(c"say(\"\"\"a \"quote\" b\"\"\")\n")
+        assert lang.last_error() == none
+        assert u.s_eq(token_at(inline_toks, 2).text, c"a \"quote\" b")
+
+        val empty: ref u.Vec = lang.lex(c"x = \"\"\"\n\"\"\"\n")
+        assert lang.last_error() == none
+        assert u.s_eq(token_at(empty, 2).text, c"")
+
+        val single: ref u.Vec = lang.lex(c"x = '''\n    one\n    '''\n")
+        assert lang.last_error() == none
+        assert u.s_eq(token_at(single, 2).text, c"one")
+
+        lang.clear_error()
+        lang.lex(c"\"\"\"oops\n")
+        assert u.s_eq(lang.last_error(), c"unterminated multiline string")
+        lang.clear_error()
+    }
+}
+
 test "lexer tokenizes brace blocks without indentation" {
     trust {
         val toks: ref u.Vec = lang.lex(c"if true {\n    say \"x\"\n}\n")

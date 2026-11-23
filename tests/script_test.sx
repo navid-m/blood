@@ -282,6 +282,30 @@ test "script supports string interpolation" {
     }
 }
 
+test "script supports multiline triple-quoted strings" {
+    trust {
+        fresh()
+        val src: ref u8 = c"var text = \"\"\"\n    hello\n    world\n    \"\"\"\nif text != \"hello\\nworld\" {\n    raise \"multiline\"\n}\nif \"\"\"a \"quote\" b\"\"\" != \"a \\\"quote\\\" b\" {\n    raise \"triple quotes\"\n}\nvar who = \"blood\"\nif \"\"\"\n    hi {who}\n    \"\"\" != \"hi blood\" {\n    raise \"interpolation\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "sh runs multiline triple-quoted commands" {
+    trust {
+        fresh()
+        val c: ref cfg.Config = cfg.default_config()
+        sh.shell_init(c, hist.history_new(c), false)
+        val old_ready: i64 = u.hooks_ready
+        val old_shell: fn(ref u8) i32 = u.run_shell_hook
+        u.run_shell_hook = sh.run_line
+        u.hooks_ready = 1
+        val src: ref u8 = c"var r = sh(\"\"\"\necho one\necho two\n\"\"\")\nif not r.ok or r.status != 0 or r.stdout != \"one\\ntwo\\n\" {\n    raise \"multiline sh\"\n}\n"
+        assert run(src) == 0
+        u.run_shell_hook = old_shell
+        u.hooks_ready = old_ready
+    }
+}
+
 test "script supports brace block style" {
     trust {
         fresh()
@@ -396,12 +420,15 @@ test "script detects lines that need continuation" {
         assert script.needs_continuation(c"para for x in xs {")
         assert script.needs_continuation(c"fn main {")
         assert script.needs_continuation(c"say \"open")
+        assert script.needs_continuation(c"sh(\"\"\"")
+        assert script.needs_continuation(c"sh(\"\"\"\ncat \"a\"\ncat b")
         assert script.needs_continuation(c"[1, 2")
         assert script.needs_continuation(c"call(")
         assert !script.needs_continuation(c"echo hi")
         assert !script.needs_continuation(c"x = 1")
         assert !script.needs_continuation(c"[1, 2]")
         assert !script.needs_continuation(c"say \"closed\"")
+        assert !script.needs_continuation(c"sh(\"\"\"\ncat a\ncat b\n\"\"\")")
         assert !script.needs_continuation(c"if true:")
     }
 }

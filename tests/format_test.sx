@@ -47,6 +47,22 @@ test "formatter parenthesizes multi-argument say" {
     }
 }
 
+test "formatter preserves multiline string bodies" {
+    trust {
+        val src: ref u8 = c"fn main()\n{\n    sh(\"\"\"\n    cat one\n    cat two\n    \"\"\")\n}\n"
+        val want: ref u8 = c"fn main() {\n    sh(\"\"\"\n    cat one\n    cat two\n    \"\"\")\n}\n"
+        assert u.s_eq(format.format_text(src), want)
+        assert u.s_eq(format.format_text(want), want)
+    }
+}
+
+test "formatter leaves lines inside multiline strings alone" {
+    trust {
+        val src: ref u8 = c"fn main() {\n    sh(\"\"\"\n    say hi\n    x = 1\n    {\n    \"\"\")\n    say(\"after\")\n}\n"
+        assert u.s_eq(format.format_text(src), src)
+    }
+}
+
 test "formatter is idempotent" {
     trust {
         val src: ref u8 = c"if true\n{\n  x   = 1\n  a_b = 2\n  say(\"hi\")\n}\n"
