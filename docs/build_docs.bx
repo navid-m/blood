@@ -1,3 +1,25 @@
 #!/usr/bin/env blood
 
-asciidoctor -a stylesheet=dark.css -a linkcss docs/SPECIFICATION.adoc
+cd("docs")
+
+var ex = 0
+
+for s in ["uv sync", "uv run zensical build"] {
+    try {
+        sh(s, check: true)
+    } catch {
+        ex += 1
+    }
+}
+
+fn diag(msg) {
+    say("problem: {msg}")
+}
+
+if ex == 2 {
+    diag("uv might not be installed")
+} elif ex > 0 {
+    diag("something went wrong in the sync/build process")
+} else {
+    say("done")
+}
