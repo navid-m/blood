@@ -1,0 +1,63 @@
+site_name: bloodshell
+site_description: The observable behaviour of the Blood shell, its command language, configuration system, and scripting language.
+site_author: Navid Momtahen
+copyright: Copyright &copy; 2026 Navid Momtahen. Licensed under GPL-3.0-only.
+
+docs_dir: docs
+
+theme:
+  name: terminal
+  palette: dark            # default, dark, gruvbox_dark, pink, sans, sans_dark, blueish
+  logo: assets/blood.png   # path relative to docs_dir
+  favicon: assets/blood.png
+  features:
+    - navigation.indexes
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - search
+
+# Grouped so the top bar has ~6 entries instead of 16
+nav:
+  - Home: index.md
+  - Basics:
+      - Terminology: terminology.md
+      - Invocation: invocation.md
+      - Bash translation: bash-translation.md
+  - Shell:
+      - Configuration: configuration.md
+      - Interactive terminal: interactive-terminal.md
+      - Prompt: prompt.md
+      - History: history.md
+      - Completion: completion.md
+  - Language:
+      - Command language: command-language.md
+      - Scripting language: scripting-language.md
+  - Reference:
+      - Diagnostics: diagnostics.md
+      - Performance characteristics: performance.md
+      - Known deviations: limitations.md
+  - "Appendix: Default Settings": appendix-defaults.md
+  - GitHub: https://github.com/navid-m/blood
+  - Site: https://bloodshell.pages.dev
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: false
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: false

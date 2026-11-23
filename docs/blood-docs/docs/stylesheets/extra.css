@@ -1,0 +1,98 @@
+/* Site icon to the left of the site name */
+.terminal-logo a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.terminal-logo a::before {
+  content: "";
+  display: inline-block;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  background-image: url("../assets/blood.png");
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  font-size: 15px !important;
+}
+
+pre > span:empty,
+.highlight pre > span:empty,
+.highlight > pre > span:first-child:empty {
+  display: none !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: none !important;
+  border: 0 !important;
+}
+
+/* Make the wrapper invisible so only the <pre> draws the box */
+.highlight {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0 0 1.5rem 0;
+}
+
+/* Remove the extra bottom gap/background on the pre itself */
+.highlight pre {
+  margin: 0;
+}
+
+/* Empty span Pygments emits at the start, and any leftover anchors */
+.highlight pre > span:empty,
+.highlight code a:empty {
+  display: none;
+}
+/* Make code fill the pre as a block so the trailing newline can't create an extra row */
+/* Wipe terminal.css's styling from code blocks entirely */
+pre code,
+.highlight pre code {
+  all: unset;
+  display: block;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* The pre owns the box */
+.highlight pre {
+  margin: 0;
+  padding: 1rem;
+}
+
+/* Inline code (outside code blocks) keeps its own style */
+:not(pre) > code {
+  padding: 0.1em 0.35em;
+}
+
+/* Hide the FontAwesome search icon */
+.terminal-nav .fa-search,
+.terminal-nav .fa-magnifying-glass,
+.terminal-nav [class*="fa-search"],
+.terminal-nav [class*="fa-magnifying-glass"],
+.terminal-nav svg.svg-inline--fa {
+  display: none !important;
+}
+
+/* Remove the blinking cursor next to the site title */
+.terminal-prompt::after,
+.terminal-logo::after,
+.terminal-nav .logo::after {
+  content: none !important;
+  display: none !important;
+  animation: none !important;
+}
+
+.terminal-prompt::before,
+.terminal-logo::before,
+.terminal-nav .logo::before {
+  content: none !important;
+  display: none !important;
+}
