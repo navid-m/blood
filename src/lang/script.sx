@@ -7394,7 +7394,10 @@ pub fn needs_continuation(line: ref u8) bool = trust {
                 continue
             }
             if triple {
-                if c == quote && i + 2 < n && @load8(@ptradd(t, i + 1)) == quote && @load8(@ptradd(t, i + 2)) == quote {
+                if c == quote && i + 2 < n && @load8(@ptradd(
+                        t,
+                        i + 1
+                    )) == quote && @load8(@ptradd(t, i + 2)) == quote {
                     quote = 0
                     triple = false
                     i += 3

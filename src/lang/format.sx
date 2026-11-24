@@ -51,7 +51,10 @@ fn skip_string(s: ref u8, i: i64) i64 = trust {
                 j += 2
                 continue
             }
-            if c == quote && j + 2 < n && @load8(@ptradd(s, j + 1)) == quote && @load8(@ptradd(s, j + 2)) == quote {
+            if c == quote && j + 2 < n && @load8(@ptradd(
+                    s,
+                    j + 1
+                )) == quote && @load8(@ptradd(s, j + 2)) == quote {
                 j += 3
                 break
             }
@@ -137,7 +140,10 @@ fn nesting_delta_from(s: ref u8, entering: u8) i64 = trust {
                 i += 2
                 continue
             }
-            if c == quote && i + 2 < n && @load8(@ptradd(s, i + 1)) == quote && @load8(@ptradd(s, i + 2)) == quote {
+            if c == quote && i + 2 < n && @load8(@ptradd(
+                    s,
+                    i + 1
+                )) == quote && @load8(@ptradd(s, i + 2)) == quote {
                 quote = 0
                 i += 3
                 continue
@@ -192,7 +198,10 @@ fn triple_state_after(s: ref u8, entering: u8) u8 = trust {
                 i += 2
                 continue
             }
-            if c == quote && i + 2 < n && @load8(@ptradd(s, i + 1)) == quote && @load8(@ptradd(s, i + 2)) == quote {
+            if c == quote && i + 2 < n && @load8(@ptradd(
+                    s,
+                    i + 1
+                )) == quote && @load8(@ptradd(s, i + 2)) == quote {
                 quote = 0
                 i += 3
                 continue
@@ -646,7 +655,10 @@ fn is_var_block_open(s: ref u8) bool = trust {
     if i < 2 {
         return false
     }
-    if @load8(@ptradd(t, i)) != 114 || @load8(@ptradd(t, i - 1)) != 97 || @load8(@ptradd(t, i - 2)) != 118 {
+    if @load8(@ptradd(
+            t,
+            i
+        )) != 114 || @load8(@ptradd(t, i - 1)) != 97 || @load8(@ptradd(t, i - 2)) != 118 {
         return false
     }
     if i >= 3 {
@@ -777,9 +789,9 @@ fn align_type_fields(codes: mut ref u.Vec, indents: ref u.Vec, raws: ref u.Vec) 
         val code: ref u8 = u.vec_p(codes, i) as ref u8
         val t: ref u8 = u.s_trim(code)
         val type_open: bool = (u.s_starts(t, c"type ") || u.s_starts(
-            t,
-            c"pub type "
-        )) && u.s_ends_with(t, c"{")
+                t,
+                c"pub type "
+            )) && u.s_ends_with(t, c"{")
         if !type_open {
             i++
             continue
@@ -1173,9 +1185,9 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                         u.vec_push(indents, depth + var_depth)
                         u.vec_push(raws, 0)
                     } elif u.s_eq(code, c"{") && codes.len > 0 && u.vec_gets(
-                            raws,
-                            codes.len - 1
-                        ) == 0 {
+                        raws,
+                        codes.len - 1
+                    ) == 0 {
                         val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
                         if u.s_len(prev) > 0 && !u.s_starts(prev, c"#") && can_open_block(prev) {
                             val merged: ref u8 = u.s_cat(prev, c" {")
@@ -1195,9 +1207,9 @@ pub fn format_text(src: ref u8) ref u8 = trust {
                             code,
                             c"catch"
                         ) || u.s_starts(code, c"except")) && codes.len > 0 && u.vec_gets(
-                            raws,
-                            codes.len - 1
-                        ) == 0 {
+                        raws,
+                        codes.len - 1
+                    ) == 0 {
                         val prev: ref u8 = u.vec_p(codes, codes.len - 1) as ref u8
                         if u.s_eq(u.s_trim(prev), c"}") {
                             val merged: ref u8 = u.s_cat3(prev, c" ", code)

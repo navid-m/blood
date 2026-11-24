@@ -17,7 +17,7 @@ val loginmod  = use("core/login.sx")
 val flags     = use("std/flags")
 val env       = use("std/env")
 
-val language_ref     = @embed("../docs/SPECIFICATION.adoc")
+val language_ref = @embed("../docs/SPECIFICATION.adoc")
 val language_ref_len = @embedlen("../docs/SPECIFICATION.adoc")
 
 fn arg_at(av: list[ref u8], i: i64) ref u8 = trust {
@@ -424,8 +424,20 @@ pub fn main() i32 = trust {
     flags.bool_var(fs, c"doc", none, @addr(do_doc), c"generate documentation from Blood scripts")
     flags.bool_var(fs, c"md", none, @addr(doc_md), c"write Markdown documentation instead of HTML")
     flags.bool_var(fs, c"lsp", none, @addr(do_lsp), c"run the Blood language server over stdio")
-    flags.bool_var(fs, c"ref", none, @addr(do_ref), c"write the language reference to the current directory")
-    flags.bool_var(fs, c"stdout", none, @addr(ref_stdout), c"print the language reference to stdout")
+    flags.bool_var(
+        fs,
+        c"ref",
+        none,
+        @addr(do_ref),
+        c"write the language reference to the current directory"
+    )
+    flags.bool_var(
+        fs,
+        c"stdout",
+        none,
+        @addr(ref_stdout),
+        c"print the language reference to stdout"
+    )
     flags.string_var(fs, c"out", c"o", @addr(out_dir), c"output directory for -translate-sh")
     flags.string_var(fs, c"c", none, @addr(command), c"execute a command or script and exit")
     flags.stop_at_positional(fs, true)

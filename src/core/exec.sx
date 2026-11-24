@@ -1,7 +1,6 @@
 /// Process execution primitives: fork, pipes, exec, wait, capture.
 
-val u = use("util.sx")
-
+val u   = use("util.sx")
 val rt  = use("std/runtime")
 val win = use("win.sx")
 

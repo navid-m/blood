@@ -551,7 +551,10 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
             val quote: u8 = c
             val sline: i64 = lx.line
             val scol: i64 = lx.col
-            val triple: bool = lx.pos + 2 < lx.len && @load8(@ptradd(lx.src, lx.pos + 1)) == quote && @load8(@ptradd(lx.src, lx.pos + 2)) == quote
+            val triple: bool = lx.pos + 2 < lx.len && @load8(@ptradd(
+                    lx.src,
+                    lx.pos + 1
+                )) == quote && @load8(@ptradd(lx.src, lx.pos + 2)) == quote
             if triple {
                 lx.pos += 3
                 lx.col += 3
@@ -567,7 +570,10 @@ pub fn lex(src: ref u8) ref u.Vec = trust {
                 }
                 val d: u8 = @load8(@ptradd(lx.src, lx.pos))
                 if triple {
-                    if d == quote && lx.pos + 2 < lx.len && @load8(@ptradd(lx.src, lx.pos + 1)) == quote && @load8(@ptradd(lx.src, lx.pos + 2)) == quote {
+                    if d == quote && lx.pos + 2 < lx.len && @load8(@ptradd(
+                            lx.src,
+                            lx.pos + 1
+                        )) == quote && @load8(@ptradd(lx.src, lx.pos + 2)) == quote {
                         lx.pos += 3
                         lx.col += 3
                         closed = true

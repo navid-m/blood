@@ -3,10 +3,12 @@
 val u    = use("../core/util.sx")
 val lang = use("lang.sx")
 
-val doc_css     = @embed("../assets/doc.css")
-val doc_css_len = @embedlen("../assets/doc.css")
-val doc_js      = @embed("../assets/doc.js")
-val doc_js_len  = @embedlen("../assets/doc.js")
+val (
+    doc_css     = @embed("../assets/doc.css")
+    doc_css_len = @embedlen("../assets/doc.css")
+    doc_js      = @embed("../assets/doc.js")
+    doc_js_len  = @embedlen("../assets/doc.js")
+)
 
 type DocField = {
     name: mut ref u8
@@ -767,8 +769,8 @@ fn hl_code_inner(b: mut ref u.Buf, s: ref u8) void = trust {
             continue
         }
         if (c == 114 || c == 99) && i + 1 < n && (@load8(
-            @ptradd(s, i + 1)
-        ) == 34 || @load8(@ptradd(s, i + 1)) == 39) {
+                @ptradd(s, i + 1)
+            ) == 34 || @load8(@ptradd(s, i + 1)) == 39) {
             val end: i64 = hl_string_end(s, i + 1, n)
             u.buf_add(b, c"<span class='str'>")
             html_escape(b, u.s_substr(s, i, end))
@@ -1186,7 +1188,10 @@ fn relative_path(path: ref u8) ref u8 = trust {
     val cwd: ref u8 = u.cwd()
     if u.s_starts(path, cwd) {
         val at: i64 = u.s_len(cwd)
-        if at < u.s_len(path) && (@load8(@ptradd(path, at)) == 47 || @load8(@ptradd(path, at)) == 92) {
+        if at < u.s_len(path) && (@load8(@ptradd(
+                    path,
+                    at
+                )) == 47 || @load8(@ptradd(path, at)) == 92) {
             return u.s_substr(path, at + 1, u.s_len(path))
         }
     }

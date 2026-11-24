@@ -2500,10 +2500,10 @@ fn bi_alias(cmd: ref Command) i32 = trust {
             val name: ref u8 = u.s_substr_perm(def, 0, eq)
             val vb: mut ref u.Buf = u.buf_new()
             u.buf_add(vb, strip_alias_quotes(u.s_substr(
-                def,
-                eq + 1,
-                u.s_len(def)
-            )))
+                        def,
+                        eq + 1,
+                        u.s_len(def)
+                    )))
             i++
             for {
                 if i >= cmd.argv.len {
@@ -2577,7 +2577,7 @@ fn bi_help(cmd: ref Command) i32 = trust {
         u.write_fd(
             1,
             c\\Language reference: https://bloodshell.pages.dev/specification.html
-             \\Try "blood -ref" to generate the language reference in the current directory
+            \\Try "blood -ref" to generate the language reference in the current directory
         )
         return 0
     }
