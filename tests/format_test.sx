@@ -132,3 +132,18 @@ test "formatter indents and aligns bulk var declarations" {
         assert u.s_eq(format.format_text(src), want)
     }
 }
+
+test "formatter aligns type fields" {
+    trust {
+        val src: ref u8 = c"type Result {\nfile string\npass bool\nms int = 0\n}\n"
+        val want: ref u8 = c"type Result {\n    file string\n    pass bool\n    ms   int = 0\n}\n"
+        assert u.s_eq(format.format_text(src), want)
+    }
+}
+
+test "formatter keeps type and method declarations stable" {
+    trust {
+        val src: ref u8 = c"type Result {\n    file string\n    pass bool\n    ms   int = 0\n}\n\nfn Result.label(self) string => if self.pass { \"PASS\" } else { \"FAIL\" }\n"
+        assert u.s_eq(format.format_text(src), src)
+    }
+}

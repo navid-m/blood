@@ -1,0 +1,47 @@
+val docgen = use("../src/lang/docgen.sx")
+val u      = use("../src/core/util.sx")
+
+fn one_path(path: ref u8) ref u.Vec = trust {
+    val paths: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(paths, path as ref void)
+    return paths
+}
+
+test "docgen writes markdown for declarations and type methods" {
+    trust {
+        val dir: ref u8 = c"/tmp/blood-unit-doc"
+        assert u.mkdir_p(dir)
+        val src_path: ref u8 = u.path_join(dir, c"sample.bx")
+        assert u.write_file(
+            src_path,
+            c"## A result value.\ntype Result {\n    ## The source file.\n    file string\n    ## Whether it passed.\n    pass bool\n    ## Elapsed time.\n    ms int = 0\n}\n\n## Format the result.\nfn Result.label(self) string => \"x\"\n\n## Add two values.\nfn add(a int, b int = 2) int {\n    return a + b\n}\n\n## The current result.\nvar r = Result{file: \"a.sx\", pass: true}\n\n## A limit.\nconst Limit = 10\n"
+        )
+        assert docgen.generate_paths(one_path(src_path), dir, true) == 0
+        val out: ref u8 = u.read_file(u.path_join(dir, c"sample.md"))
+        assert out != none
+        assert u.s_contains(out, c"# sample.bx")
+        assert u.s_contains(out, c"### `type Result`")
+        assert u.s_contains(out, c"A result value.")
+        assert u.s_contains(out, c"| `file` | `string` |")
+        assert u.s_contains(out, c"| `ms` | `int` | `0` |")
+        assert u.s_contains(out, c"#### `fn Result.label(self) string`")
+        assert u.s_contains(out, c"### `fn add(a int, b int = 2) int`")
+        assert u.s_contains(out, c"### `var r = Result{file: \"a.sx\", pass: true}`")
+        assert u.s_contains(out, c"### `const Limit = 10`")
+    }
+}
+
+test "docgen writes html by default" {
+    trust {
+        val dir: ref u8 = c"/tmp/blood-unit-doc"
+        assert u.mkdir_p(dir)
+        val src_path: ref u8 = u.path_join(dir, c"sample.bx")
+        assert docgen.generate_paths(one_path(src_path), dir, false) == 0
+        val out: ref u8 = u.read_file(u.path_join(dir, c"sample.html"))
+        assert out != none
+        assert u.s_contains(out, c"<!doctype html>")
+        assert u.s_contains(out, c"<h1>sample.bx</h1>")
+        assert u.s_contains(out, c"<h3><code>type Result</code></h3>")
+        assert u.s_contains(out, c"<td><code>ms</code></td><td><code>int</code></td><td><code>0</code></td><td>")
+    }
+}

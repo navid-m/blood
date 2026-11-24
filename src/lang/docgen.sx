@@ -1,0 +1,695 @@
+/// Documentation generation for Blood source files.
+
+val u    = use("../core/util.sx")
+val lang = use("lang.sx")
+
+type DocField = {
+    name: mut ref u8
+    typ: mut ref u8
+    default_text: mut ref u8
+    docs: mut ref u8
+}
+
+type DocItem = {
+    kind: mut i64
+    name: mut ref u8
+    signature: mut ref u8
+    docs: mut ref u8
+    fields: mut ref u.Vec
+    methods: mut ref u.Vec
+}
+
+fn split_lines(src: ref u8) ref u.Vec = trust {
+    val out: mut ref u.Vec = u.vec_new()
+    val n: i64 = u.s_len(src)
+    val start: mut i64 = 0
+    val i: mut i64 = 0
+    for {
+        if i > n {
+            break
+        }
+        if i == n || @load8(@ptradd(src, i)) == 10 {
+            if start < i {
+                u.vec_pushp(out, u.s_substr(src, start, i) as ref void)
+            } else {
+                u.vec_pushp(out, c"" as ref void)
+            }
+            start = i + 1
+        }
+        i++
+    }
+    return out
+}
+
+fn doc_text_of_line(line: ref u8) ref u8 = trust {
+    val t: ref u8 = u.s_trim(line)
+    if !u.s_starts(t, c"##") {
+        return none
+    }
+    return u.s_trim(u.s_substr(t, 2, u.s_len(t)))
+}
+
+fn docs_for_line(lines: ref u.Vec, line: i64) ref u8 = trust {
+    val parts: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = line - 2
+    for {
+        if i < 0 || i >= lines.len {
+            break
+        }
+        val text: ref u8 = doc_text_of_line(u.vec_p(lines, i) as ref u8)
+        if text == none {
+            break
+        }
+        u.vec_pushp(parts, text as ref void)
+        i--
+    }
+    val b: mut ref u.Buf = u.buf_new()
+    val j: mut i64 = parts.len - 1
+    for {
+        if j < 0 {
+            break
+        }
+        if u.s_len(u.buf_view(b)) > 0 {
+            u.buf_ch(b, 10)
+        }
+        u.buf_add(b, u.vec_p(parts, j) as ref u8)
+        j--
+    }
+    return u.buf_take(b)
+}
+
+fn item_new(kind: i64, name: ref u8, signature: ref u8, docs: ref u8) ref DocItem = trust {
+    val d: mut ref DocItem = u.xalloc(@sizeof(DocItem) as i64) as ref DocItem
+    d.kind = kind
+    d.name = name
+    d.signature = signature
+    d.docs = docs
+    d.fields = u.vec_new()
+    d.methods = u.vec_new()
+    return d
+}
+
+fn field_default(sig: ref u8) ref u8 = trust {
+    val at: i64 = u.s_find(sig, c"=")
+    if at < 0 {
+        return c""
+    }
+    return u.s_trim(u.s_substr(sig, at + 1, u.s_len(sig)))
+}
+
+fn collect_type(n: ref lang.Node, lines: ref u.Vec) ref DocItem = trust {
+    val sig: mut ref u8 = n.sig_text
+    if sig == none {
+        sig = u.s_cat(c"type ", n.s)
+    }
+    val item: mut ref DocItem = item_new(0, n.s, sig, docs_for_line(lines, n.line))
+    val i: mut i64 = 0
+    for {
+        if i >= n.kids.len {
+            break
+        }
+        val f: ref lang.Node = u.vec_p(n.kids, i) as ref lang.Node
+        if f.kind == lang.NodeKind.FieldDecl {
+            val fsig: mut ref u8 = f.sig_text
+            if fsig == none {
+                fsig = f.s
+            }
+            val field: mut ref DocField = u.xalloc(@sizeof(DocField) as i64) as ref DocField
+            field.name = f.s
+            field.typ = f.type_text
+            field.default_text = field_default(fsig)
+            field.docs = docs_for_line(lines, f.line)
+            u.vec_pushp(item.fields, field as ref void)
+        }
+        i++
+    }
+    return item
+}
+
+fn fn_item(n: ref lang.Node, lines: ref u.Vec) ref DocItem = trust {
+    val sig: mut ref u8 = n.sig_text
+    if sig == none {
+        sig = n.s
+    }
+    return item_new(1, n.s, sig, docs_for_line(lines, n.line))
+}
+
+fn binding_item(n: ref lang.Node, lines: ref u.Vec, kind: i64) ref DocItem = trust {
+    val raw: mut ref u8 = n.sig_text
+    if raw == none {
+        raw = n.s
+    }
+    val sig: mut ref u8 = u.s_cat(c"const ", raw)
+    if kind == 2 {
+        sig = u.s_cat(c"var ", raw)
+    }
+    return item_new(kind, n.s, sig, docs_for_line(lines, n.line))
+}
+
+fn find_type_item(items: ref u.Vec, name: ref u8) ref DocItem = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= items.len {
+            break
+        }
+        val item: ref DocItem = u.vec_p(items, i) as ref DocItem
+        if item.kind == 0 && u.s_eq(item.name, name) {
+            return item
+        }
+        i++
+    }
+    return none
+}
+
+fn collect_docs(program: ref lang.Node, lines: ref u.Vec) ref u.Vec = trust {
+    val items: mut ref u.Vec = u.vec_new()
+    val i: mut i64 = 0
+    for {
+        if i >= program.kids.len {
+            break
+        }
+        val n: ref lang.Node = u.vec_p(program.kids, i) as ref lang.Node
+        if n.kind == lang.NodeKind.TypeDecl {
+            u.vec_pushp(items, collect_type(n, lines) as ref void)
+        }
+        i++
+    }
+    i = 0
+    for {
+        if i >= program.kids.len {
+            break
+        }
+        val n: ref lang.Node = u.vec_p(program.kids, i) as ref lang.Node
+        if n.kind == lang.NodeKind.FnDef {
+            val item: ref DocItem = fn_item(n, lines)
+            if n.owner != none {
+                val owner: mut ref DocItem = find_type_item(items, n.owner)
+                if owner != none {
+                    u.vec_pushp(owner.methods, item as ref void)
+                } else {
+                    u.vec_pushp(items, item as ref void)
+                }
+            } else {
+                u.vec_pushp(items, item as ref void)
+            }
+        } elif n.kind == lang.NodeKind.VarDecl {
+            u.vec_pushp(items, binding_item(n, lines, 2) as ref void)
+        } elif n.kind == lang.NodeKind.ConstDecl {
+            u.vec_pushp(items, binding_item(n, lines, 3) as ref void)
+        }
+        i++
+    }
+    return items
+}
+
+fn md_docs(b: mut ref u.Buf, docs: ref u8) void = trust {
+    if u.s_len(docs) > 0 {
+        u.buf_add(b, docs)
+        u.buf_add(b, c"\n\n")
+    }
+}
+
+fn md_cell(b: mut ref u.Buf, s: ref u8) void = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 10 {
+            u.buf_add(b, c"<br>")
+        } elif c == 124 {
+            u.buf_add(b, c"\\|")
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+}
+
+fn md_fields(b: mut ref u.Buf, item: ref DocItem) void = trust {
+    if item.fields.len == 0 {
+        return
+    }
+    u.buf_add(b, c"| Field | Type | Default | Description |\n| --- | --- | --- | --- |\n")
+    val i: mut i64 = 0
+    for {
+        if i >= item.fields.len {
+            break
+        }
+        val f: ref DocField = u.vec_p(item.fields, i) as ref DocField
+        u.buf_add(b, c"| `")
+        u.buf_add(b, f.name)
+        u.buf_add(b, c"` | `")
+        if f.typ != none {
+            u.buf_add(b, f.typ)
+        }
+        u.buf_add(b, c"` | ")
+        if u.s_len(f.default_text) > 0 {
+            u.buf_add(b, c"`")
+            u.buf_add(b, f.default_text)
+            u.buf_add(b, c"`")
+        }
+        u.buf_add(b, c" | ")
+        md_cell(b, f.docs)
+        u.buf_add(b, c" |\n")
+        i++
+    }
+    u.buf_ch(b, 10)
+}
+
+fn render_md(items: ref u.Vec, title: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"# ")
+    u.buf_add(b, title)
+    u.buf_add(b, c"\n\n")
+    val sections: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(sections, c"Types" as ref void)
+    u.vec_pushp(sections, c"Functions" as ref void)
+    u.vec_pushp(sections, c"Variables" as ref void)
+    u.vec_pushp(sections, c"Constants" as ref void)
+    val kinds: mut ref u.Vec = u.vec_new()
+    u.vec_push(kinds, 0)
+    u.vec_push(kinds, 1)
+    u.vec_push(kinds, 2)
+    u.vec_push(kinds, 3)
+    val si: mut i64 = 0
+    for {
+        if si >= sections.len {
+            break
+        }
+        val kind: i64 = u.vec_gets(kinds, si)
+        val any: mut bool = false
+        val i: mut i64 = 0
+        for {
+            if i >= items.len {
+                break
+            }
+            val item: ref DocItem = u.vec_p(items, i) as ref DocItem
+            if item.kind == kind {
+                any = true
+                break
+            }
+            i++
+        }
+        if any {
+            u.buf_add(b, c"## ")
+            u.buf_add(b, u.vec_p(sections, si) as ref u8)
+            u.buf_add(b, c"\n\n")
+        }
+        i = 0
+        for {
+            if i >= items.len {
+                break
+            }
+            val item: ref DocItem = u.vec_p(items, i) as ref DocItem
+            if item.kind == kind {
+                u.buf_add(b, c"### `")
+                u.buf_add(b, item.signature)
+                u.buf_add(b, c"`\n\n")
+                md_docs(b, item.docs)
+                if item.kind == 0 {
+                    md_fields(b, item)
+                }
+                val mi: mut i64 = 0
+                for {
+                    if mi >= item.methods.len {
+                        break
+                    }
+                    val method: ref DocItem = u.vec_p(item.methods, mi) as ref DocItem
+                    u.buf_add(b, c"#### `")
+                    u.buf_add(b, method.signature)
+                    u.buf_add(b, c"`\n\n")
+                    md_docs(b, method.docs)
+                    mi++
+                }
+            }
+            i++
+        }
+        si++
+    }
+    return u.buf_take(b)
+}
+
+fn html_escape(b: mut ref u.Buf, s: ref u8) void = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 38 {
+            u.buf_add(b, c"&amp;")
+        } elif c == 60 {
+            u.buf_add(b, c"&lt;")
+        } elif c == 62 {
+            u.buf_add(b, c"&gt;")
+        } elif c == 34 {
+            u.buf_add(b, c"&quot;")
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+}
+
+fn html_docs(b: mut ref u.Buf, docs: ref u8) void = trust {
+    if u.s_len(docs) == 0 {
+        return
+    }
+    u.buf_add(b, c"<p>")
+    val n: i64 = u.s_len(docs)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(docs, i))
+        if c == 10 {
+            u.buf_add(b, c"<br>")
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+    u.buf_add(b, c"</p>\n")
+}
+
+fn html_cell(b: mut ref u.Buf, s: ref u8) void = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 10 {
+            u.buf_add(b, c"<br>")
+        } elif c == 38 {
+            u.buf_add(b, c"&amp;")
+        } elif c == 60 {
+            u.buf_add(b, c"&lt;")
+        } elif c == 62 {
+            u.buf_add(b, c"&gt;")
+        } elif c == 34 {
+            u.buf_add(b, c"&quot;")
+        } else {
+            u.buf_ch(b, c)
+        }
+        i++
+    }
+}
+
+fn html_fields(b: mut ref u.Buf, item: ref DocItem) void = trust {
+    if item.fields.len == 0 {
+        return
+    }
+    u.buf_add(
+        b,
+        c"<table><thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Description</th></tr></thead><tbody>\n"
+    )
+    val i: mut i64 = 0
+    for {
+        if i >= item.fields.len {
+            break
+        }
+        val f: ref DocField = u.vec_p(item.fields, i) as ref DocField
+        u.buf_add(b, c"<tr><td><code>")
+        html_escape(b, f.name)
+        u.buf_add(b, c"</code></td><td><code>")
+        if f.typ != none {
+            html_escape(b, f.typ)
+        }
+        u.buf_add(b, c"</code></td><td>")
+        if u.s_len(f.default_text) > 0 {
+            u.buf_add(b, c"<code>")
+            html_escape(b, f.default_text)
+            u.buf_add(b, c"</code>")
+        }
+        u.buf_add(b, c"</td><td>")
+        html_cell(b, f.docs)
+        u.buf_add(b, c"</td></tr>\n")
+        i++
+    }
+    u.buf_add(b, c"</tbody></table>\n")
+}
+
+fn render_html(items: ref u.Vec, title: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(b, c"<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>")
+    html_escape(b, title)
+    u.buf_add(b, c"</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:880px;margin:2rem auto;padding:0 1rem}code{background:#f3f3f3;padding:.1rem .25rem;border-radius:3px}table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:.3rem .6rem;text-align:left}</style></head><body>\n<h1>")
+    html_escape(b, title)
+    u.buf_add(b, c"</h1>\n")
+    val sections: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(sections, c"Types" as ref void)
+    u.vec_pushp(sections, c"Functions" as ref void)
+    u.vec_pushp(sections, c"Variables" as ref void)
+    u.vec_pushp(sections, c"Constants" as ref void)
+    val kinds: mut ref u.Vec = u.vec_new()
+    u.vec_push(kinds, 0)
+    u.vec_push(kinds, 1)
+    u.vec_push(kinds, 2)
+    u.vec_push(kinds, 3)
+    val si: mut i64 = 0
+    for {
+        if si >= sections.len {
+            break
+        }
+        val kind: i64 = u.vec_gets(kinds, si)
+        val any: mut bool = false
+        val i: mut i64 = 0
+        for {
+            if i >= items.len {
+                break
+            }
+            val item: ref DocItem = u.vec_p(items, i) as ref DocItem
+            if item.kind == kind {
+                any = true
+                break
+            }
+            i++
+        }
+        if any {
+            u.buf_add(b, c"<h2>")
+            u.buf_add(b, u.vec_p(sections, si) as ref u8)
+            u.buf_add(b, c"</h2>\n")
+        }
+        i = 0
+        for {
+            if i >= items.len {
+                break
+            }
+            val item: ref DocItem = u.vec_p(items, i) as ref DocItem
+            if item.kind == kind {
+                u.buf_add(b, c"<h3><code>")
+                html_escape(b, item.signature)
+                u.buf_add(b, c"</code></h3>\n")
+                html_docs(b, item.docs)
+                if item.kind == 0 {
+                    html_fields(b, item)
+                }
+                val mi: mut i64 = 0
+                for {
+                    if mi >= item.methods.len {
+                        break
+                    }
+                    val method: ref DocItem = u.vec_p(item.methods, mi) as ref DocItem
+                    u.buf_add(b, c"<h4><code>")
+                    html_escape(b, method.signature)
+                    u.buf_add(b, c"</code></h4>\n")
+                    html_docs(b, method.docs)
+                    mi++
+                }
+            }
+            i++
+        }
+        si++
+    }
+    u.buf_add(b, c"</body></html>\n")
+    return u.buf_take(b)
+}
+
+fn blood_file(path: ref u8) bool = trust {
+    return u.s_ends_with(path, c".bx") || u.s_ends_with(path, c".blood")
+}
+
+fn skip_dir(name: ref u8) bool = trust {
+    return u.s_eq(name, c".git") || u.s_eq(name, c"node_modules") || u.s_eq(
+        name,
+        c".sxb"
+    ) || u.s_eq(name, c"bx-docs-out")
+}
+
+fn replace_extension(path: ref u8, ext: ref u8) ref u8 = trust {
+    val n: i64 = u.s_len(path)
+    val i: mut i64 = n - 1
+    for {
+        if i < 0 {
+            break
+        }
+        val c: u8 = @load8(@ptradd(path, i))
+        if c == 47 || c == 92 {
+            break
+        }
+        if c == 46 {
+            return u.s_cat(u.s_substr(path, 0, i), ext)
+        }
+        i--
+    }
+    return u.s_cat(path, ext)
+}
+
+fn relative_path(path: ref u8) ref u8 = trust {
+    if !u.path_is_abs(path) {
+        if u.s_starts(path, c"./") {
+            return u.s_substr(path, 2, u.s_len(path))
+        }
+        return path
+    }
+    val cwd: ref u8 = u.cwd()
+    if u.s_starts(path, cwd) {
+        val at: i64 = u.s_len(cwd)
+        if at < u.s_len(path) && (@load8(@ptradd(path, at)) == 47 || @load8(@ptradd(path, at)) == 92) {
+            return u.s_substr(path, at + 1, u.s_len(path))
+        }
+    }
+    return u.path_base(path)
+}
+
+fn relative_root(path: ref u8) ref u8 = trust {
+    val rel: ref u8 = relative_path(path)
+    if u.s_eq(rel, c".") || u.s_eq(rel, c"./") || u.s_len(rel) == 0 {
+        return c""
+    }
+    val n: i64 = u.s_len(rel)
+    if n > 0 && (@load8(@ptradd(rel, n - 1)) == 47 || @load8(@ptradd(rel, n - 1)) == 92) {
+        return u.s_substr(rel, 0, n - 1)
+    }
+    return rel
+}
+
+fn target_path(rel: ref u8, out_dir: ref u8, markdown: bool) ref u8 = trust {
+    val ext: mut ref u8 = c".html"
+    if markdown {
+        ext = c".md"
+    }
+    val root: mut ref u8 = c"bx-docs-out"
+    if out_dir != none && u.s_len(out_dir) > 0 {
+        root = out_dir
+    }
+    return u.path_join(root, replace_extension(rel, ext))
+}
+
+fn generate_file(path: ref u8, rel: ref u8, out_dir: ref u8, markdown: bool) i32 = trust {
+    val src: ref u8 = u.read_file(path)
+    if src == none {
+        u.write_fd(2, u.s_cat3(c"blood: -doc: ", path, c": cannot read file\n"))
+        return 1
+    }
+    lang.clear_error()
+    val program: ref lang.Node = lang.parse(src)
+    if lang.last_error() != none {
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_add(b, c"blood: -doc: ")
+        u.buf_add(b, path)
+        u.buf_ch(b, 58)
+        u.buf_add(b, u.s_int(lang.last_error_line()))
+        u.buf_ch(b, 58)
+        u.buf_add(b, u.s_int(lang.last_error_col()))
+        u.buf_add(b, c": ")
+        u.buf_add(b, lang.last_error())
+        u.buf_ch(b, 10)
+        u.write_fd(2, u.buf_take(b))
+        return 1
+    }
+    val lines: ref u.Vec = split_lines(src)
+    val items: ref u.Vec = collect_docs(program, lines)
+    val title: ref u8 = u.path_base(path)
+    val out: mut ref u8 = render_html(items, title)
+    if markdown {
+        out = render_md(items, title)
+    }
+    val target: ref u8 = target_path(rel, out_dir, markdown)
+    u.mkdir_p(u.path_dir(target))
+    if !u.write_file(target, out) {
+        u.write_fd(2, u.s_cat3(c"blood: -doc: ", target, c": cannot write file\n"))
+        return 1
+    }
+    u.stdout_ln(u.s_cat3(path, c" -> ", target))
+    return 0
+}
+
+fn generate_dir(path: ref u8, rel: ref u8, out_dir: ref u8, markdown: bool) i32 = trust {
+    val d: ref void = u.dir_open(path)
+    if d == none {
+        u.write_fd(2, u.s_cat3(c"blood: -doc: ", path, c": cannot read directory\n"))
+        return 1
+    }
+    val names: mut ref u.Vec = u.vec_new()
+    for {
+        val name: ref u8 = u.dir_next(d)
+        if name == none {
+            break
+        }
+        if u.s_eq(name, c".") || u.s_eq(name, c"..") {
+            continue
+        }
+        u.vec_pushp(names, u.s_dup(name) as ref void)
+    }
+    u.dir_close(d)
+    val rc: mut i32 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= names.len {
+            break
+        }
+        val name: ref u8 = u.vec_p(names, i) as ref u8
+        val child: ref u8 = u.path_join(path, name)
+        val child_rel: mut ref u8 = name
+        if u.s_len(rel) > 0 {
+            child_rel = u.path_join(rel, name)
+        }
+        if u.is_dir(child) {
+            if !skip_dir(name) && generate_dir(child, child_rel, out_dir, markdown) != 0 {
+                rc = 1
+            }
+        } elif blood_file(child) && generate_file(
+            child,
+            child_rel,
+            out_dir,
+            markdown
+        ) != 0 {
+            rc = 1
+        }
+        i++
+    }
+    return rc
+}
+
+pub fn generate_paths(paths: ref u.Vec, out_dir: ref u8, markdown: bool) i32 = trust {
+    val rc: mut i32 = 0
+    val i: mut i64 = 0
+    for {
+        if i >= paths.len {
+            break
+        }
+        val path: ref u8 = u.vec_p(paths, i) as ref u8
+        if u.is_dir(path) {
+            if generate_dir(path, relative_root(path), out_dir, markdown) != 0 {
+                rc = 1
+            }
+        } elif blood_file(path) {
+            if generate_file(path, relative_path(path), out_dir, markdown) != 0 {
+                rc = 1
+            }
+        } else {
+            u.write_fd(2, u.s_cat3(c"blood: -doc: ", path, c": expected a .bx or .blood file\n"))
+            rc = 1
+        }
+        i++
+    }
+    return rc
+}

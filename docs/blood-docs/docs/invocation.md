@@ -11,6 +11,7 @@ blood SCRIPT.blood|SCRIPT.bx [ARG...]
 blood -init
 blood -login
 blood -fmt PATH...
+blood -doc [-md] [-o DIR] PATH...
 blood -translate-sh [-o DIR] PATH...
 blood -lsp
 blood -ref [-stdout]
@@ -26,7 +27,9 @@ blood -help
 
 `blood -translate-sh PATH...` translates bash scripts to Blood scripts. Each `PATH` may be a `.sh` or `.bash` file or a directory. Directories are walked recursively, and every bash script below them is translated. By default the translated file is written beside its source with the extension replaced by `.bx`; `-o DIR` (also `-out DIR`) writes the results below `DIR`, preserving the directory structure relative to the translated directory. The command prints one `SOURCE -> TARGET` line per translated file and exits with status 1 when an input cannot be read or written.
 
-`blood -fmt PATH...` formats Blood scripts in place. Each `PATH` may be a file or a directory. Directories are walked recursively, and every `.bx` or `.blood` file below them is formatted. The formatter normalises indentation to four spaces, places opening braces on the same line as their header, removes Allman-style brace lines, aligns consecutive assignments and `var` declarations (including bulk `var` blocks), and writes calls with parentheses where the call is unambiguous. Directories named `.git`, `node_modules`, and `.sxb` are skipped. Files that cannot be read or written are reported and produce status 1.
+`blood -fmt PATH...` formats Blood scripts in place. Each `PATH` may be a file or a directory. Directories are walked recursively, and every `.bx` or `.blood` file below them is formatted. The formatter normalises indentation to four spaces, places opening braces on the same line as their header, removes Allman-style brace lines, aligns consecutive assignments, `var` declarations (including bulk `var` blocks), and type fields, and writes calls with parentheses where the call is unambiguous. Directories named `.git`, `node_modules`, and `.sxb` are skipped. Files that cannot be read or written are reported and produce status 1.
+
+`blood -doc PATH...` generates HTML documentation for Blood scripts. Each `PATH` may be a `.bx` or `.blood` file or a directory. Directories are walked recursively, and only Blood files are processed. `-md` selects Markdown output instead of HTML. Output is written below `bx-docs-out` by default; `-o DIR` (also `-out DIR`) selects another root. The source path is preserved below the output root and the extension is replaced by `.md` or `.html`. Contiguous `##` comment lines immediately above a declaration become its description. The command prints one `SOURCE -> TARGET` line per generated file and exits with status 1 when an input cannot be read, parsed, or written.
 
 `blood -lsp` runs the Blood language server over standard input and standard output. The server uses the Language Server Protocol with standard `Content-Length` framing. It keeps an in-memory copy of every open document and provides diagnostics, completion, hover, definitions, references, document and workspace symbols, rename, signature help, folding ranges, and formatting. The server runs until the client shuts it down or closes the streams.
 

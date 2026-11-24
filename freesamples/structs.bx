@@ -1,0 +1,10 @@
+type Result {
+    file string
+    pass bool
+    ms   int = 0
+}
+
+fn Result.label(self) => if self.pass { "PASS" } else { "FAIL" }
+
+var r = Result{file: "a.sx", pass: true}
+say("{r.label()} {r.file}")

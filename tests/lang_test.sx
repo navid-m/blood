@@ -326,6 +326,53 @@ test "parser builds exported assignments" {
     }
 }
 
+test "parser builds type and method declarations" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"type Result {\n    file string\n    pass bool\n    ms int = 0\n}\nfn Result.label(self) string => self.pass\nvar r = Result{file: \"a.sx\", pass: true}\n")
+        assert lang.last_error() == none
+        val t: ref lang.Node = kid(prog, 0)
+        assert t.kind == lang.NodeKind.TypeDecl
+        assert u.s_eq(t.s, c"Result")
+        assert t.kids.len == 3
+        assert kid(t, 0).kind == lang.NodeKind.FieldDecl
+        assert u.s_eq(kid(t, 0).s, c"file")
+        assert u.s_eq(kid(t, 0).type_text, c"string")
+        assert u.s_eq(kid(t, 2).type_text, c"int")
+        assert kid(t, 2).a == 1
+
+        val m: ref lang.Node = kid(prog, 1)
+        assert m.kind == lang.NodeKind.FnDef
+        assert u.s_eq(m.owner, c"Result")
+        assert u.s_eq(m.s, c"label")
+        assert u.s_eq(m.type_text, c"string")
+        assert m.types.len == 1
+        assert u.s_len(u.vec_p(m.types, 0) as ref u8) == 0
+
+        val r: ref lang.Node = kid(kid(prog, 2), 0)
+        assert r.kind == lang.NodeKind.StructLit
+        assert u.s_eq(r.s, c"Result")
+        assert r.params.len == 2
+        assert u.s_eq(u.vec_p(r.params, 0) as ref u8, c"file")
+    }
+}
+
+test "parser accepts Go-style parameter types and defaults" {
+    trust {
+        val prog: ref lang.Node = lang.parse(c"fn add(a int, b int = 2) int { return a + b }\nfn greet(name string, sep string = \", \") string => name\n")
+        assert lang.last_error() == none
+        val f: ref lang.Node = kid(prog, 0)
+        assert u.s_eq(u.vec_p(f.types, 0) as ref u8, c"int")
+        assert u.s_eq(u.vec_p(f.types, 1) as ref u8, c"int")
+        assert u.s_eq(f.type_text, c"int")
+        assert kid(f, 0).kind == lang.NodeKind.Block
+        val g: ref lang.Node = kid(prog, 1)
+        assert u.s_eq(u.vec_p(g.types, 0) as ref u8, c"string")
+        assert u.s_eq(u.vec_p(g.types, 1) as ref u8, c"string")
+        assert u.s_eq(g.type_text, c"string")
+        assert u.vec_p(g.defaults, 1) != none
+    }
+}
+
 test "parser builds functions, returns, try and shell commands" {
     trust {
         val fns: ref lang.Node = lang.parse(c"fn add(a, b) {\n  return a + b\n}\n")

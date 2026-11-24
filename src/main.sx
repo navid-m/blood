@@ -11,6 +11,7 @@ val script    = use("lang/script.sx")
 val escape    = use("shell/escape.sx")
 val translate = use("lang/translate.sx")
 val format    = use("lang/format.sx")
+val docgen    = use("lang/docgen.sx")
 val lsp       = use("lang/lsp.sx")
 val loginmod  = use("core/login.sx")
 val flags     = use("std/flags")
@@ -67,7 +68,7 @@ fn print_version() void = trust {
 }
 
 fn print_help() void = trust {
-    val text: ref u8 = c"usage: blood [options] [script.blood|script.bx [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  -init            write a default configuration file\n  -login           initialize a login-shell environment\n  -translate-sh    translate .sh/.bash files or directories to .bx\n  -fmt             format Blood scripts or directories in place\n  -lsp             run the Blood language server over stdio\n  -ref             write the language reference to BLOOD_LANGUAGE_REFERENCE.adoc\n  -stdout          print -ref output to stdout\n  -o DIR           write translated files under DIR\n  -version, -v     print the version\n  -help, -h        show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n"
+    val text: ref u8 = c"usage: blood [options] [script.blood|script.bx [args...]]\n\noptions:\n  -c COMMAND       execute a command or script and exit\n  -init            write a default configuration file\n  -login           initialize a login-shell environment\n  -translate-sh    translate .sh/.bash files or directories to .bx\n  -fmt             format Blood scripts or directories in place\n  -doc             generate documentation from .bx/.blood files\n  -md              write Markdown documentation (default HTML)\n  -lsp             run the Blood language server over stdio\n  -ref             write the language reference to BLOOD_LANGUAGE_REFERENCE.adoc\n  -stdout          print -ref output to stdout\n  -o DIR           write translated or generated files under DIR\n  -version, -v     print the version\n  -help, -h        show this help\n\nenvironment:\n  XDG_CONFIG_HOME  config root (default ~/.config)\n\nconfiguration:\n  ~/.config/blood/blood.ini\n\ninteractive help:\n  help             builtins and key bindings\n  help config      configuration keys\n  help script      the scripting language\n"
     u.write_fd(1, text)
 }
 
@@ -402,6 +403,8 @@ pub fn main() i32 = trust {
     val do_login: mut bool = false
     val do_translate: mut bool = false
     val do_format: mut bool = false
+    val do_doc: mut bool = false
+    val doc_md: mut bool = false
     val do_lsp: mut bool = false
     val do_ref: mut bool = false
     val ref_stdout: mut bool = false
@@ -418,6 +421,8 @@ pub fn main() i32 = trust {
         c"translate bash scripts to Blood"
     )
     flags.bool_var(fs, c"fmt", none, @addr(do_format), c"format Blood scripts in place")
+    flags.bool_var(fs, c"doc", none, @addr(do_doc), c"generate documentation from Blood scripts")
+    flags.bool_var(fs, c"md", none, @addr(doc_md), c"write Markdown documentation instead of HTML")
     flags.bool_var(fs, c"lsp", none, @addr(do_lsp), c"run the Blood language server over stdio")
     flags.bool_var(fs, c"ref", none, @addr(do_ref), c"write the language reference to the current directory")
     flags.bool_var(fs, c"stdout", none, @addr(ref_stdout), c"print the language reference to stdout")
@@ -477,6 +482,33 @@ pub fn main() i32 = trust {
             }
             i++
         }
+        return rc
+    }
+    if do_doc {
+        val doc_args: mut ref u.Vec = u.vec_new()
+        val i: mut i64 = 0
+        for {
+            if i >= all_args.len {
+                break
+            }
+            val p: ref u8 = u.vec_p(all_args, i) as ref u8
+            if u.s_eq(p, c"-md") || u.s_eq(p, c"--md") {
+                doc_md = true
+            } elif (u.s_eq(p, c"-o") || u.s_eq(p, c"-out")) && i + 1 < all_args.len {
+                i++
+                out_dir = u.vec_p(all_args, i) as ref u8
+            } else {
+                u.vec_pushp(doc_args, p as ref void)
+            }
+            i++
+        }
+        if doc_args.len == 0 {
+            u.write_fd(2, c"blood: -doc: expected a file or directory\n")
+            return 2
+        }
+        u.scratch_begin()
+        val rc: i32 = docgen.generate_paths(doc_args, out_dir, doc_md)
+        u.scratch_end()
         return rc
     }
     if do_translate {

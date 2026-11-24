@@ -51,8 +51,26 @@ type Defer = {
     env: mut ref Env
 }
 
+pub type FieldDef = {
+    name: mut ref u8
+    typ: mut ref u8
+    default: mut ref lang.Node
+}
+
+pub type TypeDef = {
+    name: mut ref u8
+    fields: mut ref u.Vec
+    methods: mut ref u.Map
+}
+
+pub type Struct = {
+    typ: mut ref TypeDef
+    fields: mut ref u.Map
+}
+
 val g_env: mut ref Env = none
 val g_builtins: mut ref Env = none
+val g_types: mut ref u.Map = none
 val g_error: mut ref u8 = none
 val g_err_line: mut i64 = 0
 val g_err_col: mut i64 = 0
@@ -170,6 +188,26 @@ fn v_namespace(m: ref u.Map) ref Value = trust {
     val v: mut ref Value = v_new(8)
     v.p = m
     return v
+}
+
+fn v_type(td: ref TypeDef) ref Value = trust {
+    val v: mut ref Value = v_new(11)
+    v.p = td
+    return v
+}
+
+fn v_struct(td: ref TypeDef, fields: ref u.Map) ref Value = trust {
+    val v: mut ref Value = v_new(12)
+    v.p = fields
+    v.i = @bitcast(td, i64)
+    return v
+}
+
+fn struct_type(v: ref Value) ref TypeDef = trust {
+    if v == none || v.tag != 12 {
+        return none
+    }
+    return @bitcast(v.i, ref TypeDef)
 }
 
 fn v_cell(inner: ref Value, is_const: bool) ref Value = trust {
@@ -325,6 +363,36 @@ fn v_to_str(v: ref Value) ref u8 = trust {
     if v.tag == 8 {
         return u.s_dup(c"<namespace>")
     }
+    if v.tag == 11 {
+        val td: ref TypeDef = v.p as ref TypeDef
+        return u.s_cat3(c"<type ", td.name, c">")
+    }
+    if v.tag == 12 {
+        val td: ref TypeDef = struct_type(v)
+        val m: ref u.Map = v.p as ref u.Map
+        val b: mut ref u.Buf = u.buf_new()
+        u.buf_add(b, td.name)
+        u.buf_ch(b, 123)
+        val i: mut i64 = 0
+        val first: mut bool = true
+        for {
+            if i >= m.cap {
+                break
+            }
+            if u.map_used_at(m, i) {
+                if !first {
+                    u.buf_add(b, c", ")
+                }
+                first = false
+                u.buf_add(b, u.map_key_at(m, i))
+                u.buf_add(b, c": ")
+                u.buf_add(b, v_to_str(@bitcast(u.map_val_at(m, i), ref Value)))
+            }
+            i++
+        }
+        u.buf_ch(b, 125)
+        return u.buf_take(b)
+    }
     if v.tag == 5 {
         val vec: ref u.Vec = v.p as ref u.Vec
         val b: mut ref u.Buf = u.buf_new()
@@ -404,6 +472,13 @@ fn type_name(v: ref Value) ref u8 = trust {
     }
     if v.tag == 8 {
         return u.s_dup(c"namespace")
+    }
+    if v.tag == 11 {
+        return u.s_dup(c"type")
+    }
+    if v.tag == 12 {
+        val td: ref TypeDef = struct_type(v)
+        return td.name
     }
     return u.s_dup(c"unknown")
 }
@@ -498,6 +573,38 @@ fn env_has(e: ref Env, name: ref u8) bool = trust {
         chain = chain.parent
     }
     return false
+}
+
+fn type_lookup(env: ref Env, name: ref u8) ref TypeDef = trust {
+    val v: ref Value = env_lookup(env, name)
+    if v != none && v.tag == 11 {
+        return v.p as ref TypeDef
+    }
+    if g_types != none {
+        val raw: i64 = u.map_get(g_types, name)
+        if raw != 0 {
+            val tv: ref Value = @bitcast(raw, ref Value)
+            if tv != none && tv.tag == 11 {
+                return tv.p as ref TypeDef
+            }
+        }
+    }
+    return none
+}
+
+fn type_field(td: ref TypeDef, name: ref u8) ref FieldDef = trust {
+    val i: mut i64 = 0
+    for {
+        if i >= td.fields.len {
+            break
+        }
+        val f: ref FieldDef = u.vec_p(td.fields, i) as ref FieldDef
+        if u.s_eq(f.name, name) {
+            return f
+        }
+        i++
+    }
+    return none
 }
 
 fn is_prelude(name: ref u8) bool = trust {
@@ -927,6 +1034,9 @@ fn interp(raw: ref u8, env: mut ref Env) ref u8 = trust {
                     u.buf_add(b, c"{")
                 } else {
                     val fv: ref Value = eval(node, env)
+                    if g_flow != 0 {
+                        return u.buf_take(b)
+                    }
                     u.buf_add(b, v_to_str(fv))
                 }
                 i = j + 1
@@ -1032,6 +1142,71 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
         }
         return v_dict(m)
     }
+    if n.kind == lang.NodeKind.StructLit {
+        val td: ref TypeDef = type_lookup(env, n.s)
+        if td == none {
+            set_error(u.s_cat3(c"unknown type '", n.s, c"'"), n.line, n.col)
+            return v_nil()
+        }
+        val m: mut ref u.Map = dict_new()
+        val i: mut i64 = 0
+        for {
+            if i >= n.params.len {
+                break
+            }
+            val name: ref u8 = u.vec_p(n.params, i) as ref u8
+            val fd: ref FieldDef = type_field(td, name)
+            if fd == none {
+                set_error(
+                    u.s_cat3(c"unknown field '", name, c"'"),
+                    n.line,
+                    n.col
+                )
+                return v_nil()
+            }
+            if u.map_has(m, name) {
+                set_error(
+                    u.s_cat3(c"duplicate field '", name, c"'"),
+                    n.line,
+                    n.col
+                )
+                return v_nil()
+            }
+            if i >= n.kids.len {
+                break
+            }
+            val v: ref Value = eval(u.vec_p(n.kids, i) as ref lang.Node, env)
+            if g_flow != 0 {
+                return v_nil()
+            }
+            u.map_put(m, name, @bitcast(v, i64))
+            i++
+        }
+        val fi: mut i64 = 0
+        for {
+            if fi >= td.fields.len {
+                break
+            }
+            val fd: ref FieldDef = u.vec_p(td.fields, fi) as ref FieldDef
+            if !u.map_has(m, fd.name) {
+                if fd.default == none {
+                    set_error(
+                        u.s_cat3(c"missing field '", fd.name, c"'"),
+                        n.line,
+                        n.col
+                    )
+                    return v_nil()
+                }
+                val dv: ref Value = eval(fd.default, env)
+                if g_flow != 0 {
+                    return v_nil()
+                }
+                u.map_put(m, fd.name, @bitcast(dv, i64))
+            }
+            fi++
+        }
+        return v_struct(td, m)
+    }
     if n.kind == lang.NodeKind.Unary {
         val v: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
         if n.a == lang.UnOp.Not as i64 {
@@ -1093,12 +1268,31 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
     }
     if n.kind == lang.NodeKind.Attr {
         val obj: ref Value = eval(u.vec_p(n.kids, 0) as ref lang.Node, env)
+        if g_flow != 0 {
+            return v_nil()
+        }
+        if obj != none && obj.tag == 12 {
+            val m: ref u.Map = obj.p as ref u.Map
+            val raw: i64 = u.map_get(m, n.s)
+            if raw != 0 {
+                return cell_inner(@bitcast(raw, ref Value))
+            }
+            val td: ref TypeDef = struct_type(obj)
+            val method: i64 = u.map_get(td.methods, n.s)
+            if method != 0 {
+                return @bitcast(method, ref Value)
+            }
+            set_error(u.s_cat3(c"unknown member '", n.s, c"'"), n.line, n.col)
+            return v_nil()
+        }
         if obj != none && obj.tag == 6 {
             val m: mut ref u.Map = obj.p as ref u.Map
             val raw: i64 = u.map_get(m, n.s)
             if raw != 0 {
                 return cell_inner(@bitcast(raw, ref Value))
             }
+            set_error(u.s_cat3(c"unknown member '", n.s, c"'"), n.line, n.col)
+            return v_nil()
         }
         if obj != none && obj.tag == 8 {
             val m: mut ref u.Map = obj.p as ref u.Map
@@ -1106,7 +1300,10 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
             if raw != 0 {
                 return cell_inner(@bitcast(raw, ref Value))
             }
+            set_error(u.s_cat3(c"unknown member '", n.s, c"'"), n.line, n.col)
+            return v_nil()
         }
+        set_error(u.s_cat3(c"unknown member '", n.s, c"'"), n.line, n.col)
         return v_nil()
     }
     if n.kind == lang.NodeKind.FnLit {
@@ -1157,6 +1354,9 @@ fn eval(n: ref lang.Node, env: mut ref Env) ref Value = trust {
             val args: ref u.Vec = eval_args(n, 1, env)
             if obj != none && obj.tag == 8 {
                 return call_namespace(obj, callee.s, args, n)
+            }
+            if obj != none && obj.tag == 12 {
+                return call_struct_method(obj, callee.s, args, n)
             }
             return call_method(obj, callee.s, args, n)
         }
@@ -1285,8 +1485,30 @@ fn do_index(obj: ref Value, idx: ref Value, n: ref lang.Node) ref Value = trust 
 }
 
 fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
+    return call_func_bound(f, none, args, n)
+}
+
+fn call_func_bound(
+    f: ref Func,
+    receiver: ref Value,
+    args: ref u.Vec,
+    n: ref lang.Node
+) ref Value = trust {
     if f.native != 0 {
-        return call_native(f.native, args, n)
+        if receiver == none {
+            return call_native(f.native, args, n)
+        }
+        val native_args: mut ref u.Vec = u.vec_new()
+        u.vec_pushp(native_args, receiver as ref void)
+        val ni: mut i64 = 0
+        for {
+            if ni >= args.len {
+                break
+            }
+            u.vec_pushp(native_args, u.vec_p(args, ni))
+            ni++
+        }
+        return call_native(f.native, native_args, n)
     }
     if g_depth > 200 {
         set_error(c"recursion limit exceeded", n.line, n.col)
@@ -1314,14 +1536,22 @@ fn call_func(f: ref Func, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
         }
         i++
     }
+    val base: mut i64 = 0
+    if receiver != none {
+        base = 1
+    }
     val pos: mut i64 = 0
     val ai: mut i64 = 0
     for {
-        if ai >= args.len {
+        if ai >= args.len + base {
             break
         }
-        val arg: ref Value = u.vec_p(args, ai) as ref Value
-        val name: ref u8 = arg_name(n, ai)
+        val arg: mut ref Value = receiver
+        val name: mut ref u8 = c""
+        if ai >= base {
+            arg = u.vec_p(args, ai - base) as ref Value
+            name = arg_name(n, ai - base)
+        }
         if u.s_len(name) == 0 {
             if pos < f.params.len {
                 env_define_interned(callenv, u.vec_p(f.params, pos) as ref u8, arg)
@@ -2282,6 +2512,23 @@ fn json_build(builder: js.JsonBuilder, v: ref Value) js.JsonValue = trust {
         }
         return obj
     }
+    if v.tag == 12 {
+        val m: ref u.Map = v.p as ref u.Map
+        val obj: js.JsonValue = js.build_object(builder)
+        val i: mut i64 = 0
+        for {
+            if i >= m.cap {
+                break
+            }
+            if u.map_used_at(m, i) {
+                val key: ref u8 = u.map_key_at(m, i)
+                val item: ref Value = @bitcast(u.map_val_at(m, i), ref Value)
+                js.object_add(builder, obj, sstr.from_cstr(key), json_build(builder, item))
+            }
+            i++
+        }
+        return obj
+    }
     if v.tag == 9 {
         return json_build(builder, v.p as ref Value)
     }
@@ -3196,6 +3443,33 @@ fn call_namespace(
     return call_func(fnval.p as ref Func, args, n)
 }
 
+fn call_struct_method(
+    obj: ref Value,
+    name: ref u8,
+    args: ref u.Vec,
+    n: ref lang.Node
+) ref Value = trust {
+    val td: ref TypeDef = struct_type(obj)
+    val methods: ref u.Map = td.methods
+    val raw: i64 = u.map_get(methods, name)
+    if raw != 0 {
+        val fnval: ref Value = cell_inner(@bitcast(raw, ref Value))
+        if fnval != none && fnval.tag == 7 {
+            return call_func_bound(fnval.p as ref Func, obj, args, n)
+        }
+    }
+    val fields: ref u.Map = obj.p as ref u.Map
+    val fraw: i64 = u.map_get(fields, name)
+    if fraw != 0 {
+        val fnval: ref Value = cell_inner(@bitcast(fraw, ref Value))
+        if fnval != none && fnval.tag == 7 {
+            return call_func(fnval.p as ref Func, args, n)
+        }
+    }
+    set_error(u.s_cat3(c"unknown method '", name, c"'"), n.line, n.col)
+    return v_nil()
+}
+
 fn call_method(obj: ref Value, name: ref u8, args: ref u.Vec, n: ref lang.Node) ref Value = trust {
     if obj == none {
         set_error(c"method call on null", n.line, n.col)
@@ -3878,7 +4152,20 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
         val final: mut ref Value = value
         if op > 1 {
             val cur: mut ref Value = v_nil()
-            if obj != none && obj.tag == 6 {
+            if obj != none && obj.tag == 12 {
+                val m0: ref u.Map = obj.p as ref u.Map
+                val raw: i64 = u.map_get(m0, target.s)
+                if raw != 0 {
+                    cur = cell_inner(@bitcast(raw, ref Value))
+                } else {
+                    set_error(
+                        u.s_cat3(c"unknown member '", target.s, c"'"),
+                        target.line,
+                        target.col
+                    )
+                    return
+                }
+            } elif obj != none && obj.tag == 6 {
                 val m0: ref u.Map = obj.p as ref u.Map
                 val raw: i64 = u.map_get(m0, target.s)
                 if raw != 0 {
@@ -3892,6 +4179,19 @@ fn assign_target(target: ref lang.Node, value: ref Value, env: mut ref Env, op: 
                 }
             }
             final = bin_op(op - 2, cur, value)
+        }
+        if obj != none && obj.tag == 12 {
+            val m: mut ref u.Map = obj.p as ref u.Map
+            if !u.map_has(m, target.s) {
+                set_error(
+                    u.s_cat3(c"unknown member '", target.s, c"'"),
+                    target.line,
+                    target.col
+                )
+                return
+            }
+            u.map_put(m, target.s, @bitcast(final, i64))
+            return
         }
         if obj != none && obj.tag == 6 {
             val m: mut ref u.Map = obj.p as ref u.Map
@@ -4455,6 +4755,13 @@ fn encode_value(v: ref Value, b: mut ref u.Buf) void = trust {
         }
         return
     }
+    if v.tag == 12 {
+        val td: ref TypeDef = struct_type(v)
+        u.buf_ch(b, 111)
+        encode_value(v_str(td.name), b)
+        encode_value(v_dict(v.p as ref u.Map), b)
+        return
+    }
     u.buf_ch(b, 110)
 }
 
@@ -4562,6 +4869,27 @@ fn decode_value(d: mut ref Decoder) ref Value = trust {
             }
         }
         return v_dict(m)
+    }
+    if tag == 111 {
+        val namev: ref Value = decode_value(d)
+        val fieldsv: ref Value = decode_value(d)
+        if namev != none && namev.tag == 4 && fieldsv != none && fieldsv.tag == 6 {
+            val name: ref u8 = namev.p as ref u8
+            val td: mut ref TypeDef = none
+            if g_types != none {
+                val raw: i64 = u.map_get(g_types, name)
+                if raw != 0 {
+                    val tv: ref Value = @bitcast(raw, ref Value)
+                    if tv != none && tv.tag == 11 {
+                        td = tv.p as ref TypeDef
+                    }
+                }
+            }
+            if td != none {
+                return v_struct(td, fieldsv.p as ref u.Map)
+            }
+        }
+        return fieldsv
     }
     return v_nil()
 }
@@ -5780,6 +6108,49 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         }
         return
     }
+    if n.kind == lang.NodeKind.TypeDecl {
+        val tname: ref u8 = intern_node_name(n)
+        if g_types == none {
+            g_types = u.map_new_perm()
+        }
+        val td: mut ref TypeDef = u.xalloc(@sizeof(TypeDef) as i64) as ref TypeDef
+        td.name = tname
+        td.fields = u.vec_new()
+        td.methods = u.map_new()
+        val fi: mut i64 = 0
+        for {
+            if fi >= n.kids.len {
+                break
+            }
+            val fnode: ref lang.Node = u.vec_p(n.kids, fi) as ref lang.Node
+            if fnode.kind == lang.NodeKind.FieldDecl && fnode.s != none {
+                if type_field(td, fnode.s) != none {
+                    set_error(
+                        u.s_cat3(c"duplicate field '", fnode.s, c"'"),
+                        fnode.line,
+                        fnode.col
+                    )
+                    return
+                }
+                val fd: mut ref FieldDef = u.xalloc(@sizeof(FieldDef) as i64) as ref FieldDef
+                fd.name = u.s_intern(fnode.s)
+                fd.typ = u.s_intern(fnode.type_text)
+                fd.default = none
+                if fnode.a != 0 && fnode.kids.len > 0 {
+                    fd.default = u.vec_p(fnode.kids, 0) as ref lang.Node
+                }
+                u.vec_pushp(td.fields, fd as ref void)
+            }
+            fi++
+        }
+        val tv: ref Value = v_type(td)
+        u.map_put_ref(g_types, tname, @bitcast(tv, i64))
+        env_define_interned(env, tname, tv)
+        if n.flags != 0 && env.ns != none {
+            u.map_put(env.ns, tname, @bitcast(tv, i64))
+        }
+        return
+    }
     if n.kind == lang.NodeKind.FnDef {
         val fname: ref u8 = intern_node_name(n)
         val f: mut ref Func = u.xalloc(@sizeof(Func) as i64) as ref Func
@@ -5796,6 +6167,19 @@ fn exec_stmt(n: ref lang.Node, env: mut ref Env, toplevel: bool) void = trust {
         f.has_defer = 0
         if node_has_defer(f.body) {
             f.has_defer = 1
+        }
+        if n.owner != none {
+            val td: mut ref TypeDef = type_lookup(env, n.owner)
+            if td == none {
+                set_error(
+                    u.s_cat3(c"unknown type '", n.owner, c"'"),
+                    n.line,
+                    n.col
+                )
+                return
+            }
+            u.map_put(td.methods, fname, @bitcast(v_func(f), i64))
+            return
         }
         if is_prelude(fname) {
             warn_shadow(fname, n.line, n.col)
@@ -6036,6 +6420,7 @@ pub fn script_init() void = trust {
     g_args = u.vec_new_perm()
     g_prelude = u.map_new_perm()
     g_modules = u.map_new_perm()
+    g_types = u.map_new_perm()
     val stdm: mut ref u.Map = u.map_new_perm()
     when darwin {
         u.map_put(stdm, c"os", @bitcast(v_str(c"darwin"), i64))
@@ -6189,6 +6574,11 @@ fn queue_value_children(v: mut ref Value, jobs: mut ref u.Vec) void = trust {
         enqueue(jobs, v.p, 1, @ptradd(v as ref void, 16))
     } elif v.tag == 10 {
         enqueue(jobs, v.p, 2, @ptradd(v as ref void, 16))
+    } elif v.tag == 11 {
+        enqueue(jobs, v.p, 9, @ptradd(v as ref void, 16))
+    } elif v.tag == 12 {
+        enqueue(jobs, @bitcast(v.i, ref void), 9, @ptradd(v as ref void, 8))
+        enqueue(jobs, v.p, 3, @ptradd(v as ref void, 16))
     }
 }
 
@@ -6240,6 +6630,10 @@ fn queue_node_children(n: mut ref lang.Node, jobs: mut ref u.Vec) void = trust {
     enqueue(jobs, n.kids as ref void, 6, @ptradd(n as ref void, 32))
     enqueue(jobs, n.params as ref void, 7, @ptradd(n as ref void, 40))
     enqueue(jobs, n.defaults as ref void, 6, @ptradd(n as ref void, 48))
+    enqueue(jobs, n.type_text as ref void, 0, @ptradd(n as ref void, 96))
+    enqueue(jobs, n.owner as ref void, 0, @ptradd(n as ref void, 104))
+    enqueue(jobs, n.sig_text as ref void, 0, @ptradd(n as ref void, 112))
+    enqueue(jobs, n.types as ref void, 7, @ptradd(n as ref void, 120))
 }
 
 fn queue_env_children(e: mut ref Env, jobs: mut ref u.Vec) void = trust {
@@ -6352,6 +6746,10 @@ fn promote_all(jobs: mut ref u.Vec, memo: mut ref u.Vec) void = trust {
             nn.line = on.line
             nn.col = on.col
             nn.flags = on.flags
+            nn.type_text = on.type_text
+            nn.owner = on.owner
+            nn.sig_text = on.sig_text
+            nn.types = on.types
             memo_put(memo, old, nn as ref void)
             store_slot(slot, nn as ref void)
             queue_node_children(nn, jobs)
@@ -6379,6 +6777,54 @@ fn promote_all(jobs: mut ref u.Vec, memo: mut ref u.Vec) void = trust {
             queue_vec_from(ov, nv, 0, jobs)
             continue
         }
+        if kind == 9 {
+            val ot: ref TypeDef = old as ref TypeDef
+            val nt: mut ref TypeDef = u.xalloc_perm(@sizeof(TypeDef) as i64) as ref TypeDef
+            nt.name = ot.name
+            nt.fields = ot.fields
+            nt.methods = ot.methods
+            memo_put(memo, old, nt as ref void)
+            store_slot(slot, nt as ref void)
+            enqueue(jobs, nt.name as ref void, 0, @ptradd(nt as ref void, 0))
+            enqueue(jobs, nt.fields as ref void, 12, @ptradd(nt as ref void, 8))
+            enqueue(jobs, nt.methods as ref void, 3, @ptradd(nt as ref void, 16))
+            continue
+        }
+        if kind == 10 {
+            val os: ref Struct = old as ref Struct
+            val ns: mut ref Struct = u.xalloc_perm(@sizeof(Struct) as i64) as ref Struct
+            ns.typ = os.typ
+            ns.fields = os.fields
+            memo_put(memo, old, ns as ref void)
+            store_slot(slot, ns as ref void)
+            enqueue(jobs, ns.typ as ref void, 9, @ptradd(ns as ref void, 0))
+            enqueue(jobs, ns.fields as ref void, 3, @ptradd(ns as ref void, 8))
+            continue
+        }
+        if kind == 11 {
+            val of: ref FieldDef = old as ref FieldDef
+            val nf: mut ref FieldDef = u.xalloc_perm(@sizeof(FieldDef) as i64) as ref FieldDef
+            nf.name = of.name
+            nf.typ = of.typ
+            nf.default = of.default
+            memo_put(memo, old, nf as ref void)
+            store_slot(slot, nf as ref void)
+            enqueue(jobs, nf.name as ref void, 0, @ptradd(nf as ref void, 0))
+            enqueue(jobs, nf.typ as ref void, 0, @ptradd(nf as ref void, 8))
+            enqueue(jobs, nf.default as ref void, 5, @ptradd(nf as ref void, 16))
+            continue
+        }
+        if kind == 12 {
+            val ov: ref u.Vec = old as ref u.Vec
+            val nv: mut ref u.Vec = u.vec_new_perm()
+            nv.perm = 1
+            u.vec_reserve(nv, ov.len)
+            nv.len = ov.len
+            memo_put(memo, old, nv as ref void)
+            store_slot(slot, nv as ref void)
+            queue_vec_from(ov, nv, 11, jobs)
+            continue
+        }
         val oe: ref Env = old as ref Env
         val ne: mut ref Env = u.xalloc_perm(@sizeof(Env) as i64) as ref Env
         ne.vars = oe.vars
@@ -6400,11 +6846,13 @@ fn promote_roots() void = trust {
     val old_ret: ref void = g_return as ref void
     val old_err: ref void = g_error as ref void
     val old_modules: ref void = g_modules as ref void
+    val old_types: ref void = g_types as ref void
     enqueue(jobs, old_env, 8, none)
     enqueue(jobs, old_args, 2, none)
     enqueue(jobs, old_ret, 1, none)
     enqueue(jobs, old_err, 0, none)
     enqueue(jobs, old_modules, 3, none)
+    enqueue(jobs, old_types, 3, none)
     promote_all(jobs, memo)
     u.gc_finish()
     if old_env != none {
@@ -6429,6 +6877,12 @@ fn promote_roots() void = trust {
         val nm: ref u.Map = memo_get(memo, @bitcast(old_modules, i64)) as ref u.Map
         if nm != none {
             g_modules = nm
+        }
+    }
+    if old_types != none {
+        val nt: ref u.Map = memo_get(memo, @bitcast(old_types, i64)) as ref u.Map
+        if nt != none {
+            g_types = nt
         }
     }
 }
@@ -6857,8 +7311,11 @@ pub fn looks_like_script(line: ref u8) bool = trust {
         c"const "
     ) || u.s_starts(t, c"pub ") || u.s_starts(t, c"use ") || u.s_starts(
         t,
-        c"var "
-    ) || u.s_starts(t, c"var\t") || u.s_eq(t, c"var") || u.s_starts(t, c"reduce") {
+        c"type "
+    ) || u.s_starts(t, c"var ") || u.s_starts(t, c"var\t") || u.s_eq(
+        t,
+        c"var"
+    ) || u.s_starts(t, c"reduce") {
         return true
     }
     if @load8(t) == 91 || @load8(t) == 123 {

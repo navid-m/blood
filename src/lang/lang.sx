@@ -38,6 +38,8 @@ pub enum NodeKind = {
     For
     ParaFor
     FnDef
+    TypeDecl
+    FieldDecl
     Return
     Break
     Continue
@@ -56,6 +58,7 @@ pub enum NodeKind = {
     Var
     ListLit
     DictLit
+    StructLit
     Unary
     Binary
     Call
@@ -102,6 +105,10 @@ pub type Node = {
     start: mut i64
     end: mut i64
     flags: mut i64
+    type_text: mut ref u8
+    owner: mut ref u8
+    sig_text: mut ref u8
+    types: mut ref u.Vec
 }
 
 pub type Lexer = {
@@ -826,6 +833,10 @@ fn node_new(kind: NodeKind, line: i64, col: i64) ref Node = trust {
     n.start = 0
     n.end = 0
     n.flags = 0
+    n.type_text = none
+    n.owner = none
+    n.sig_text = none
+    n.types = u.vec_new()
     return n
 }
 
@@ -1031,6 +1042,12 @@ fn parse_statement(p: mut ref Parser) ref Node = trust {
     if keyword(t, c"fn") {
         return parse_fn(p)
     }
+    if keyword(t, c"type") && peek(p, 1).kind == TokenKind.Ident && peek(
+        p,
+        2
+    ).kind == TokenKind.Op && text_is(peek(p, 2), c"{") {
+        return parse_type(p)
+    }
     if keyword(t, c"try") {
         return parse_try(p)
     }
@@ -1092,10 +1109,14 @@ fn parse_binding_item(p: mut ref Parser, kind: NodeKind) ref Node = trust {
     advance(p)
     val n: mut ref Node = node_new(kind, name.line, name.col)
     node_set_name(n, name.text)
+    n.start = name.start
+    n.end = name.end
     if !expect_op(p, c"=") {
         return n
     }
     u.vec_pushp(n.kids, parse_expr(p) as ref void)
+    n.end = last_end(p)
+    n.sig_text = u.s_trim(u.s_substr(p.src, n.start, n.end))
     return n
 }
 
@@ -1303,10 +1324,15 @@ fn parse_pub(p: mut ref Parser) ref Node = trust {
         mark_public(n)
         return n
     }
+    if keyword(cur(p), c"type") {
+        val n: mut ref Node = parse_type(p)
+        mark_public(n)
+        return n
+    }
     set_error_span(
         t.line,
         t.col,
-        c"expected 'var', 'const' or 'fn' after 'pub'",
+        c"expected 'var', 'const', 'fn' or 'type' after 'pub'",
         token_span(t)
     )
     return node_new(NodeKind.Pass, t.line, t.col)
@@ -1488,18 +1514,156 @@ fn is_type_word(t: ref Token) bool = trust {
     ) || u.s_eq(t.text, c"u64") || u.s_eq(t.text, c"f32") || u.s_eq(
         t.text,
         c"f64"
-    ) || u.s_eq(t.text, c"bool") || u.s_eq(t.text, c"string") || u.s_eq(
+    ) || u.s_eq(t.text, c"int") || u.s_eq(t.text, c"float") || u.s_eq(
         t.text,
-        c"str"
-    ) || u.s_eq(t.text, c"void") || u.s_eq(t.text, c"list") || u.s_eq(
+        c"bool"
+    ) || u.s_eq(t.text, c"string") || u.s_eq(t.text, c"str") || u.s_eq(
         t.text,
-        c"dict"
-    ) || u.s_eq(t.text, c"any")
+        c"void"
+    ) || u.s_eq(t.text, c"list") || u.s_eq(t.text, c"dict") || u.s_eq(t.text, c"any")
+}
+
+fn type_starts(t: ref Token) bool = trust {
+    if t.kind == TokenKind.Ident {
+        return true
+    }
+    return t.kind == TokenKind.Op && text_is(t, c"[")
+}
+
+fn type_stop(t: ref Token) bool = trust {
+    if t.kind == TokenKind.Newline || t.kind == TokenKind.Eof {
+        return true
+    }
+    if t.kind != TokenKind.Op {
+        return false
+    }
+    return text_is(t, c"=") || text_is(t, c",") || text_is(t, c")") || text_is(
+        t,
+        c"{"
+    ) || text_is(t, c"}") || text_is(t, c";") || text_is(t, c":") || text_is(t, c"=>")
+}
+
+/// Collect a Go-style type hint as written in the source, stopping before the
+/// next parameter separator, default value, or body.
+fn collect_type_text(p: mut ref Parser) ref u8 = trust {
+    if !type_starts(cur(p)) {
+        return c""
+    }
+    val start: i64 = cur(p).start
+    val last: mut i64 = start
+    val depth: mut i64 = 0
+    for {
+        val t: ref Token = cur(p)
+        if type_stop(t) && depth == 0 {
+            break
+        }
+        if t.kind == TokenKind.Op {
+            if text_is(t, c"[") {
+                depth++
+            } elif text_is(t, c"]") {
+                if depth > 0 {
+                    depth--
+                }
+            }
+        }
+        last = t.end
+        advance(p)
+    }
+    if last <= start {
+        return c""
+    }
+    return u.s_trim(u.s_substr(p.src, start, last))
+}
+
+fn parse_type_field(p: mut ref Parser) ref Node = trust {
+    val name: ref Token = cur(p)
+    if name.kind != TokenKind.Ident {
+        set_error_span(name.line, name.col, c"expected a field name", token_span(name))
+        return node_new(NodeKind.FieldDecl, name.line, name.col)
+    }
+    advance(p)
+    val n: mut ref Node = node_new(NodeKind.FieldDecl, name.line, name.col)
+    node_set_name(n, name.text)
+    n.start = name.start
+    n.end = name.end
+    if type_starts(cur(p)) {
+        n.type_text = collect_type_text(p)
+        n.end = last_end(p)
+    }
+    if cur(p).kind == TokenKind.Op && text_is(cur(p), c"=") {
+        advance(p)
+        u.vec_pushp(n.kids, parse_expr(p) as ref void)
+        n.a = 1
+        n.end = last_end(p)
+    }
+    n.sig_text = u.s_trim(u.s_substr(p.src, n.start, n.end))
+    return n
+}
+
+fn parse_type(p: mut ref Parser) ref Node = trust {
+    val t: ref Token = cur(p)
+    advance(p)
+    val name: ref Token = cur(p)
+    if name.kind != TokenKind.Ident {
+        set_error_span(name.line, name.col, c"expected a type name", token_span(name))
+        return node_new(NodeKind.TypeDecl, t.line, t.col)
+    }
+    val n: mut ref Node = node_new(NodeKind.TypeDecl, t.line, t.col)
+    n.s = u.s_intern(name.text)
+    n.start = t.start
+    advance(p)
+    n.end = last_end(p)
+    n.sig_text = u.s_cat(c"type ", name.text)
+    if !expect_op(p, c"{") {
+        return n
+    }
+    for {
+        skip_newlines(p)
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c"}") {
+            advance(p)
+            break
+        }
+        if cur(p).kind == TokenKind.Eof {
+            set_error_span(
+                cur(p).line,
+                cur(p).col,
+                c"unexpected end of file in type declaration",
+                cur_span(p)
+            )
+            break
+        }
+        if cur(p).kind == TokenKind.Op && (text_is(
+                cur(p),
+                c","
+            ) || text_is(cur(p), c";")) {
+            advance(p)
+            continue
+        }
+        val field: ref Node = parse_type_field(p)
+        if field.kind == NodeKind.FieldDecl && field.s != none {
+            u.vec_pushp(n.kids, field as ref void)
+        }
+        if g_error != none {
+            break
+        }
+        if cur(p).kind == TokenKind.Op && (text_is(
+                cur(p),
+                c","
+            ) || text_is(cur(p), c";")) {
+            advance(p)
+            continue
+        }
+        if cur(p).kind == TokenKind.Newline {
+            advance(p)
+        }
+    }
+    return n
 }
 
 fn parse_fn(p: mut ref Parser) ref Node = trust {
     val t: ref Token = cur(p)
     val n: mut ref Node = node_new(NodeKind.FnDef, t.line, t.col)
+    n.start = t.start
     advance(p)
     val name: ref Token = cur(p)
     if name.kind != TokenKind.Ident {
@@ -1508,6 +1672,17 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
     }
     n.s = u.s_intern(name.text)
     advance(p)
+    if cur(p).kind == TokenKind.Op && text_is(cur(p), c".") {
+        advance(p)
+        val method: ref Token = cur(p)
+        if method.kind != TokenKind.Ident {
+            set_error_span(method.line, method.col, c"expected a method name", token_span(method))
+            return n
+        }
+        n.owner = n.s
+        n.s = u.s_intern(method.text)
+        advance(p)
+    }
     if cur(p).kind == TokenKind.Op && text_is(cur(p), c"(") {
         advance(p)
         for {
@@ -1527,18 +1702,11 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
             u.vec_pushp(n.params, u.s_intern(pt.text) as ref void)
             advance(p)
             val def: mut ref Node = none
+            val ptype: mut ref u8 = c""
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c":") {
                 advance(p)
                 if is_type_word(cur(p)) {
-                    for {
-                        if cur(p).kind == TokenKind.Op && (text_is(
-                                cur(p),
-                                c","
-                            ) || text_is(cur(p), c")")) {
-                            break
-                        }
-                        advance(p)
-                    }
+                    ptype = collect_type_text(p)
                 } else {
                     val save: i64 = p.i
                     val saved_err: ref u8 = g_error
@@ -1552,18 +1720,24 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
                     } else {
                         p.i = save
                         g_error = saved_err
-                        for {
-                            if cur(p).kind == TokenKind.Op && (text_is(
-                                    cur(p),
-                                    c","
-                                ) || text_is(cur(p), c")")) {
-                                break
-                            }
-                            advance(p)
-                        }
+                        ptype = collect_type_text(p)
                     }
                 }
+            } elif cur(p).kind == TokenKind.Op && text_is(cur(p), c"=") {
+                advance(p)
+                def = parse_expr(p)
+            } elif type_starts(cur(p)) {
+                ptype = collect_type_text(p)
+                if cur(p).kind == TokenKind.Op && text_is(cur(p), c"=") {
+                    advance(p)
+                    def = parse_expr(p)
+                }
             }
+            if def == none && cur(p).kind == TokenKind.Op && text_is(cur(p), c"=") {
+                advance(p)
+                def = parse_expr(p)
+            }
+            u.vec_pushp(n.types, ptype as ref void)
             u.vec_pushp(n.defaults, def as ref void)
             if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
                 advance(p)
@@ -1575,6 +1749,11 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
             return n
         }
     }
+    if type_starts(cur(p)) {
+        n.type_text = collect_type_text(p)
+    }
+    n.end = last_end(p)
+    n.sig_text = u.s_trim(u.s_substr(p.src, n.start, n.end))
     val arrow: bool = cur(p).kind == TokenKind.Op && text_is(cur(p), c"=>")
     if arrow {
         advance(p)
@@ -1665,7 +1844,7 @@ fn reserved_unparen(t: ref Token) bool = trust {
     ) || keyword(t, c"say") || keyword(t, c"defer") || keyword(t, c"export") || keyword(
         t,
         c"var"
-    ) || keyword(t, c"const") || keyword(t, c"pub") || keyword(t, c"use")
+    ) || keyword(t, c"const") || keyword(t, c"pub") || keyword(t, c"use") || keyword(t, c"type")
 }
 
 fn starts_unparen_arg(t: ref Token) bool = trust {
@@ -1790,6 +1969,9 @@ fn starts_shell(p: ref Parser) bool = trust {
     }
     if b.kind == TokenKind.Op {
         if u.s_eq(b.text, c"(") || u.s_eq(b.text, c"[") || u.s_eq(b.text, c".") {
+            return false
+        }
+        if u.s_eq(b.text, c"{") && b.start == a.end {
             return false
         }
         if u.s_eq(
@@ -2334,6 +2516,57 @@ fn parse_primary(p: mut ref Parser) ref Node = trust {
             return node_new(NodeKind.NullLit, t.line, t.col)
         }
         advance(p)
+        if cur(p).kind == TokenKind.Op && text_is(cur(p), c"{") && cur(p).start == t.end {
+            advance(p)
+            val n: mut ref Node = node_new(NodeKind.StructLit, t.line, t.col)
+            n.s = u.s_intern(t.text)
+            n.start = t.start
+            for {
+                skip_newlines(p)
+                if cur(p).kind == TokenKind.Op && text_is(cur(p), c"}") {
+                    advance(p)
+                    break
+                }
+                if cur(p).kind == TokenKind.Eof {
+                    set_error_span(
+                        cur(p).line,
+                        cur(p).col,
+                        c"unexpected end of file in struct literal",
+                        cur_span(p)
+                    )
+                    break
+                }
+                val key: ref Token = cur(p)
+                if key.kind != TokenKind.Ident {
+                    set_error_span(
+                        key.line,
+                        key.col,
+                        c"expected a field name",
+                        token_span(key)
+                    )
+                    break
+                }
+                u.vec_pushp(n.params, u.s_dup(key.text) as ref void)
+                advance(p)
+                if !expect_op(p, c":") {
+                    break
+                }
+                u.vec_pushp(n.kids, parse_expr(p) as ref void)
+                if cur(p).kind == TokenKind.Op && text_is(cur(p), c",") {
+                    advance(p)
+                    continue
+                }
+                if cur(p).kind == TokenKind.Newline {
+                    continue
+                }
+                if cur(p).kind == TokenKind.Op && text_is(cur(p), c"}") {
+                    continue
+                }
+                break
+            }
+            n.end = last_end(p)
+            return n
+        }
         val n: mut ref Node = node_new(NodeKind.Var, t.line, t.col)
         node_set_name(n, t.text)
         n.start = t.start

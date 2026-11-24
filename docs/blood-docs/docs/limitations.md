@@ -12,7 +12,7 @@ The following behaviours are intentional or currently unimplemented and are part
 | Aliases | Aliases are expanded for single-command input and not as stages of a multi-command pipeline. |
 | Redirections | There are no heredocs, here-strings, process substitution, `|&`, or arbitrary descriptor redirections beyond `2>&N`. |
 | Language features | The scripting language has no classes, comprehensions, generators, decorators, slicing, varargs, `with`, `assert`, `del`, `global`, or `is`. |
-| Type annotations | Type annotations on function parameters are syntactically accepted but ignored. |
+| Type annotations | Type annotations on function parameters, return values, and type fields are stored as metadata but are not enforced at runtime. |
 | String literals | Single-quoted and double-quoted strings both interpolate. |
 | Division | Integer division truncates toward zero. There is no floor-division operator. |
 | Dictionaries | Dictionaries are unordered. Dictionary and function equality is identity equality. |

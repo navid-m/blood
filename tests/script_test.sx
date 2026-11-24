@@ -174,6 +174,22 @@ test "script supports dictionaries and attributes" {
     }
 }
 
+test "script supports type and method declarations" {
+    trust {
+        fresh()
+        val src: ref u8 = c"type Result {\n    file string\n    pass bool\n    ms int = 0\n}\nfn Result.label(self) string => if self.pass { \"PASS\" } else { \"FAIL\" }\nvar r = Result{file: \"a.sx\", pass: true}\nif r.label() != \"PASS\" or r.file != \"a.sx\" or r.ms != 0 {\n    raise \"struct\"\n}\nvar q = Result{file: \"b.sx\", pass: false, ms: 5}\nif q.label() != \"FAIL\" or q.ms != 5 {\n    raise \"struct fields\"\n}\n"
+        assert run(src) == 0
+    }
+}
+
+test "script validates struct fields and members" {
+    trust {
+        fresh()
+        val src: ref u8 = c"type Item {\n    name string\n}\ntry {\n    Item{name: \"a\", wrong: 1}\n    raise \"unknown field\"\n} catch err {\n    if \"unknown field\" not in err {\n        raise err\n    }\n}\ntry {\n    Item{}\n    raise \"missing field\"\n} catch err {\n    if \"missing field\" not in err {\n        raise err\n    }\n}\ntry {\n    std.missing\n    raise \"unknown member\"\n} catch err {\n    if \"unknown member\" not in err {\n        raise err\n    }\n}\n"
+        assert run(src) == 0
+    }
+}
+
 test "script export assignments update the environment" {
     trust {
         fresh()
@@ -593,7 +609,7 @@ test "script modules expose public bindings and keep private state" {
         val main_path: ref u8 = u.path_join(dir, c"main.bx")
         assert u.write_file(
             main_path,
-            c"use \"lib.bx\"\nif lib.PI != 3.14 {\n    raise \"pi\"\n}\nif lib.counter != 1 {\n    raise \"counter\"\n}\nlib.counter = 10\nif lib.get_counter() != 10 {\n    raise \"external write\"\n}\nif lib.bump() != 11 or lib.counter != 11 {\n    raise \"internal write\"\n}\nif lib.secret != null {\n    raise \"private var\"\n}\ntry {\n    lib.hidden()\n} catch err {\n    if \"unknown member\" not in err {\n        raise \"private fn\"\n    }\n}\ntry {\n    lib.PI = 0\n} catch err {\n    if \"constant\" not in err {\n        raise \"const\"\n    }\n}\n"
+            c"use \"lib.bx\"\nif lib.PI != 3.14 {\n    raise \"pi\"\n}\nif lib.counter != 1 {\n    raise \"counter\"\n}\nlib.counter = 10\nif lib.get_counter() != 10 {\n    raise \"external write\"\n}\nif lib.bump() != 11 or lib.counter != 11 {\n    raise \"internal write\"\n}\ntry {\n    lib.secret\n} catch err {\n    if \"unknown member\" not in err {\n        raise \"private var\"\n    }\n}\ntry {\n    lib.hidden()\n} catch err {\n    if \"unknown member\" not in err {\n        raise \"private fn\"\n    }\n}\ntry {\n    lib.PI = 0\n} catch err {\n    if \"constant\" not in err {\n        raise \"const\"\n    }\n}\n"
         )
         assert script.run_file(main_path) == 0
     }

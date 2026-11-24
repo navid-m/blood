@@ -165,7 +165,7 @@ Parentheses may be omitted when the call is unambiguous, as in `sh "echo hi"`, `
 
 Indexing has the form `container[index]`. Lists accept integers, including negative indices from the end. Dictionaries accept string keys; non-string keys are converted to strings. Strings accept a byte offset, including negative offsets, and return the UTF-8 sequence beginning at that offset.
 
-Attribute access has the form `container.name`. On a dictionary it reads the value for key `name`; a missing key yields null. On a namespace it reads the exported binding named `name`; a missing name yields null. On other values, plain attribute access yields null. Attribute assignment `dict.name = value` is supported for dictionaries and for mutable exported module variables.
+Attribute access has the form `container.name`. On a dictionary it reads the value for key `name`. On a namespace it reads the exported binding named `name`. On a struct it reads a field or method. A missing attribute raises a catchable `unknown member` error, including when the access occurs inside string interpolation. Dictionary indexing with a missing key still yields null. Attribute assignment `dict.name = value` is supported for dictionaries and for mutable exported module variables.
 
 ### Operators
 
@@ -413,11 +413,40 @@ fn greet(name, sep: ", ") {
 greet("Ada", sep: ": ")
 ```
 
-Type annotations such as `fn f(x: i64)` remain accepted and ignored. A token that looks like a type name is treated as an annotation; any other expression after `:` is a default. Use a named argument at the call site when the name is also a type word.
+Type hints use Go-style syntax: the type follows the parameter name, and a return type follows the closing parenthesis. A default value follows `=`. For example, `fn add(a int, b int = 2) int`. The older `name: type` annotation form and `name: default` form remain accepted. Type information is metadata; it does not restrict runtime values.
 
 A named function body uses the global environment as its parent, not the environment of its definition. Functions may be recursive. The recursion depth is limited to 200 nested user-function calls.
 
 `return` with no value returns null. A function that reaches the end of its body returns null. Extra arguments are ignored; missing arguments without a default are null.
+
+### Types and methods
+
+A named type declares a set of fields. A field has a name, an optional type hint, and an optional default value.
+
+```text
+type NAME {
+    FIELD TYPE [= DEFAULT]
+}
+```
+
+A struct is constructed with `NAME{field: value, ...}`. Field names are required. Unknown fields, duplicate fields, and fields without a value or default raise a catchable error. The declared field type is metadata and is not enforced.
+
+Methods are declared with a receiver type before the function name. A method is called with attribute syntax and receives the receiver as its first argument, conventionally named `self`.
+
+```blood
+type Result {
+    file string
+    pass bool
+    ms   int = 0
+}
+
+fn Result.label(self) string => if self.pass { "PASS" } else { "FAIL" }
+
+var r = Result{file: "a.sx", pass: true}
+say("{r.label()} {r.file}")
+```
+
+Struct field reads and writes validate the field name. Reading or writing an unknown field raises a catchable error.
 
 ### Lambdas
 
@@ -515,6 +544,9 @@ Runtime errors print the same form and abort the script with status 1 unless cau
 | `string index out of range` | A string index is outside the valid range. |
 | `value is not indexable` | An index is applied to a value that does not support indexing. |
 | `method call on null` | A method is called on a null value. |
+| `unknown member 'NAME'` | An attribute is not defined on the receiver. |
+| `unknown field 'NAME'` | A struct literal names a field that is not declared. |
+| `missing field 'NAME'` | A struct literal omits a field that has no default. |
 | `value does not support attribute assignment` | An attribute assignment targets an unsupported value. |
 | `division by zero` | Division or remainder by zero is attempted. |
 | `unknown method 'NAME'` | A method name is not defined for the receiver. |
@@ -735,6 +767,7 @@ statement    = say-stmt
              | for-stmt
              | para-for-stmt
              | fn-stmt
+             | type-stmt
              | try-stmt
              | var-stmt
              | const-stmt
@@ -772,9 +805,11 @@ for-stmt     = "for" IDENT [ "," IDENT ] "in" expression suite ;
 
 para-for-stmt = "para" "for" IDENT "in" expression suite ;
 
-fn-stmt      = "fn" IDENT [ "(" [ param { "," param } [ "," ] ] ")" ]
-               ( suite | "=>" expression ) ;
-param        = IDENT [ ":" ( type-text | expression ) ] ;
+fn-stmt      = "fn" IDENT [ "." IDENT ] [ "(" [ param { "," param } [ "," ] ] ")" ]
+               [ type-text ] ( suite | "=>" expression ) ;
+param        = IDENT [ type-text ] [ "=" expression ] ;
+type-stmt    = "type" IDENT "{" { NEWLINE | type-field } "}" ;
+type-field   = IDENT [ type-text ] [ "=" expression ] ;
 
 try-stmt     = "try" suite ( "catch" | "except" ) [ IDENT ] suite ;
 
@@ -794,7 +829,7 @@ reduce-stmt  = "reduce" "(" expression ")" "var"
 reduce-item  = IDENT "=" expression ;
 
 use-stmt     = "use" STRING [ NEWLINE ] ;
-pub-stmt     = "pub" ( var-stmt | const-stmt | fn-stmt ) ;
+pub-stmt     = "pub" ( var-stmt | const-stmt | fn-stmt | type-stmt ) ;
 
 expression-stmt = expression [ NEWLINE ] ;
 
@@ -840,7 +875,7 @@ lambda       = "|" [ IDENT { "," IDENT } ] "|"
                ( "=>" expression | expression | "{" { statement } "}" ) ;
 ```
 
-`type-text` is accepted and skipped by the parser; type annotations have no runtime effect. Any other expression after a parameter's `:` is a default value. A `SHELL` statement is recognised by the statement-start heuristic and consumes the remainder of the source line.
+`type-text` is accepted and stored for tooling; type annotations have no runtime effect. A parameter default follows `=` in the Go-style form, or `:` for compatibility with older scripts. A `SHELL` statement is recognised by the statement-start heuristic and consumes the remainder of the source line.
 
 ## Evaluation order
 
