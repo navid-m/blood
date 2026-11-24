@@ -9,8 +9,8 @@
     --text: #1f2328;
     --muted: #656d76;
     --border: #d0d7de;
-    --accent: #7c3aed;
-    --accent-soft: #ede9fe;
+    --accent: #9b1c1c;
+    --accent-soft: #fee2e2;
     --code-bg: #f6f8fa;
     --hover: #f3f4f6;
     --kw: #cf222e;
@@ -18,7 +18,7 @@
     --num: #0550ae;
     --com: #6e7781;
     --type: #953800;
-    --fn: #8250df;
+    --fn: #9b1c1c;
     --shadow: 0 1px 2px rgba(31, 35, 40, 0.06);
 }
 
@@ -29,8 +29,8 @@ html[data-theme="dark"] {
     --text: #e6edf3;
     --muted: #8b949e;
     --border: #30363d;
-    --accent: #a78bfa;
-    --accent-soft: #2b2145;
+    --accent: #f87171;
+    --accent-soft: #3a1717;
     --code-bg: #1b222c;
     --hover: #21262d;
     --kw: #ff7b72;
@@ -38,7 +38,7 @@ html[data-theme="dark"] {
     --num: #79c0ff;
     --com: #8b949e;
     --type: #ffa657;
-    --fn: #d2a8ff;
+    --fn: #f87171;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
@@ -365,6 +365,23 @@ code.signature {
 
 .doc a {
     text-decoration: underline;
+}
+
+pre.source {
+    margin: 0;
+    padding: 0.8rem 0.9rem;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    overflow: auto;
+    line-height: 1.55;
+}
+
+pre.source code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    white-space: pre;
 }
 
 details.panel {

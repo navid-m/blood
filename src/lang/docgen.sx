@@ -19,6 +19,7 @@ type DocItem = {
     kind: mut i64
     name: mut ref u8
     signature: mut ref u8
+    source: mut ref u8
     docs: mut ref u8
     fields: mut ref u.Vec
     methods: mut ref u.Vec
@@ -89,6 +90,7 @@ fn item_new(kind: i64, name: ref u8, signature: ref u8, docs: ref u8) ref DocIte
     d.kind = kind
     d.name = name
     d.signature = signature
+    d.source = none
     d.docs = docs
     d.fields = u.vec_new()
     d.methods = u.vec_new()
@@ -134,13 +136,16 @@ fn collect_type(n: ref lang.Node, lines: ref u.Vec) ref DocItem = trust {
     return item
 }
 
-fn fn_item(n: ref lang.Node, lines: ref u.Vec) ref DocItem = trust {
+fn fn_item(n: ref lang.Node, lines: ref u.Vec, src: ref u8) ref DocItem = trust {
     val sig: mut ref u8 = n.sig_text
     if sig == none {
         sig = n.s
     }
     val item: mut ref DocItem = item_new(1, n.s, sig, docs_for_line(lines, n.line))
     item.public = (n.flags & 1) != 0
+    if n.end > n.start {
+        item.source = u.s_substr(src, n.start, n.end)
+    }
     return item
 }
 
@@ -173,7 +178,7 @@ fn find_type_item(items: ref u.Vec, name: ref u8) ref DocItem = trust {
     return none
 }
 
-fn collect_docs(program: ref lang.Node, lines: ref u.Vec) ref u.Vec = trust {
+fn collect_docs(program: ref lang.Node, lines: ref u.Vec, src: ref u8) ref u.Vec = trust {
     val items: mut ref u.Vec = u.vec_new()
     val i: mut i64 = 0
     for {
@@ -193,7 +198,7 @@ fn collect_docs(program: ref lang.Node, lines: ref u.Vec) ref u.Vec = trust {
         }
         val n: ref lang.Node = u.vec_p(program.kids, i) as ref lang.Node
         if n.kind == lang.NodeKind.FnDef {
-            val item: ref DocItem = fn_item(n, lines)
+            val item: ref DocItem = fn_item(n, lines, src)
             if n.owner != none {
                 val owner: mut ref DocItem = find_type_item(items, n.owner)
                 if owner != none {
@@ -892,7 +897,11 @@ fn render_item(b: mut ref u.Buf, item: ref DocItem, id: ref u8, label: ref u8) v
     }
     u.buf_add(b, c"' id='")
     u.buf_add(b, id)
-    u.buf_add(b, c"' open><summary class='item-summary'><span class='kind'>")
+    u.buf_add(b, c"'")
+    if item.kind != 1 {
+        u.buf_add(b, c" open")
+    }
+    u.buf_add(b, c"><summary class='item-summary'><span class='kind'>")
     u.buf_add(b, label)
     u.buf_add(b, c"</span>")
     hl_code(b, item.signature)
@@ -901,6 +910,14 @@ fn render_item(b: mut ref u.Buf, item: ref DocItem, id: ref u8, label: ref u8) v
     }
     u.buf_add(b, c"</summary><div class='item-body'>\n")
     html_docs(b, item.docs)
+    if item.kind == 1 && item.source != none && u.s_len(item.source) > 0 {
+        u.buf_add(
+            b,
+            c"<details class='panel' open><summary>Implementation</summary><div class='panel-body'><pre class='source'><code>"
+        )
+        hl_code_inner(b, item.source)
+        u.buf_add(b, c"</code></pre></div></details>\n")
+    }
     if item.kind == 0 {
         html_fields(b, item)
     }
@@ -1119,7 +1136,7 @@ fn generate_file(path: ref u8, rel: ref u8, out_dir: ref u8, markdown: bool) i32
         return 1
     }
     val lines: ref u.Vec = split_lines(src)
-    val items: ref u.Vec = collect_docs(program, lines)
+    val items: ref u.Vec = collect_docs(program, lines, src)
     val title: ref u8 = u.path_base(path)
     val out: mut ref u8 = render_html(items, title)
     if markdown {

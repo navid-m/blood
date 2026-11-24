@@ -60,7 +60,11 @@ test "docgen writes html by default" {
             out,
             c"<tr><td><code>ms</code></td><td><code><span class='type'>int</span></code></td><td><code><span class='num'>0</span></code></td><td>"
         )
-        assert u.s_contains(out, c"<details class='item private' id='item-1' open>")
+        assert u.s_contains(out, c"<details class='item private' id='item-1'>")
+        assert u.s_contains(out, c"<details class='item private' id='item-0-m0'>")
+        assert u.s_contains(out, c"<summary>Implementation</summary>")
+        assert u.s_contains(out, c"<span class='kw'>return</span> a + b")
+        assert u.s_contains(out, c"</span>.label(<span class='kw'>self</span>)")
         assert u.s_contains(out, c"<span class='badge private'>private</span>")
         assert u.s_contains(out, c"<li class='nav-item private'><a href='#item-1'>")
     }
@@ -76,6 +80,9 @@ test "docgen html embeds theme, private toggle and highlighting styles" {
         val out: ref u8 = u.read_file(u.path_join(dir, c"sample.html"))
         assert out != none
         assert u.s_contains(out, c"color-scheme: dark")
+        assert u.s_contains(out, c"--accent: #9b1c1c")
+        assert u.s_contains(out, c"--accent: #f87171")
+        assert u.s_contains(out, c"pre.source")
         assert u.s_contains(out, c"body.show-private .private")
         assert u.s_contains(out, c"localStorage.getItem(\"blood-doc-theme\")")
         assert u.s_contains(out, c"localStorage.getItem(\"blood-doc-private\")")

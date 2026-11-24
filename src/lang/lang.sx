@@ -1710,6 +1710,7 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
         u.vec_pushp(ret.kids, parse_expr(p) as ref void)
         u.vec_pushp(body.kids, ret as ref void)
         u.vec_pushp(n.kids, body as ref void)
+        n.end = last_end(p)
         return n
     }
     val saved_depth: i64 = p.loop_depth
@@ -1717,6 +1718,7 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
     val body: ref Node = parse_suite(p, t.line, t.col)
     p.loop_depth = saved_depth
     u.vec_pushp(n.kids, body)
+    n.end = last_end(p)
     return n
 }
 
