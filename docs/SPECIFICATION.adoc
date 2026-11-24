@@ -1708,11 +1708,11 @@ accept numbers and strings, and `union` accepts dictionaries.
 
 [source]
 ----
-fn NAME(PARAM1 TYPE, PARAM2 TYPE = DEFAULT, ...) RETURN_TYPE {
+fn NAME(PARAM1 TYPE, PARAM2 TYPE: DEFAULT, ...) RETURN_TYPE {
     BLOCK
 }
 
-fn NAME(PARAM1 TYPE, PARAM2 TYPE = DEFAULT, ...) RETURN_TYPE => EXPRESSION
+fn NAME(PARAM1 TYPE, PARAM2 TYPE: DEFAULT, ...) RETURN_TYPE => EXPRESSION
 ----
 
 The `=>` form is shorthand for a body that immediately returns `EXPRESSION`.
@@ -1720,11 +1720,11 @@ The parameter list may be omitted in either form when the function takes no
 arguments.
 
 Parameters are positional unless passed by name. A parameter may declare a
-default after `=`, which is used when the caller omits that argument:
+default after `:`, which is used when the caller omits that argument:
 
 [source]
 ----
-fn greet(name string, sep string = ", ") string {
+fn greet(name string, sep string: ", ") string {
     return "Hello" + sep + name
 }
 
@@ -1732,9 +1732,10 @@ greet("Ada", sep: ": ")
 ----
 
 Type hints follow the parameter name, and the optional return type follows the
-closing parenthesis. The older `name: type` annotation form and
-`name: default` form remain accepted. Type information is metadata and does not
-restrict runtime values.
+closing parenthesis. When a parameter has both a type and a default, the type
+comes before the colon: `name TYPE: DEFAULT`. Without a type the form is
+`name: DEFAULT`. Type information is metadata and does not restrict runtime
+values.
 
 A named function body uses the global environment as its parent, not the
 environment of its definition. Functions may be recursive. The recursion depth
@@ -2246,7 +2247,7 @@ para-for-stmt = "para" "for" IDENT "in" expression suite ;
 
 fn-stmt      = "fn" IDENT [ "." IDENT ] "(" [ param { "," param } [ "," ] ] ")"
                [ type-text ] ( suite | "=>" expression ) ;
-param        = IDENT [ type-text ] [ "=" expression ] ;
+param        = IDENT [ type-text ] [ ":" expression ] ;
 type-stmt    = "type" IDENT "{" { NEWLINE | type-field } "}" ;
 type-field   = IDENT [ type-text ] [ "=" expression ] ;
 
@@ -2306,8 +2307,8 @@ lambda       = "|" [ IDENT { "," IDENT } ] "|"
 ....
 
 `type-text` is accepted and stored for tooling; type annotations have no
-runtime effect. A parameter default follows `=` in the Go-style form, or `:`
-for compatibility with older scripts. A `SHELL` statement is recognised by
+runtime effect. A parameter default follows `:`; a type, when present, comes
+before the colon. A `SHELL` statement is recognised by
 the statement-start heuristic and consumes the remainder of the source line.
 
 === Evaluation order

@@ -14,7 +14,7 @@ test "docgen writes markdown for declarations and type methods" {
         val src_path: ref u8 = u.path_join(dir, c"sample.bx")
         assert u.write_file(
             src_path,
-            c"## A result value.\ntype Result {\n    ## The source file.\n    file string\n    ## Whether it passed.\n    pass bool\n    ## Elapsed time.\n    ms int = 0\n}\n\n## Format the result.\nfn Result.label(self) string => \"x\"\n\n## Add two values.\nfn add(a int, b int = 2) int {\n    return a + b\n}\n\n## The current result.\nvar r = Result{file: \"a.sx\", pass: true}\n\n## A limit.\nconst Limit = 10\n"
+            c"## A result value.\ntype Result {\n    ## The source file.\n    file string\n    ## Whether it passed.\n    pass bool\n    ## Elapsed time.\n    ms int = 0\n}\n\n## Format the result.\nfn Result.label(self) string => \"x\"\n\n## Add two values.\nfn add(a int, b int: 2) int {\n    return a + b\n}\n\n## The current result.\nvar r = Result{file: \"a.sx\", pass: true}\n\n## A limit.\nconst Limit = 10\n"
         )
         assert docgen.generate_paths(one_path(src_path), dir, true) == 0
         val out: ref u8 = u.read_file(u.path_join(dir, c"sample.md"))
@@ -25,7 +25,7 @@ test "docgen writes markdown for declarations and type methods" {
         assert u.s_contains(out, c"| `file` | `string` |")
         assert u.s_contains(out, c"| `ms` | `int` | `0` |")
         assert u.s_contains(out, c"#### `fn Result.label(self) string`")
-        assert u.s_contains(out, c"### `fn add(a int, b int = 2) int`")
+        assert u.s_contains(out, c"### `fn add(a int, b int: 2) int`")
         assert u.s_contains(out, c"### `var r = Result{file: \"a.sx\", pass: true}`")
         assert u.s_contains(out, c"### `const Limit = 10`")
     }

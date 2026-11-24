@@ -358,7 +358,7 @@ test "parser builds type and method declarations" {
 
 test "parser accepts Go-style parameter types and defaults" {
     trust {
-        val prog: ref lang.Node = lang.parse(c"fn add(a int, b int = 2) int { return a + b }\nfn greet(name string, sep string = \", \") string => name\n")
+        val prog: ref lang.Node = lang.parse(c"fn add(a int, b int: 2) int { return a + b }\nfn greet(name string, sep string: \", \") string => name\n")
         assert lang.last_error() == none
         val f: ref lang.Node = kid(prog, 0)
         assert u.s_eq(u.vec_p(f.types, 0) as ref u8, c"int")

@@ -1498,31 +1498,6 @@ fn parse_for_rest(p: mut ref Parser, t: ref Token, kind: NodeKind) ref Node = tr
     return n
 }
 
-fn is_type_word(t: ref Token) bool = trust {
-    if t.kind != TokenKind.Ident {
-        return false
-    }
-    return u.s_eq(t.text, c"ref") || u.s_eq(t.text, c"mut") || u.s_eq(t.text, c"fn") || u.s_eq(
-        t.text,
-        c"i8"
-    ) || u.s_eq(t.text, c"i16") || u.s_eq(t.text, c"i32") || u.s_eq(
-        t.text,
-        c"i64"
-    ) || u.s_eq(t.text, c"u8") || u.s_eq(t.text, c"u16") || u.s_eq(
-        t.text,
-        c"u32"
-    ) || u.s_eq(t.text, c"u64") || u.s_eq(t.text, c"f32") || u.s_eq(
-        t.text,
-        c"f64"
-    ) || u.s_eq(t.text, c"int") || u.s_eq(t.text, c"float") || u.s_eq(
-        t.text,
-        c"bool"
-    ) || u.s_eq(t.text, c"string") || u.s_eq(t.text, c"str") || u.s_eq(
-        t.text,
-        c"void"
-    ) || u.s_eq(t.text, c"list") || u.s_eq(t.text, c"dict") || u.s_eq(t.text, c"any")
-}
-
 fn type_starts(t: ref Token) bool = trust {
     if t.kind == TokenKind.Ident {
         return true
@@ -1703,37 +1678,10 @@ fn parse_fn(p: mut ref Parser) ref Node = trust {
             advance(p)
             val def: mut ref Node = none
             val ptype: mut ref u8 = c""
-            if cur(p).kind == TokenKind.Op && text_is(cur(p), c":") {
-                advance(p)
-                if is_type_word(cur(p)) {
-                    ptype = collect_type_text(p)
-                } else {
-                    val save: i64 = p.i
-                    val saved_err: ref u8 = g_error
-                    g_error = none
-                    val candidate: ref Node = parse_expr(p)
-                    if g_error == none && cur(p).kind == TokenKind.Op && (text_is(
-                            cur(p),
-                            c","
-                        ) || text_is(cur(p), c")")) {
-                        def = candidate
-                    } else {
-                        p.i = save
-                        g_error = saved_err
-                        ptype = collect_type_text(p)
-                    }
-                }
-            } elif cur(p).kind == TokenKind.Op && text_is(cur(p), c"=") {
-                advance(p)
-                def = parse_expr(p)
-            } elif type_starts(cur(p)) {
+            if type_starts(cur(p)) {
                 ptype = collect_type_text(p)
-                if cur(p).kind == TokenKind.Op && text_is(cur(p), c"=") {
-                    advance(p)
-                    def = parse_expr(p)
-                }
             }
-            if def == none && cur(p).kind == TokenKind.Op && text_is(cur(p), c"=") {
+            if cur(p).kind == TokenKind.Op && text_is(cur(p), c":") {
                 advance(p)
                 def = parse_expr(p)
             }

@@ -413,7 +413,7 @@ fn greet(name, sep: ", ") {
 greet("Ada", sep: ": ")
 ```
 
-Type hints use Go-style syntax: the type follows the parameter name, and a return type follows the closing parenthesis. A default value follows `=`. For example, `fn add(a int, b int = 2) int`. The older `name: type` annotation form and `name: default` form remain accepted. Type information is metadata; it does not restrict runtime values.
+Type hints use Go-style syntax: the type follows the parameter name, and a return type follows the closing parenthesis. A default value follows `:`. When a parameter has both a type and a default the form is `name TYPE: DEFAULT`; without a type it is `name: DEFAULT`. For example, `fn add(a int, b int: 2) int`. Type information is metadata; it does not restrict runtime values.
 
 A named function body uses the global environment as its parent, not the environment of its definition. Functions may be recursive. The recursion depth is limited to 200 nested user-function calls.
 
@@ -807,7 +807,7 @@ para-for-stmt = "para" "for" IDENT "in" expression suite ;
 
 fn-stmt      = "fn" IDENT [ "." IDENT ] [ "(" [ param { "," param } [ "," ] ] ")" ]
                [ type-text ] ( suite | "=>" expression ) ;
-param        = IDENT [ type-text ] [ "=" expression ] ;
+param        = IDENT [ type-text ] [ ":" expression ] ;
 type-stmt    = "type" IDENT "{" { NEWLINE | type-field } "}" ;
 type-field   = IDENT [ type-text ] [ "=" expression ] ;
 
@@ -875,7 +875,7 @@ lambda       = "|" [ IDENT { "," IDENT } ] "|"
                ( "=>" expression | expression | "{" { statement } "}" ) ;
 ```
 
-`type-text` is accepted and stored for tooling; type annotations have no runtime effect. A parameter default follows `=` in the Go-style form, or `:` for compatibility with older scripts. A `SHELL` statement is recognised by the statement-start heuristic and consumes the remainder of the source line.
+`type-text` is accepted and stored for tooling; type annotations have no runtime effect. A parameter default follows `:`; when present, a type comes before the colon. A `SHELL` statement is recognised by the statement-start heuristic and consumes the remainder of the source line.
 
 ## Evaluation order
 
