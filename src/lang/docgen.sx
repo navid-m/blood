@@ -3,6 +3,11 @@
 val u    = use("../core/util.sx")
 val lang = use("lang.sx")
 
+val doc_css     = @embed("../assets/doc.css")
+val doc_css_len = @embedlen("../assets/doc.css")
+val doc_js      = @embed("../assets/doc.js")
+val doc_js_len  = @embedlen("../assets/doc.js")
+
 type DocField = {
     name: mut ref u8
     typ: mut ref u8
@@ -17,6 +22,7 @@ type DocItem = {
     docs: mut ref u8
     fields: mut ref u.Vec
     methods: mut ref u.Vec
+    public: mut bool
 }
 
 fn split_lines(src: ref u8) ref u.Vec = trust {
@@ -86,6 +92,7 @@ fn item_new(kind: i64, name: ref u8, signature: ref u8, docs: ref u8) ref DocIte
     d.docs = docs
     d.fields = u.vec_new()
     d.methods = u.vec_new()
+    d.public = true
     return d
 }
 
@@ -103,6 +110,7 @@ fn collect_type(n: ref lang.Node, lines: ref u.Vec) ref DocItem = trust {
         sig = u.s_cat(c"type ", n.s)
     }
     val item: mut ref DocItem = item_new(0, n.s, sig, docs_for_line(lines, n.line))
+    item.public = (n.flags & 1) != 0
     val i: mut i64 = 0
     for {
         if i >= n.kids.len {
@@ -131,7 +139,9 @@ fn fn_item(n: ref lang.Node, lines: ref u.Vec) ref DocItem = trust {
     if sig == none {
         sig = n.s
     }
-    return item_new(1, n.s, sig, docs_for_line(lines, n.line))
+    val item: mut ref DocItem = item_new(1, n.s, sig, docs_for_line(lines, n.line))
+    item.public = (n.flags & 1) != 0
+    return item
 }
 
 fn binding_item(n: ref lang.Node, lines: ref u.Vec, kind: i64) ref DocItem = trust {
@@ -143,7 +153,9 @@ fn binding_item(n: ref lang.Node, lines: ref u.Vec, kind: i64) ref DocItem = tru
     if kind == 2 {
         sig = u.s_cat(c"var ", raw)
     }
-    return item_new(kind, n.s, sig, docs_for_line(lines, n.line))
+    val item: mut ref DocItem = item_new(kind, n.s, sig, docs_for_line(lines, n.line))
+    item.public = (n.flags & 1) != 0
+    return item
 }
 
 fn find_type_item(items: ref u.Vec, name: ref u8) ref DocItem = trust {
@@ -332,6 +344,22 @@ fn render_md(items: ref u.Vec, title: ref u8) ref u8 = trust {
     return u.buf_take(b)
 }
 
+fn html_char(b: mut ref u.Buf, c: u8) void = trust {
+    if c == 38 {
+        u.buf_add(b, c"&amp;")
+    } elif c == 60 {
+        u.buf_add(b, c"&lt;")
+    } elif c == 62 {
+        u.buf_add(b, c"&gt;")
+    } elif c == 34 {
+        u.buf_add(b, c"&quot;")
+    } elif c == 39 {
+        u.buf_add(b, c"&#39;")
+    } else {
+        u.buf_ch(b, c)
+    }
+}
+
 fn html_escape(b: mut ref u.Buf, s: ref u8) void = trust {
     val n: i64 = u.s_len(s)
     val i: mut i64 = 0
@@ -339,18 +367,111 @@ fn html_escape(b: mut ref u.Buf, s: ref u8) void = trust {
         if i >= n {
             break
         }
-        val c: u8 = @load8(@ptradd(s, i))
-        if c == 38 {
-            u.buf_add(b, c"&amp;")
-        } elif c == 60 {
-            u.buf_add(b, c"&lt;")
-        } elif c == 62 {
-            u.buf_add(b, c"&gt;")
-        } elif c == 34 {
-            u.buf_add(b, c"&quot;")
-        } else {
-            u.buf_ch(b, c)
+        html_char(b, @load8(@ptradd(s, i)))
+        i++
+    }
+}
+
+fn find_byte(s: ref u8, from: i64, ch: u8) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = from
+    for {
+        if i >= n {
+            break
         }
+        if @load8(@ptradd(s, i)) == ch {
+            return i
+        }
+        i++
+    }
+    return -1
+}
+
+fn find_pair(s: ref u8, from: i64, a: u8, b: u8) i64 = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = from
+    for {
+        if i + 1 >= n {
+            break
+        }
+        if @load8(@ptradd(s, i)) == a && @load8(@ptradd(s, i + 1)) == b {
+            return i
+        }
+        i++
+    }
+    return -1
+}
+
+fn html_inline(b: mut ref u.Buf, s: ref u8) void = trust {
+    val n: i64 = u.s_len(s)
+    val i: mut i64 = 0
+    for {
+        if i >= n {
+            break
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if c == 92 && i + 1 < n {
+            html_char(b, @load8(@ptradd(s, i + 1)))
+            i += 2
+            continue
+        }
+        if c == 96 {
+            val close: i64 = find_byte(s, i + 1, 96)
+            if close > i {
+                u.buf_add(b, c"<code>")
+                html_escape(b, u.s_substr(s, i + 1, close))
+                u.buf_add(b, c"</code>")
+                i = close + 1
+                continue
+            }
+        }
+        if c == 42 {
+            if i + 1 < n && @load8(@ptradd(s, i + 1)) == 42 {
+                val close: i64 = find_pair(s, i + 2, 42, 42)
+                if close > i + 1 {
+                    u.buf_add(b, c"<strong>")
+                    html_inline(b, u.s_substr(s, i + 2, close))
+                    u.buf_add(b, c"</strong>")
+                    i = close + 2
+                    continue
+                }
+            } else {
+                val close: i64 = find_byte(s, i + 1, 42)
+                if close > i {
+                    u.buf_add(b, c"<em>")
+                    html_inline(b, u.s_substr(s, i + 1, close))
+                    u.buf_add(b, c"</em>")
+                    i = close + 1
+                    continue
+                }
+            }
+        }
+        if c == 95 && i + 1 < n && @load8(@ptradd(s, i + 1)) == 95 {
+            val close: i64 = find_pair(s, i + 2, 95, 95)
+            if close > i + 1 {
+                u.buf_add(b, c"<strong>")
+                html_inline(b, u.s_substr(s, i + 2, close))
+                u.buf_add(b, c"</strong>")
+                i = close + 2
+                continue
+            }
+        }
+        if c == 91 {
+            val close: i64 = find_byte(s, i + 1, 93)
+            if close > i && close + 1 < n && @load8(@ptradd(s, close + 1)) == 40 {
+                val end: i64 = find_byte(s, close + 2, 41)
+                if end > close {
+                    u.buf_add(b, c"<a href='")
+                    html_escape(b, u.s_substr(s, close + 2, end))
+                    u.buf_add(b, c"'>")
+                    html_inline(b, u.s_substr(s, i + 1, close))
+                    u.buf_add(b, c"</a>")
+                    i = end + 1
+                    continue
+                }
+            }
+        }
+        html_char(b, c)
         i++
     }
 }
@@ -359,25 +480,174 @@ fn html_docs(b: mut ref u.Buf, docs: ref u8) void = trust {
     if u.s_len(docs) == 0 {
         return
     }
-    u.buf_add(b, c"<p>")
+    u.buf_add(b, c"<div class='doc'>")
     val n: i64 = u.s_len(docs)
-    val i: mut i64 = 0
+    val pos: mut i64 = 0
+    val in_para: mut bool = false
+    val lines: mut i64 = 0
     for {
-        if i >= n {
+        if pos > n {
             break
         }
-        val c: u8 = @load8(@ptradd(docs, i))
-        if c == 10 {
-            u.buf_add(b, c"<br>")
-        } else {
-            u.buf_ch(b, c)
+        val nl: i64 = u.s_index_of_char(docs, 10, pos)
+        val end: mut i64 = n
+        if nl >= 0 {
+            end = nl
         }
-        i++
+        val line: ref u8 = u.s_trim(u.s_substr(docs, pos, end))
+        if u.s_len(line) == 0 {
+            if in_para {
+                u.buf_add(b, c"</p>\n")
+                in_para = false
+            }
+        } else {
+            if !in_para {
+                u.buf_add(b, c"<p>")
+                in_para = true
+                lines = 0
+            } elif lines > 0 {
+                u.buf_add(b, c"<br>")
+            }
+            html_inline(b, line)
+            lines++
+        }
+        if nl < 0 {
+            break
+        }
+        pos = nl + 1
     }
-    u.buf_add(b, c"</p>\n")
+    if in_para {
+        u.buf_add(b, c"</p>\n")
+    }
+    u.buf_add(b, c"</div>\n")
 }
 
 fn html_cell(b: mut ref u.Buf, s: ref u8) void = trust {
+    val n: i64 = u.s_len(s)
+    val pos: mut i64 = 0
+    val first: mut bool = true
+    for {
+        if pos > n {
+            break
+        }
+        val nl: i64 = u.s_index_of_char(s, 10, pos)
+        val end: mut i64 = n
+        if nl >= 0 {
+            end = nl
+        }
+        val line: ref u8 = u.s_trim(u.s_substr(s, pos, end))
+        if !first && u.s_len(line) > 0 {
+            u.buf_add(b, c"<br>")
+        }
+        html_inline(b, line)
+        first = false
+        if nl < 0 {
+            break
+        }
+        pos = nl + 1
+    }
+}
+
+fn is_ident_start(c: u8) bool = trust {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn is_ident_char(c: u8) bool = trust {
+    return is_ident_start(c) || (c >= 48 && c <= 57)
+}
+
+fn is_digit(c: u8) bool = trust {
+    return c >= 48 && c <= 57
+}
+
+fn is_hl_keyword(s: ref u8) bool = trust {
+    return u.s_eq(s, c"fn") || u.s_eq(s, c"val") || u.s_eq(s, c"mut") || u.s_eq(
+        s,
+        c"pub"
+    ) || u.s_eq(s, c"type") || u.s_eq(s, c"var") || u.s_eq(s, c"const") || u.s_eq(
+        s,
+        c"return"
+    ) || u.s_eq(s, c"if") || u.s_eq(s, c"else") || u.s_eq(s, c"elif") || u.s_eq(
+        s,
+        c"trust"
+    ) || u.s_eq(s, c"use") || u.s_eq(s, c"ref") || u.s_eq(s, c"for") || u.s_eq(
+        s,
+        c"in"
+    ) || u.s_eq(s, c"some") || u.s_eq(s, c"none") || u.s_eq(s, c"ok") || u.s_eq(
+        s,
+        c"err"
+    ) || u.s_eq(s, c"match") || u.s_eq(s, c"true") || u.s_eq(s, c"false") || u.s_eq(
+        s,
+        c"defer"
+    ) || u.s_eq(s, c"break") || u.s_eq(s, c"continue") || u.s_eq(s, c"as") || u.s_eq(
+        s,
+        c"assert"
+    ) || u.s_eq(s, c"when") || u.s_eq(s, c"union") || u.s_eq(s, c"enum") || u.s_eq(
+        s,
+        c"extern"
+    ) || u.s_eq(s, c"link") || u.s_eq(s, c"lib") || u.s_eq(s, c"guarded") || u.s_eq(
+        s,
+        c"not"
+    ) || u.s_eq(s, c"test") || u.s_eq(s, c"guard") || u.s_eq(s, c"invariant") || u.s_eq(
+        s,
+        c"spec"
+    ) || u.s_eq(s, c"pre") || u.s_eq(s, c"post") || u.s_eq(s, c"inline") || u.s_eq(
+        s,
+        c"try"
+    ) || u.s_eq(s, c"raise") || u.s_eq(s, c"say") || u.s_eq(s, c"self")
+}
+
+fn is_hl_type(s: ref u8) bool = trust {
+    return u.s_eq(s, c"u8") || u.s_eq(s, c"u16") || u.s_eq(s, c"u32") || u.s_eq(
+        s,
+        c"u64"
+    ) || u.s_eq(s, c"i8") || u.s_eq(s, c"i16") || u.s_eq(s, c"i32") || u.s_eq(
+        s,
+        c"i64"
+    ) || u.s_eq(s, c"int") || u.s_eq(s, c"uint") || u.s_eq(s, c"float") || u.s_eq(
+        s,
+        c"f32"
+    ) || u.s_eq(s, c"f64") || u.s_eq(s, c"bool") || u.s_eq(s, c"string") || u.s_eq(
+        s,
+        c"void"
+    ) || u.s_eq(s, c"any")
+}
+
+fn hl_string_end(s: ref u8, start: i64, n: i64) i64 = trust {
+    val quote: u8 = @load8(@ptradd(s, start))
+    val triple: bool = start + 2 < n && @load8(@ptradd(s, start + 1)) == quote && @load8(
+        @ptradd(s, start + 2)
+    ) == quote
+    val i: mut i64 = start + 1
+    if triple {
+        i = start + 3
+    }
+    for {
+        if i >= n {
+            return n
+        }
+        val c: u8 = @load8(@ptradd(s, i))
+        if triple {
+            if c == quote && i + 2 < n && @load8(@ptradd(s, i + 1)) == quote && @load8(
+                @ptradd(s, i + 2)
+            ) == quote {
+                return i + 3
+            }
+        } else {
+            if c == quote {
+                return i + 1
+            }
+        }
+        if c == 92 {
+            i += 2
+        } else {
+            i++
+        }
+    }
+    return n
+}
+
+fn hl_code_inner(b: mut ref u.Buf, s: ref u8) void = trust {
     val n: i64 = u.s_len(s)
     val i: mut i64 = 0
     for {
@@ -385,30 +655,128 @@ fn html_cell(b: mut ref u.Buf, s: ref u8) void = trust {
             break
         }
         val c: u8 = @load8(@ptradd(s, i))
-        if c == 10 {
-            u.buf_add(b, c"<br>")
-        } elif c == 38 {
-            u.buf_add(b, c"&amp;")
-        } elif c == 60 {
-            u.buf_add(b, c"&lt;")
-        } elif c == 62 {
-            u.buf_add(b, c"&gt;")
-        } elif c == 34 {
-            u.buf_add(b, c"&quot;")
-        } else {
+        if c == 32 || c == 9 || c == 10 || c == 13 {
             u.buf_ch(b, c)
+            i++
+            continue
         }
+        if c == 35 {
+            val close: i64 = u.s_index_of_char(s, 10, i)
+            val end: mut i64 = n
+            if close >= 0 {
+                end = close
+            }
+            u.buf_add(b, c"<span class='com'>")
+            html_escape(b, u.s_substr(s, i, end))
+            u.buf_add(b, c"</span>")
+            i = end
+            continue
+        }
+        if (c == 114 || c == 99) && i + 1 < n && (@load8(
+            @ptradd(s, i + 1)
+        ) == 34 || @load8(@ptradd(s, i + 1)) == 39) {
+            val end: i64 = hl_string_end(s, i + 1, n)
+            u.buf_add(b, c"<span class='str'>")
+            html_escape(b, u.s_substr(s, i, end))
+            u.buf_add(b, c"</span>")
+            i = end
+            continue
+        }
+        if c == 34 || c == 39 {
+            val end: i64 = hl_string_end(s, i, n)
+            u.buf_add(b, c"<span class='str'>")
+            html_escape(b, u.s_substr(s, i, end))
+            u.buf_add(b, c"</span>")
+            i = end
+            continue
+        }
+        if is_digit(c) {
+            val start: i64 = i
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                val d: u8 = @load8(@ptradd(s, i))
+                if is_ident_char(d) || d == 46 {
+                    i++
+                } else {
+                    break
+                }
+            }
+            u.buf_add(b, c"<span class='num'>")
+            html_escape(b, u.s_substr(s, start, i))
+            u.buf_add(b, c"</span>")
+            continue
+        }
+        if is_ident_start(c) {
+            val start: i64 = i
+            i++
+            for {
+                if i >= n {
+                    break
+                }
+                if is_ident_char(@load8(@ptradd(s, i))) {
+                    i++
+                } else {
+                    break
+                }
+            }
+            val word: ref u8 = u.s_substr(s, start, i)
+            if is_hl_keyword(word) {
+                u.buf_add(b, c"<span class='kw'>")
+                html_escape(b, word)
+                u.buf_add(b, c"</span>")
+            } elif is_hl_type(word) || (c >= 65 && c <= 90) {
+                u.buf_add(b, c"<span class='type'>")
+                html_escape(b, word)
+                u.buf_add(b, c"</span>")
+            } else {
+                html_escape(b, word)
+            }
+            continue
+        }
+        if c == 64 {
+            val start: i64 = i
+            i++
+            if i < n && is_ident_start(@load8(@ptradd(s, i))) {
+                i++
+                for {
+                    if i >= n {
+                        break
+                    }
+                    if is_ident_char(@load8(@ptradd(s, i))) {
+                        i++
+                    } else {
+                        break
+                    }
+                }
+            }
+            u.buf_add(b, c"<span class='builtin'>")
+            html_escape(b, u.s_substr(s, start, i))
+            u.buf_add(b, c"</span>")
+            continue
+        }
+        html_char(b, c)
         i++
     }
+}
+
+fn hl_code(b: mut ref u.Buf, s: ref u8) void = trust {
+    u.buf_add(b, c"<code class='signature'>")
+    hl_code_inner(b, s)
+    u.buf_add(b, c"</code>")
 }
 
 fn html_fields(b: mut ref u.Buf, item: ref DocItem) void = trust {
     if item.fields.len == 0 {
         return
     }
+    u.buf_add(b, c"<details class='panel' open><summary>Fields <span class='count'>")
+    u.buf_int(b, item.fields.len)
     u.buf_add(
         b,
-        c"<table><thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Description</th></tr></thead><tbody>\n"
+        c"</span></summary><div class='panel-body'><div class='table-wrap'><table class='fields'><thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Description</th></tr></thead><tbody>\n"
     )
     val i: mut i64 = 0
     for {
@@ -420,12 +788,12 @@ fn html_fields(b: mut ref u.Buf, item: ref DocItem) void = trust {
         html_escape(b, f.name)
         u.buf_add(b, c"</code></td><td><code>")
         if f.typ != none {
-            html_escape(b, f.typ)
+            hl_code_inner(b, f.typ)
         }
         u.buf_add(b, c"</code></td><td>")
         if u.s_len(f.default_text) > 0 {
             u.buf_add(b, c"<code>")
-            html_escape(b, f.default_text)
+            hl_code_inner(b, f.default_text)
             u.buf_add(b, c"</code>")
         }
         u.buf_add(b, c"</td><td>")
@@ -433,32 +801,35 @@ fn html_fields(b: mut ref u.Buf, item: ref DocItem) void = trust {
         u.buf_add(b, c"</td></tr>\n")
         i++
     }
-    u.buf_add(b, c"</tbody></table>\n")
+    u.buf_add(b, c"</tbody></table></div></div></details>\n")
 }
 
-fn render_html(items: ref u.Vec, title: ref u8) ref u8 = trust {
-    val b: mut ref u.Buf = u.buf_new()
-    u.buf_add(b, c"<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>")
-    html_escape(b, title)
-    u.buf_add(b, c"</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:880px;margin:2rem auto;padding:0 1rem}code{background:#f3f3f3;padding:.1rem .25rem;border-radius:3px}table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:.3rem .6rem;text-align:left}</style></head><body>\n<h1>")
-    html_escape(b, title)
-    u.buf_add(b, c"</h1>\n")
-    val sections: mut ref u.Vec = u.vec_new()
-    u.vec_pushp(sections, c"Types" as ref void)
-    u.vec_pushp(sections, c"Functions" as ref void)
-    u.vec_pushp(sections, c"Variables" as ref void)
-    u.vec_pushp(sections, c"Constants" as ref void)
-    val kinds: mut ref u.Vec = u.vec_new()
-    u.vec_push(kinds, 0)
-    u.vec_push(kinds, 1)
-    u.vec_push(kinds, 2)
-    u.vec_push(kinds, 3)
+fn kind_label(kind: i64) ref u8 = trust {
+    if kind == 0 {
+        return c"type"
+    }
+    if kind == 1 {
+        return c"function"
+    }
+    if kind == 2 {
+        return c"variable"
+    }
+    return c"constant"
+}
+
+fn render_sidebar(b: mut ref u.Buf, items: ref u.Vec) void = trust {
+    u.buf_add(b, c"<aside class='sidebar'><div class='sidebar-inner'>\n")
+    val names: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(names, c"Types" as ref void)
+    u.vec_pushp(names, c"Functions" as ref void)
+    u.vec_pushp(names, c"Variables" as ref void)
+    u.vec_pushp(names, c"Constants" as ref void)
     val si: mut i64 = 0
     for {
-        if si >= sections.len {
+        if si >= names.len {
             break
         }
-        val kind: i64 = u.vec_gets(kinds, si)
+        val kind: i64 = si
         val any: mut bool = false
         val i: mut i64 = 0
         for {
@@ -473,42 +844,184 @@ fn render_html(items: ref u.Vec, title: ref u8) ref u8 = trust {
             i++
         }
         if any {
-            u.buf_add(b, c"<h2>")
-            u.buf_add(b, u.vec_p(sections, si) as ref u8)
-            u.buf_add(b, c"</h2>\n")
+            u.buf_add(b, c"<div class='nav-section'><div class='nav-heading'>")
+            u.buf_add(b, u.vec_p(names, si) as ref u8)
+            u.buf_add(b, c"</div><ul>\n")
+            i = 0
+            for {
+                if i >= items.len {
+                    break
+                }
+                val item: ref DocItem = u.vec_p(items, i) as ref DocItem
+                if item.kind == kind {
+                    u.buf_add(b, c"<li class='nav-item")
+                    if !item.public {
+                        u.buf_add(b, c" private")
+                    }
+                    u.buf_add(b, c"'><a href='#item-")
+                    u.buf_int(b, i)
+                    u.buf_add(b, c"'><code>")
+                    html_escape(b, item.name)
+                    u.buf_add(b, c"</code></a></li>\n")
+                }
+                i++
+            }
+            u.buf_add(b, c"</ul></div>\n")
         }
-        i = 0
+        si++
+    }
+    u.buf_add(b, c"</div></aside>\n")
+}
+
+fn render_styles(b: mut ref u.Buf) void = trust {
+    u.buf_add(b, c"<style>\n")
+    u.buf_addn(b, doc_css, doc_css_len)
+    u.buf_add(b, c"</style>\n")
+}
+
+fn render_scripts(b: mut ref u.Buf) void = trust {
+    u.buf_add(b, c"<script>\n")
+    u.buf_addn(b, doc_js, doc_js_len)
+    u.buf_add(b, c"</script>\n")
+}
+
+fn render_item(b: mut ref u.Buf, item: ref DocItem, id: ref u8, label: ref u8) void = trust {
+    u.buf_add(b, c"<details class='item")
+    if !item.public {
+        u.buf_add(b, c" private")
+    }
+    u.buf_add(b, c"' id='")
+    u.buf_add(b, id)
+    u.buf_add(b, c"' open><summary class='item-summary'><span class='kind'>")
+    u.buf_add(b, label)
+    u.buf_add(b, c"</span>")
+    hl_code(b, item.signature)
+    if !item.public {
+        u.buf_add(b, c"<span class='badge private'>private</span>")
+    }
+    u.buf_add(b, c"</summary><div class='item-body'>\n")
+    html_docs(b, item.docs)
+    if item.kind == 0 {
+        html_fields(b, item)
+    }
+    if item.methods.len > 0 {
+        u.buf_add(b, c"<details class='panel' open><summary>Methods <span class='count'>")
+        u.buf_int(b, item.methods.len)
+        u.buf_add(b, c"</span></summary><div class='panel-body'>\n")
+        val mi: mut i64 = 0
+        for {
+            if mi >= item.methods.len {
+                break
+            }
+            val method: ref DocItem = u.vec_p(item.methods, mi) as ref DocItem
+            val mid: ref u8 = u.s_cat(u.s_cat(id, c"-m"), u.s_int(mi))
+            render_item(b, method, mid, c"method")
+            mi++
+        }
+        u.buf_add(b, c"</div></details>\n")
+    }
+    u.buf_add(b, c"</div></details>\n")
+}
+
+fn render_html(items: ref u.Vec, title: ref u8) ref u8 = trust {
+    val b: mut ref u.Buf = u.buf_new()
+    u.buf_add(
+        b,
+        c\\<!doctype html>
+        \\<html lang='en' data-theme='light'>
+        \\<head>
+        \\<meta charset='utf-8'>
+        \\<meta name='viewport' content='width=device-width, initial-scale=1'>
+        \\<title>
+    )
+    html_escape(b, title)
+    u.buf_add(b, c" - Blood docs</title>\n")
+    render_styles(b)
+    u.buf_add(
+        b,
+        c\\</head>
+        \\<body class='show-private'>
+        \\<header class='topbar'>
+        \\<div class='brand'><span>blood</span><span class='sub'>docs</span></div>
+        \\<div class='actions'>
+        \\<button type='button' class='btn' id='expand-all'>Expand all</button>
+        \\<button type='button' class='btn' id='collapse-all'>Collapse all</button>
+        \\<label class='switch'><input type='checkbox' id='show-private' checked> Private</label>
+        \\<button type='button' class='btn' id='theme-toggle'>Dark</button>
+        \\</div>
+        \\</header>
+        \\<div class='layout'>
+    )
+    render_sidebar(b, items)
+    u.buf_add(
+        b,
+        c\\<main class='content'>
+        \\<div class='page-head'>
+        \\<div class='breadcrumb'>Documentation</div>
+        \\<h1>
+    )
+    html_escape(b, title)
+    u.buf_add(
+        b,
+        c\\</h1>
+        \\<p>Generated by blood -doc</p>
+        \\</div>
+    )
+    val names: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(names, c"Types" as ref void)
+    u.vec_pushp(names, c"Functions" as ref void)
+    u.vec_pushp(names, c"Variables" as ref void)
+    u.vec_pushp(names, c"Constants" as ref void)
+    val anchors: mut ref u.Vec = u.vec_new()
+    u.vec_pushp(anchors, c"types" as ref void)
+    u.vec_pushp(anchors, c"functions" as ref void)
+    u.vec_pushp(anchors, c"variables" as ref void)
+    u.vec_pushp(anchors, c"constants" as ref void)
+    val si: mut i64 = 0
+    for {
+        if si >= names.len {
+            break
+        }
+        val kind: i64 = si
+        val count: mut i64 = 0
+        val i: mut i64 = 0
         for {
             if i >= items.len {
                 break
             }
             val item: ref DocItem = u.vec_p(items, i) as ref DocItem
             if item.kind == kind {
-                u.buf_add(b, c"<h3><code>")
-                html_escape(b, item.signature)
-                u.buf_add(b, c"</code></h3>\n")
-                html_docs(b, item.docs)
-                if item.kind == 0 {
-                    html_fields(b, item)
-                }
-                val mi: mut i64 = 0
-                for {
-                    if mi >= item.methods.len {
-                        break
-                    }
-                    val method: ref DocItem = u.vec_p(item.methods, mi) as ref DocItem
-                    u.buf_add(b, c"<h4><code>")
-                    html_escape(b, method.signature)
-                    u.buf_add(b, c"</code></h4>\n")
-                    html_docs(b, method.docs)
-                    mi++
-                }
+                count++
             }
             i++
         }
+        if count > 0 {
+            u.buf_add(b, c"<section class='section' id='section-")
+            u.buf_add(b, u.vec_p(anchors, si) as ref u8)
+            u.buf_add(b, c"'><h2>")
+            u.buf_add(b, u.vec_p(names, si) as ref u8)
+            u.buf_add(b, c" <span class='count'>")
+            u.buf_int(b, count)
+            u.buf_add(b, c"</span></h2>\n")
+            val idx: mut i64 = 0
+            for {
+                if idx >= items.len {
+                    break
+                }
+                val item: ref DocItem = u.vec_p(items, idx) as ref DocItem
+                if item.kind == kind {
+                    val id: ref u8 = u.s_cat(c"item-", u.s_int(idx))
+                    render_item(b, item, id, kind_label(kind))
+                }
+                idx++
+            }
+            u.buf_add(b, c"</section>\n")
+        }
         si++
     }
-    u.buf_add(b, c"</body></html>\n")
+    u.buf_add(b, c"</main>\n</div>\n")
+    render_scripts(b)
+    u.buf_add(b, c"</body>\n</html>\n")
     return u.buf_take(b)
 }
 

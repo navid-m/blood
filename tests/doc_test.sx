@@ -7,21 +7,22 @@ fn one_path(path: ref u8) ref u.Vec = trust {
     return paths
 }
 
+fn sample_source() ref u8 = trust {
+    return c"## A *result* value with __careful__ handling.\npub type Result {\n    ## The **source** file.\n    file string\n    ## Whether it passed.\n    pass bool\n    ## Elapsed time.\n    ms int = 0\n}\n\n## Format the result.\nfn Result.label(self) string => \"x\"\n\n## Add two values.\nfn add(a int, b int: 2) int {\n    return a + b\n}\n\n## The current result.\npub var r = Result{file: \"a.sx\", pass: true}\n\n## A limit.\nconst Limit = 10\n"
+}
+
 test "docgen writes markdown for declarations and type methods" {
     trust {
         val dir: ref u8 = c"/tmp/blood-unit-doc"
         assert u.mkdir_p(dir)
         val src_path: ref u8 = u.path_join(dir, c"sample.bx")
-        assert u.write_file(
-            src_path,
-            c"## A result value.\ntype Result {\n    ## The source file.\n    file string\n    ## Whether it passed.\n    pass bool\n    ## Elapsed time.\n    ms int = 0\n}\n\n## Format the result.\nfn Result.label(self) string => \"x\"\n\n## Add two values.\nfn add(a int, b int: 2) int {\n    return a + b\n}\n\n## The current result.\nvar r = Result{file: \"a.sx\", pass: true}\n\n## A limit.\nconst Limit = 10\n"
-        )
+        assert u.write_file(src_path, sample_source())
         assert docgen.generate_paths(one_path(src_path), dir, true) == 0
         val out: ref u8 = u.read_file(u.path_join(dir, c"sample.md"))
         assert out != none
         assert u.s_contains(out, c"# sample.bx")
         assert u.s_contains(out, c"### `type Result`")
-        assert u.s_contains(out, c"A result value.")
+        assert u.s_contains(out, c"A *result* value with __careful__ handling.")
         assert u.s_contains(out, c"| `file` | `string` |")
         assert u.s_contains(out, c"| `ms` | `int` | `0` |")
         assert u.s_contains(out, c"#### `fn Result.label(self) string`")
@@ -36,12 +37,49 @@ test "docgen writes html by default" {
         val dir: ref u8 = c"/tmp/blood-unit-doc"
         assert u.mkdir_p(dir)
         val src_path: ref u8 = u.path_join(dir, c"sample.bx")
+        assert u.write_file(src_path, sample_source())
         assert docgen.generate_paths(one_path(src_path), dir, false) == 0
         val out: ref u8 = u.read_file(u.path_join(dir, c"sample.html"))
         assert out != none
         assert u.s_contains(out, c"<!doctype html>")
-        assert u.s_contains(out, c"<h1>sample.bx</h1>")
-        assert u.s_contains(out, c"<h3><code>type Result</code></h3>")
-        assert u.s_contains(out, c"<td><code>ms</code></td><td><code>int</code></td><td><code>0</code></td><td>")
+        assert u.s_contains(out, c"<title>sample.bx - Blood docs</title>")
+        assert u.s_contains(out, c"data-theme='light'")
+        assert u.s_contains(out, c"id='theme-toggle'")
+        assert u.s_contains(out, c"<body class='show-private'>")
+        assert u.s_contains(out, c"id='show-private' checked")
+        assert u.s_contains(out, c"<details class='item' id='item-0' open>")
+        assert u.s_contains(out, c"<span class='kind'>type</span>")
+        assert u.s_contains(out, c"<span class='kw'>type</span> <span class='type'>Result</span>")
+        assert u.s_contains(
+            out,
+            c"<div class='doc'><p>A <em>result</em> value with <strong>careful</strong> handling.</p>"
+        )
+        assert u.s_contains(out, c"<details class='panel' open><summary>Fields")
+        assert u.s_contains(out, c"<table class='fields'>")
+        assert u.s_contains(
+            out,
+            c"<tr><td><code>ms</code></td><td><code><span class='type'>int</span></code></td><td><code><span class='num'>0</span></code></td><td>"
+        )
+        assert u.s_contains(out, c"<details class='item private' id='item-1' open>")
+        assert u.s_contains(out, c"<span class='badge private'>private</span>")
+        assert u.s_contains(out, c"<li class='nav-item private'><a href='#item-1'>")
+    }
+}
+
+test "docgen html embeds theme, private toggle and highlighting styles" {
+    trust {
+        val dir: ref u8 = c"/tmp/blood-unit-doc"
+        assert u.mkdir_p(dir)
+        val src_path: ref u8 = u.path_join(dir, c"sample.bx")
+        assert u.write_file(src_path, sample_source())
+        assert docgen.generate_paths(one_path(src_path), dir, false) == 0
+        val out: ref u8 = u.read_file(u.path_join(dir, c"sample.html"))
+        assert out != none
+        assert u.s_contains(out, c"color-scheme: dark")
+        assert u.s_contains(out, c"body.show-private .private")
+        assert u.s_contains(out, c"localStorage.getItem(\"blood-doc-theme\")")
+        assert u.s_contains(out, c"localStorage.getItem(\"blood-doc-private\")")
+        assert u.s_contains(out, c".kw {")
+        assert u.s_contains(out, c"details.item > summary")
     }
 }
