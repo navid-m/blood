@@ -8,7 +8,7 @@ fn one_path(path: ref u8) ref u.Vec = trust {
 }
 
 fn sample_source() ref u8 = trust {
-    return c"## A *result* value with __careful__ handling.\npub type Result {\n    ## The **source** file.\n    file string\n    ## Whether it passed.\n    pass bool\n    ## Elapsed time.\n    ms int = 0\n}\n\n## Format the result.\nfn Result.label(self) string => \"x\"\n\n## Add two values.\nfn add(a int, b int: 2) int {\n    return a + b\n}\n\n## The current result.\npub var r = Result{file: \"a.sx\", pass: true}\n\n## A limit.\nconst Limit = 10\n"
+    return c"## A *result* value with __careful__ handling.\npub type Result {\n    ## The **source** file.\n    file string\n    ## Whether it passed.\n    pass bool\n    ## Elapsed time.\n    ms int = 0\n    note string\n}\n\n## Format the result.\nfn Result.label(self) string => \"x\"\n\n## Add two values.\nfn add(a int, b int: 2) int {\n    return a + b\n}\n\n## The current result.\npub var r = Result{file: \"a.sx\", pass: true}\n\n## A limit.\nconst Limit = 10\n"
 }
 
 test "docgen writes markdown for declarations and type methods" {
@@ -23,8 +23,9 @@ test "docgen writes markdown for declarations and type methods" {
         assert u.s_contains(out, c"# sample.bx")
         assert u.s_contains(out, c"### `type Result`")
         assert u.s_contains(out, c"A *result* value with __careful__ handling.")
-        assert u.s_contains(out, c"| `file` | `string` |")
+        assert u.s_contains(out, c"| `file` | `string` | N/A |")
         assert u.s_contains(out, c"| `ms` | `int` | `0` |")
+        assert u.s_contains(out, c"| `note` | `string` | N/A | N/A |")
         assert u.s_contains(out, c"#### `fn Result.label(self) string`")
         assert u.s_contains(out, c"### `fn add(a int, b int: 2) int`")
         assert u.s_contains(out, c"### `var r = Result{file: \"a.sx\", pass: true}`")
@@ -59,6 +60,18 @@ test "docgen writes html by default" {
         assert u.s_contains(
             out,
             c"<tr><td><code>ms</code></td><td><code><span class='type'>int</span></code></td><td><code><span class='num'>0</span></code></td><td>"
+        )
+        assert u.s_contains(
+            out,
+            c"<tr><td><code>note</code></td><td><code><span class='type'>string</span></code></td><td>N/A</td><td>N/A</td></tr>"
+        )
+        assert u.s_contains(
+            out,
+            c"<div class='inferred'><span class='meta-label'>Inferred type</span><code><span class='type'>Result</span></code></div>"
+        )
+        assert u.s_contains(
+            out,
+            c"<span class='meta-label'>Inferred type</span><code><span class='type'>int</span></code>"
         )
         assert u.s_contains(out, c"<details class='item private' id='item-1'>")
         assert u.s_contains(out, c"<details class='item private' id='item-0-m0'>")

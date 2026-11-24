@@ -352,6 +352,29 @@ code.signature {
     padding: 0 0.95rem 1rem;
 }
 
+.inferred {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.65rem 0;
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.inferred code {
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 0.1rem 0.3rem;
+    color: var(--text);
+}
+
+.meta-label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.68rem;
+    font-weight: 700;
+}
+
 .doc p {
     margin: 0.55rem 0;
 }

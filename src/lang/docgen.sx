@@ -20,6 +20,7 @@ type DocItem = {
     name: mut ref u8
     signature: mut ref u8
     source: mut ref u8
+    value_type: mut ref u8
     docs: mut ref u8
     fields: mut ref u.Vec
     methods: mut ref u.Vec
@@ -91,6 +92,7 @@ fn item_new(kind: i64, name: ref u8, signature: ref u8, docs: ref u8) ref DocIte
     d.name = name
     d.signature = signature
     d.source = none
+    d.value_type = none
     d.docs = docs
     d.fields = u.vec_new()
     d.methods = u.vec_new()
@@ -149,6 +151,78 @@ fn fn_item(n: ref lang.Node, lines: ref u.Vec, src: ref u8) ref DocItem = trust 
     return item
 }
 
+fn binary_bool_result(op: i64) bool = trust {
+    if op >= lang.BinOp.Eq as i64 && op <= lang.BinOp.NotIn as i64 {
+        return true
+    }
+    return op == 100 || op == 101
+}
+
+fn infer_type(n: ref lang.Node) ref u8 = trust {
+    if n == none {
+        return c"unknown"
+    }
+    if n.kind == lang.NodeKind.IntLit {
+        return c"int"
+    }
+    if n.kind == lang.NodeKind.FloatLit {
+        return c"float"
+    }
+    if n.kind == lang.NodeKind.StrLit || n.kind == lang.NodeKind.CmdSubst {
+        return c"string"
+    }
+    if n.kind == lang.NodeKind.BoolLit {
+        return c"bool"
+    }
+    if n.kind == lang.NodeKind.NullLit {
+        return c"none"
+    }
+    if n.kind == lang.NodeKind.ListLit {
+        return c"list"
+    }
+    if n.kind == lang.NodeKind.DictLit {
+        return c"dict"
+    }
+    if n.kind == lang.NodeKind.FnLit {
+        return c"fn"
+    }
+    if n.kind == lang.NodeKind.StructLit && n.s != none {
+        return n.s
+    }
+    if n.kind == lang.NodeKind.Unary {
+        if n.a == lang.UnOp.Not as i64 {
+            return c"bool"
+        }
+        if n.kids.len > 0 {
+            return infer_type(u.vec_p(n.kids, 0) as ref lang.Node)
+        }
+        return c"unknown"
+    }
+    if n.kind == lang.NodeKind.Binary {
+        if binary_bool_result(n.a) {
+            return c"bool"
+        }
+        if n.kids.len == 0 {
+            return c"unknown"
+        }
+        val left: ref u8 = infer_type(u.vec_p(n.kids, 0) as ref lang.Node)
+        if u.s_eq(left, c"string") {
+            return c"string"
+        }
+        if n.kids.len > 1 {
+            val right: ref u8 = infer_type(u.vec_p(n.kids, 1) as ref lang.Node)
+            if u.s_eq(right, c"string") {
+                return c"string"
+            }
+            if u.s_eq(left, c"float") || u.s_eq(right, c"float") {
+                return c"float"
+            }
+        }
+        return left
+    }
+    return c"unknown"
+}
+
 fn binding_item(n: ref lang.Node, lines: ref u.Vec, kind: i64) ref DocItem = trust {
     val raw: mut ref u8 = n.sig_text
     if raw == none {
@@ -160,6 +234,11 @@ fn binding_item(n: ref lang.Node, lines: ref u.Vec, kind: i64) ref DocItem = tru
     }
     val item: mut ref DocItem = item_new(kind, n.s, sig, docs_for_line(lines, n.line))
     item.public = (n.flags & 1) != 0
+    if n.kids.len > 0 {
+        item.value_type = infer_type(u.vec_p(n.kids, 0) as ref lang.Node)
+    } else {
+        item.value_type = c"unknown"
+    }
     return item
 }
 
@@ -258,18 +337,28 @@ fn md_fields(b: mut ref u.Buf, item: ref DocItem) void = trust {
         val f: ref DocField = u.vec_p(item.fields, i) as ref DocField
         u.buf_add(b, c"| `")
         u.buf_add(b, f.name)
-        u.buf_add(b, c"` | `")
-        if f.typ != none {
-            u.buf_add(b, f.typ)
-        }
         u.buf_add(b, c"` | ")
+        if f.typ != none && u.s_len(f.typ) > 0 {
+            u.buf_add(b, c"`")
+            u.buf_add(b, f.typ)
+            u.buf_add(b, c"`")
+        } else {
+            u.buf_add(b, c"N/A")
+        }
+        u.buf_add(b, c" | ")
         if u.s_len(f.default_text) > 0 {
             u.buf_add(b, c"`")
             u.buf_add(b, f.default_text)
             u.buf_add(b, c"`")
+        } else {
+            u.buf_add(b, c"N/A")
         }
         u.buf_add(b, c" | ")
-        md_cell(b, f.docs)
+        if u.s_len(f.docs) > 0 {
+            md_cell(b, f.docs)
+        } else {
+            u.buf_add(b, c"N/A")
+        }
         u.buf_add(b, c" |\n")
         i++
     }
@@ -791,18 +880,28 @@ fn html_fields(b: mut ref u.Buf, item: ref DocItem) void = trust {
         val f: ref DocField = u.vec_p(item.fields, i) as ref DocField
         u.buf_add(b, c"<tr><td><code>")
         html_escape(b, f.name)
-        u.buf_add(b, c"</code></td><td><code>")
-        if f.typ != none {
-            hl_code_inner(b, f.typ)
-        }
         u.buf_add(b, c"</code></td><td>")
+        if f.typ != none && u.s_len(f.typ) > 0 {
+            u.buf_add(b, c"<code>")
+            hl_code_inner(b, f.typ)
+            u.buf_add(b, c"</code>")
+        } else {
+            u.buf_add(b, c"N/A")
+        }
+        u.buf_add(b, c"</td><td>")
         if u.s_len(f.default_text) > 0 {
             u.buf_add(b, c"<code>")
             hl_code_inner(b, f.default_text)
             u.buf_add(b, c"</code>")
+        } else {
+            u.buf_add(b, c"N/A")
         }
         u.buf_add(b, c"</td><td>")
-        html_cell(b, f.docs)
+        if u.s_len(f.docs) > 0 {
+            html_cell(b, f.docs)
+        } else {
+            u.buf_add(b, c"N/A")
+        }
         u.buf_add(b, c"</td></tr>\n")
         i++
     }
@@ -909,6 +1008,11 @@ fn render_item(b: mut ref u.Buf, item: ref DocItem, id: ref u8, label: ref u8) v
         u.buf_add(b, c"<span class='badge private'>private</span>")
     }
     u.buf_add(b, c"</summary><div class='item-body'>\n")
+    if (item.kind == 2 || item.kind == 3) && item.value_type != none && u.s_len(item.value_type) > 0 {
+        u.buf_add(b, c"<div class='inferred'><span class='meta-label'>Inferred type</span><code>")
+        hl_code_inner(b, item.value_type)
+        u.buf_add(b, c"</code></div>\n")
+    }
     html_docs(b, item.docs)
     if item.kind == 1 && item.source != none && u.s_len(item.source) > 0 {
         u.buf_add(
